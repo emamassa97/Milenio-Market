@@ -4,7 +4,7 @@ import { estaVacia, exportarTodo, restaurarCopia } from '../datos/copia';
 import { borrarTodo, cargarEjemplo } from '../datos/ejemplo';
 import { guardarAjuste, leerAjuste } from '../datos/operaciones';
 import { descargarArchivo, errorATexto, fechaCorta, Icono, useAvisar } from '../ui/componentes';
-import { useConsulta } from '../ui/hooks';
+import { useConsulta, useUnaVez } from '../ui/hooks';
 
 export function PantallaAjustes() {
   const avisar = useAvisar();
@@ -12,7 +12,9 @@ export function PantallaAjustes() {
   const vacia = useConsulta(() => estaVacia(db), [], false);
   const modoPrueba = useConsulta(() => leerAjuste(db, 'modoPrueba', false), [], false);
   const ultimaCopia = useConsulta(() => leerAjuste<number | null>(db, 'ultimaCopia', null), [], null);
-  const [confirmarBorrado, setConfirmarBorrado] = useState(0);
+  const cierres = useConsulta(() => db.turnos.filter((t) => t.cierre !== null).count(), [], 0);
+  const [confirmacion, setConfirmacion] = useState('');
+  const [enCurso, unaVez] = useUnaVez();
 
   useEffect(() => {
     leerAjuste(db, 'cajero', '').then((c) => setCajero(String(c)));
@@ -87,7 +89,7 @@ export function PantallaAjustes() {
         {!vacia && <p className="texto-suave">Restaurar sólo se puede en un equipo sin datos, para no pisar nada de lo cargado.</p>}
       </section>
 
-      {(vacia || modoPrueba) && (
+      {(vacia || (modoPrueba && cierres === 0)) && (
         <section className="tarjeta formulario">
           <h2 className="titulo-chico">Probar el sistema</h2>
           {vacia ? (
@@ -96,28 +98,44 @@ export function PantallaAjustes() {
               <button
                 type="button"
                 className="boton"
-                onClick={async () => {
-                  await cargarEjemplo(db);
-                  avisar({ texto: 'Listo: productos de ejemplo cargados.', tipo: 'ok' });
-                }}
+                disabled={enCurso}
+                onClick={() =>
+                  unaVez(async () => {
+                    await cargarEjemplo(db);
+                    avisar({ texto: 'Listo: productos de ejemplo cargados.', tipo: 'ok' });
+                  })
+                }
               >
                 Cargar productos de ejemplo
               </button>
             </>
           ) : (
             <>
-              <p className="texto-suave">Estás usando datos de prueba. Cuando quieras arrancar en serio, borrá todo y empezá de cero.</p>
+              <p className="texto-suave">
+                Estás usando datos de prueba. Para arrancar en serio, borrá todo y empezá de cero. Antes de borrar se descarga una copia. Esta opción desaparece cuando cerrás la primera caja.
+              </p>
+              <label className="campo">
+                <span className="campo-etiqueta">Para confirmar, escribí BORRAR</span>
+                <input value={confirmacion} onChange={(e) => setConfirmacion(e.target.value)} autoComplete="off" />
+              </label>
               <button
                 type="button"
-                className={`boton ${confirmarBorrado > 0 ? 'boton-peligro' : 'boton-texto-peligro'}`}
-                onClick={async () => {
-                  if (confirmarBorrado < 1) return setConfirmarBorrado(1);
-                  await borrarTodo(db);
-                  setConfirmarBorrado(0);
-                  avisar({ texto: 'Todo borrado. El sistema quedó vacío.', tipo: 'info' });
-                }}
+                className="boton boton-peligro"
+                disabled={confirmacion.trim().toUpperCase() !== 'BORRAR' || enCurso}
+                onClick={() =>
+                  unaVez(async () => {
+                    try {
+                      await descargarCopia();
+                      await borrarTodo(db);
+                      setConfirmacion('');
+                      avisar({ texto: 'Todo borrado. El sistema quedó vacío.', tipo: 'info' });
+                    } catch (e) {
+                      avisar({ texto: errorATexto(e), tipo: 'error' });
+                    }
+                  })
+                }
               >
-                {confirmarBorrado > 0 ? 'Se borran productos, ventas y clientes. ¿Seguro?' : 'Borrar todo y empezar de cero'}
+                Borrar productos, ventas y clientes
               </button>
             </>
           )}

@@ -15,7 +15,7 @@ import {
 } from '../datos/operaciones';
 import { CampoPesos, descargarArchivo, errorATexto, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
-import { useConsulta } from '../ui/hooks';
+import { useConsulta, useUnaVez } from '../ui/hooks';
 
 type Filtro = 'todos' | 'reponer' | 'rapidos' | 'sinCodigo' | 'sinCosto';
 
@@ -73,7 +73,7 @@ export function PantallaProductos() {
   const alternarRapido = async (p: Producto) => {
     try {
       const { id, creado: _c, actualizado: _a, ...datos } = p;
-      await guardarProducto(db, { ...datos, rapido: !p.rapido }, id);
+      await guardarProducto(db, { ...datos, rapido: !p.rapido }, id, p.stock);
     } catch (e) {
       avisar({ texto: errorATexto(e), tipo: 'error' });
     }
@@ -218,17 +218,20 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
   const [costo, setCosto] = useState<number | null>(producto && producto.costo > 0 ? producto.costo : null);
   const [camara, setCamara] = useState(false);
   const [confirmarBorrar, setConfirmarBorrar] = useState(false);
+  const [enCurso, unaVez] = useUnaVez();
   const m = margen(precio ?? 0, costo ?? 0);
 
-  const guardar = async (e: React.FormEvent) => {
+  const guardar = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await guardarProducto(db, { ...d, precio: precio ?? 0, costo: costo ?? 0 }, producto?.id);
-      avisar({ texto: producto ? 'Cambios guardados.' : `"${d.nombre.trim()}" cargado.`, tipo: 'ok' });
-      onCerrar();
-    } catch (err) {
-      avisar({ texto: errorATexto(err), tipo: 'error' });
-    }
+    unaVez(async () => {
+      try {
+        await guardarProducto(db, { ...d, precio: precio ?? 0, costo: costo ?? 0 }, producto?.id, producto?.stock);
+        avisar({ texto: producto ? 'Cambios guardados.' : `"${d.nombre.trim()}" cargado.`, tipo: 'ok' });
+        onCerrar();
+      } catch (err) {
+        avisar({ texto: errorATexto(err), tipo: 'error' });
+      }
+    });
   };
 
   const borrar = async () => {
@@ -295,7 +298,7 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
               {confirmarBorrar ? '¿Seguro? Tocá de nuevo' : 'Borrar'}
             </button>
           )}
-          <button type="submit" className="boton boton-primario" disabled={!d.nombre.trim() || precio === null}>
+          <button type="submit" className="boton boton-primario" disabled={!d.nombre.trim() || precio === null || enCurso}>
             Guardar
           </button>
         </div>
@@ -319,20 +322,23 @@ function SumarStock({ producto, onCerrar }: { producto: Producto; onCerrar: () =
   const avisar = useAvisar();
   const [cantidad, setCantidad] = useState('');
   const n = Number(cantidad.replace(/[^\d-]/g, '')) || 0;
+  const [enCurso, unaVez] = useUnaVez();
   return (
     <Modal titulo={producto.nombre} onCerrar={onCerrar}>
       <form
         className="formulario"
-        onSubmit={async (e) => {
+        onSubmit={(e) => {
           e.preventDefault();
           if (!n) return;
-          try {
-            await ajustarStock(db, producto.id!, n);
-            avisar({ texto: `Stock de ${producto.nombre}: ${producto.stock + n}.`, tipo: 'ok' });
-            onCerrar();
-          } catch (err) {
-            avisar({ texto: errorATexto(err), tipo: 'error' });
-          }
+          unaVez(async () => {
+            try {
+              await ajustarStock(db, producto.id!, n);
+              avisar({ texto: `Stock de ${producto.nombre}: ${producto.stock + n}.`, tipo: 'ok' });
+              onCerrar();
+            } catch (err) {
+              avisar({ texto: errorATexto(err), tipo: 'error' });
+            }
+          });
         }}
       >
         <p>
@@ -346,7 +352,7 @@ function SumarStock({ producto, onCerrar }: { producto: Producto; onCerrar: () =
             </button>
           ))}
         </div>
-        <button className="boton boton-primario boton-grande" type="submit" disabled={!n}>
+        <button className="boton boton-primario boton-grande" type="submit" disabled={!n || enCurso || Math.abs(n) > 99999}>
           {n >= 0 ? `Sumar ${n}` : `Restar ${-n}`} · quedan {producto.stock + n}
         </button>
       </form>

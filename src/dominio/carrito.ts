@@ -1,5 +1,8 @@
 import type { ItemVenta, Pesos, Producto } from './tipos';
 
+/** Más que esto en un renglón es casi seguro un error (un código en el campo cantidad). */
+export const CANTIDAD_MAXIMA = 999;
+
 export interface Carrito {
   items: ItemVenta[];
 }
@@ -54,7 +57,7 @@ export function agregarItem(carrito: Carrito, item: ItemVenta): Carrito {
     const i = carrito.items.findIndex((x) => x.productoId === item.productoId);
     if (i >= 0) {
       const existente = carrito.items[i]!;
-      const actualizado = { ...existente, cantidad: existente.cantidad + item.cantidad };
+      const actualizado = { ...existente, cantidad: Math.min(existente.cantidad + item.cantidad, CANTIDAD_MAXIMA) };
       const resto = carrito.items.filter((_, j) => j !== i);
       return { items: [actualizado, ...resto] };
     }
@@ -65,8 +68,9 @@ export function agregarItem(carrito: Carrito, item: ItemVenta): Carrito {
 /** Cambia la cantidad del renglón; 0 o menos lo saca. */
 export function cambiarCantidad(carrito: Carrito, indice: number, cantidad: number): Carrito {
   if (cantidad <= 0) return quitarItem(carrito, indice);
+  const n = Math.min(Math.floor(cantidad), CANTIDAD_MAXIMA);
   return {
-    items: carrito.items.map((x, i) => (i === indice ? { ...x, cantidad: Math.floor(cantidad) } : x)),
+    items: carrito.items.map((x, i) => (i === indice ? { ...x, cantidad: n } : x)),
   };
 }
 

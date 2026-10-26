@@ -90,16 +90,26 @@ export function importarCsv(texto: string): ResultadoImportacion {
       errores.push(`Fila ${fila} (${nombre}): el precio "${tomar('precio')}" no es un número.`);
       return;
     }
+    const codigo = tomar('codigo').replace(/\s/g, '');
+    if (codigo && !/^[0-9A-Za-z-]{1,30}$/.test(codigo)) {
+      errores.push(
+        `Fila ${fila} (${nombre}): el código "${codigo}" no es válido. Si Excel lo mostró como 7,79E+12, poné esa columna como Texto y volvé a guardar.`,
+      );
+      return;
+    }
+    const costoTexto = tomar('costo');
+    const costo = costoTexto === '' ? 0 : parsePesos(costoTexto);
+    if (costo === null || costo < 0) {
+      errores.push(`Fila ${fila} (${nombre}): el costo "${costoTexto}" no es válido.`);
+      return;
+    }
     const stockTexto = tomar('stock');
-    const stock = stockTexto === '' ? 0 : Number(stockTexto.replace(',', '.'));
-    filas.push({
-      codigo: tomar('codigo').replace(/\s/g, ''),
-      nombre,
-      precio,
-      costo: parsePesos(tomar('costo')) ?? 0,
-      stock: Number.isFinite(stock) ? Math.floor(stock) : 0,
-      categoria: tomar('categoria'),
-    });
+    const stock = stockTexto === '' ? 0 : parsePesos(stockTexto);
+    if (stock === null) {
+      errores.push(`Fila ${fila} (${nombre}): el stock "${stockTexto}" no es un número.`);
+      return;
+    }
+    filas.push({ codigo, nombre, precio, costo, stock, categoria: tomar('categoria') });
   });
   return { filas, errores };
 }

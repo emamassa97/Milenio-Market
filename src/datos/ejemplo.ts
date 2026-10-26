@@ -1,5 +1,6 @@
 import type { BaseKiosco } from './db';
-import { guardarAjuste } from './operaciones';
+import { estaVacia } from './copia';
+import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
 
 // [código, nombre, precio, costo, stock, mínimo, categoría, rápido]
 const PRODUCTOS: [string, string, number, number, number, number, string, boolean][] = [
@@ -29,7 +30,8 @@ const PRODUCTOS: [string, string, number, number, number, number, string, boolea
 
 export async function cargarEjemplo(db: BaseKiosco): Promise<void> {
   const ahora = Date.now();
-  await db.transaction('rw', db.productos, db.clientes, db.ajustes, async () => {
+  await db.transaction('rw', db.tables, async () => {
+    if (!(await estaVacia(db))) return;
     await db.productos.bulkAdd(
       PRODUCTOS.map(([codigo, nombre, precio, costo, stock, stockMinimo, categoria, rapido]) => ({
         codigo, nombre, precio, costo, stock, stockMinimo, categoria, rapido, creado: ahora, actualizado: ahora,
@@ -43,9 +45,15 @@ export async function cargarEjemplo(db: BaseKiosco): Promise<void> {
   });
 }
 
-/** Borra todo. Sólo se ofrece mientras el equipo está en modo prueba. */
+/**
+ * Borra todo. Sólo se permite mientras el equipo está en modo prueba
+ * (con datos de ejemplo y sin ninguna caja cerrada).
+ */
 export async function borrarTodo(db: BaseKiosco): Promise<void> {
   await db.transaction('rw', db.tables, async () => {
+    const enPrueba = await leerAjuste(db, 'modoPrueba', false);
+    const cierres = await db.turnos.filter((t) => t.cierre !== null).count();
+    if (!enPrueba || cierres > 0) throw new ErrorKiosco('Ya hay cajas cerradas: no se puede borrar todo.');
     for (const t of db.tables) await t.clear();
   });
 }

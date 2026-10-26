@@ -1,4 +1,5 @@
 import { resumirTurno, totalConteo } from '../dominio/caja';
+import { CANTIDAD_MAXIMA } from '../dominio/carrito';
 import type { FilaImportada } from '../dominio/csv';
 import { saldoCliente, superaLimite } from '../dominio/fiado';
 import { aplicarAumento, type Redondeo } from '../dominio/precios';
@@ -55,20 +56,25 @@ export async function resumenDeTurno(db: BaseKiosco, turno: Turno) {
 }
 
 export async function cerrarTurno(db: BaseKiosco, conteo: Record<string, number>, nota: string): Promise<Turno> {
-  return db.transaction('rw', [db.turnos, db.ventas, db.movimientosCaja, db.movimientosFiado], async () => {
+  const limpio = Object.fromEntries(Object.entries(conteo).map(([k, v]) => [k, Math.max(0, Math.floor(v) || 0)]));
+  const cerrado = await db.transaction('rw', [db.turnos, db.ventas, db.movimientosCaja, db.movimientosFiado], async () => {
     const turno = await turnoAbierto(db);
     if (!turno) throw new ErrorKiosco('No hay ninguna caja abierta.');
     const { resumen } = await resumenDeTurno(db, turno);
     const cambios = {
       cierre: ahora(),
-      conteo,
-      contado: totalConteo(conteo),
+      conteo: limpio,
+      contado: totalConteo(limpio),
       esperado: resumen.efectivoEsperado,
       nota: nota.trim(),
     };
     await db.turnos.update(turno.id!, cambios);
     return { ...turno, ...cambios };
   });
+  // Al cerrar la primera caja el sistema deja de estar "en prueba":
+  // desde ahí ya no se ofrece borrar todo.
+  await guardarAjuste(db, 'modoPrueba', false);
+  return cerrado;
 }
 
 export async function registrarMovimientoCaja(
@@ -104,6 +110,12 @@ export interface DatosVenta {
 export async function registrarVenta(db: BaseKiosco, datos: DatosVenta): Promise<Venta> {
   const items = datos.items.filter((i) => i.cantidad > 0);
   if (items.length === 0) throw new ErrorKiosco('No hay nada para cobrar.');
+  for (const i of items) {
+    if (!Number.isInteger(i.cantidad) || i.cantidad > CANTIDAD_MAXIMA) {
+      throw new ErrorKiosco(`La cantidad de "${i.nombre}" no es válida (máximo ${CANTIDAD_MAXIMA}).`);
+    }
+    if (!Number.isFinite(i.precioUnitario) || i.precioUnitario < 0) throw new ErrorKiosco(`El precio de "${i.nombre}" no es válido.`);
+  }
   const total = items.reduce((s, i) => s + i.precioUnitario * i.cantidad, 0);
   if (total <= 0) throw new ErrorKiosco('El total tiene que ser mayor a cero.');
   let pagaCon: Pesos | null = null;
@@ -215,8 +227,17 @@ export async function buscarPorCodigo(db: BaseKiosco, codigo: string): Promise<P
   return db.productos.where('codigo').equals(codigo).first();
 }
 
-/** Crea (sin id) o actualiza (con id). No toca campos que no conoce. */
-export async function guardarProducto(db: BaseKiosco, datos: DatosProducto, id?: number): Promise<number> {
+/**
+ * Crea (sin id) o actualiza (con id). No toca campos que no conoce.
+ * Al editar, `stockOriginal` es el stock que se vio al abrir el formulario:
+ * se aplica sólo la diferencia, para no pisar ventas hechas mientras tanto.
+ */
+export async function guardarProducto(
+  db: BaseKiosco,
+  datos: DatosProducto,
+  id?: number,
+  stockOriginal?: number,
+): Promise<number> {
   const limpio: DatosProducto = {
     ...datos,
     codigo: datos.codigo.trim(),
@@ -234,7 +255,8 @@ export async function guardarProducto(db: BaseKiosco, datos: DatosProducto, id?:
     if (id === undefined) return db.productos.add({ ...limpio, creado: ahora(), actualizado: ahora() });
     const existe = await db.productos.get(id);
     if (!existe) throw new ErrorKiosco('Ese producto ya no existe.');
-    await db.productos.update(id, { ...limpio, actualizado: ahora() });
+    const stock = stockOriginal === undefined ? limpio.stock : existe.stock + (limpio.stock - stockOriginal);
+    await db.productos.update(id, { ...limpio, stock, actualizado: ahora() });
     return id;
   });
 }
@@ -264,6 +286,11 @@ export async function aumentoMasivo(
   });
 }
 
+function mismoNombre(a: string, b: string): boolean {
+  const n = (t: string) => t.trim().replace(/\s+/g, ' ').toLowerCase();
+  return n(a) === n(b);
+}
+
 export interface ResultadoCarga {
   nuevos: number;
   actualizados: number;
@@ -275,11 +302,20 @@ export interface ResultadoCarga {
  * Si no tiene código o no existe, crea el producto con su stock.
  */
 export async function cargarPlanilla(db: BaseKiosco, filas: FilaImportada[]): Promise<ResultadoCarga> {
+  for (const f of filas) {
+    if (!f.nombre.trim() || !(f.precio >= 0) || !(f.costo >= 0) || !Number.isFinite(f.stock)) {
+      throw new ErrorKiosco(`La fila de "${f.nombre}" tiene datos no válidos.`);
+    }
+  }
   return db.transaction('rw', db.productos, async () => {
     let nuevos = 0;
     let actualizados = 0;
     for (const f of filas) {
-      const existente = f.codigo ? await buscarPorCodigo(db, f.codigo) : undefined;
+      // Sin código, se busca un producto sin código con el mismo nombre,
+      // para que bajar la planilla y volver a cargarla no duplique nada.
+      const existente = f.codigo
+        ? await buscarPorCodigo(db, f.codigo)
+        : await db.productos.filter((p) => !p.codigo && mismoNombre(p.nombre, f.nombre)).first();
       if (existente) {
         await db.productos.update(existente.id!, {
           nombre: f.nombre,

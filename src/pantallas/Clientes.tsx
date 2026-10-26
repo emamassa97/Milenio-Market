@@ -5,7 +5,7 @@ import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type MovimientoFiado
 import { db } from '../datos/db';
 import { guardarCliente, registrarPagoFiado } from '../datos/operaciones';
 import { CampoPesos, errorATexto, fechaCorta, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
-import { useConsulta } from '../ui/hooks';
+import { useConsulta, useUnaVez } from '../ui/hooks';
 
 interface Fila {
   cliente: Cliente;
@@ -151,12 +151,14 @@ function EditarCliente({ cliente, onCerrar, onGuardado }: { cliente?: Cliente; o
   const [nombre, setNombre] = useState(cliente?.nombre ?? '');
   const [telefono, setTelefono] = useState(cliente?.telefono ?? '');
   const [limite, setLimite] = useState<number | null>(cliente?.limite || null);
+  const [enCurso, unaVez] = useUnaVez();
   return (
     <Modal titulo={cliente ? 'Editar cliente' : 'Nuevo cliente'} onCerrar={onCerrar}>
       <form
         className="formulario"
-        onSubmit={async (e) => {
+        onSubmit={(e) => {
           e.preventDefault();
+          unaVez(async () => {
           try {
             const id = await guardarCliente(db, { nombre, telefono, limite: limite ?? 0 }, cliente?.id);
             onGuardado(id);
@@ -164,6 +166,7 @@ function EditarCliente({ cliente, onCerrar, onGuardado }: { cliente?: Cliente; o
           } catch (err) {
             avisar({ texto: errorATexto(err), tipo: 'error' });
           }
+          });
         }}
       >
         <label className="campo">
@@ -175,7 +178,7 @@ function EditarCliente({ cliente, onCerrar, onGuardado }: { cliente?: Cliente; o
           <input value={telefono} onChange={(e) => setTelefono(e.target.value)} inputMode="tel" placeholder="Ej.: 341 555-1234" />
         </label>
         <CampoPesos etiqueta="Hasta cuánto le fiás (opcional)" valor={limite} onCambio={setLimite} placeholder="Sin límite" />
-        <button className="boton boton-primario boton-grande" type="submit" disabled={!nombre.trim()}>
+        <button className="boton boton-primario boton-grande" type="submit" disabled={!nombre.trim() || enCurso}>
           Guardar
         </button>
       </form>
@@ -187,12 +190,14 @@ function RegistrarPago({ fila, onCerrar }: { fila: Fila; onCerrar: () => void })
   const avisar = useAvisar();
   const [monto, setMonto] = useState<number | null>(fila.saldo);
   const [medio, setMedio] = useState<Exclude<MedioPago, 'fiado'>>('efectivo');
+  const [enCurso, unaVez] = useUnaVez();
   return (
     <Modal titulo={`Pago de ${fila.cliente.nombre}`} onCerrar={onCerrar}>
       <form
         className="formulario"
-        onSubmit={async (e) => {
+        onSubmit={(e) => {
           e.preventDefault();
+          unaVez(async () => {
           try {
             await registrarPagoFiado(db, fila.cliente.id!, monto ?? 0, medio);
             const resto = fila.saldo - (monto ?? 0);
@@ -201,6 +206,7 @@ function RegistrarPago({ fila, onCerrar }: { fila: Fila; onCerrar: () => void })
           } catch (err) {
             avisar({ texto: errorATexto(err), tipo: 'error' });
           }
+          });
         }}
       >
         <p>
@@ -215,7 +221,7 @@ function RegistrarPago({ fila, onCerrar }: { fila: Fila; onCerrar: () => void })
           ))}
         </div>
         {monto !== null && monto > fila.saldo && <p className="texto-alerta">Paga más de lo que debe: le va a quedar saldo a favor.</p>}
-        <button className="boton boton-primario boton-grande" type="submit" disabled={!monto || monto <= 0}>
+        <button className="boton boton-primario boton-grande" type="submit" disabled={!monto || monto <= 0 || enCurso}>
           Registrar pago
         </button>
       </form>

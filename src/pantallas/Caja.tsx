@@ -32,7 +32,7 @@ import {
 } from '../datos/operaciones';
 import { CampoPesos, errorATexto, Icono, Modal, useAvisar } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
-import { pitido, useConsulta } from '../ui/hooks';
+import { pitido, useConsulta, useUnaVez } from '../ui/hooks';
 
 function normalizar(t: string) {
   return t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -50,17 +50,20 @@ function AbrirCaja() {
   const avisar = useAvisar();
   const [cajero, setCajero] = useState('');
   const [fondo, setFondo] = useState<number | null>(null);
+  const [enCurso, unaVez] = useUnaVez();
   useEffect(() => {
     leerAjuste(db, 'cajero', '').then((c) => setCajero(String(c)));
   }, []);
-  const abrir = async (e: React.FormEvent) => {
+  const abrir = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await abrirTurno(db, cajero, fondo ?? 0);
-      avisar({ texto: 'Caja abierta. ¡Buenas ventas!', tipo: 'ok' });
-    } catch (err) {
-      avisar({ texto: errorATexto(err), tipo: 'error' });
-    }
+    unaVez(async () => {
+      try {
+        await abrirTurno(db, cajero, fondo ?? 0);
+        avisar({ texto: 'Caja abierta. ¡Buenas ventas!', tipo: 'ok' });
+      } catch (err) {
+        avisar({ texto: errorATexto(err), tipo: 'error' });
+      }
+    });
   };
   return (
     <div className="pagina pagina-angosta">
@@ -72,7 +75,7 @@ function AbrirCaja() {
           <input value={cajero} onChange={(e) => setCajero(e.target.value)} placeholder="Tu nombre" autoComplete="off" />
         </label>
         <CampoPesos etiqueta="Cambio en la caja" valor={fondo} onCambio={setFondo} autoFocus grande />
-        <button className="boton boton-primario boton-grande" type="submit">
+        <button className="boton boton-primario boton-grande" type="submit" disabled={enCurso}>
           Abrir caja
         </button>
       </form>
@@ -586,8 +589,10 @@ function ProductoNuevoRapido({
   const [nombre, setNombre] = useState('');
   const [precio, setPrecio] = useState<number | null>(null);
   const [stock, setStock] = useState('');
-  const guardar = async (e: React.FormEvent) => {
+  const [enCurso, unaVez] = useUnaVez();
+  const guardar = (e: React.FormEvent) => {
     e.preventDefault();
+    unaVez(async () => {
     try {
       const id = await guardarProducto(db, {
         codigo,
@@ -605,6 +610,7 @@ function ProductoNuevoRapido({
     } catch (err) {
       avisar({ texto: errorATexto(err), tipo: 'error' });
     }
+    });
   };
   return (
     <Modal titulo="Este código no está cargado" onCerrar={onCerrar}>
@@ -623,7 +629,7 @@ function ProductoNuevoRapido({
             <input inputMode="numeric" value={stock} onChange={(e) => setStock(e.target.value.replace(/[^\d]/g, ''))} placeholder="0" />
           </label>
         </div>
-        <button className="boton boton-primario boton-grande" type="submit" disabled={!nombre.trim() || !precio}>
+        <button className="boton boton-primario boton-grande" type="submit" disabled={!nombre.trim() || !precio || enCurso}>
           Guardar y agregar a la venta
         </button>
       </form>
@@ -634,6 +640,7 @@ function ProductoNuevoRapido({
 function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir: (c: Cliente) => void }) {
   const avisar = useAvisar();
   const [q, setQ] = useState('');
+  const [, unaVez] = useUnaVez();
   const datos = useConsulta(
     async () => {
       const [clientes, movs] = await Promise.all([db.clientes.toArray(), db.movimientosFiado.toArray()]);
@@ -645,15 +652,16 @@ function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir:
     [] as { c: Cliente; saldo: number }[],
   );
   const filtrados = datos.filter((d) => normalizar(d.c.nombre).includes(normalizar(q.trim())));
-  const crear = async () => {
-    try {
-      const id = await guardarCliente(db, { nombre: q, telefono: '', limite: 0 });
-      const c = await db.clientes.get(id);
-      if (c) onElegir(c);
-    } catch (e) {
-      avisar({ texto: errorATexto(e), tipo: 'error' });
-    }
-  };
+  const crear = () =>
+    unaVez(async () => {
+      try {
+        const id = await guardarCliente(db, { nombre: q, telefono: '', limite: 0 });
+        const c = await db.clientes.get(id);
+        if (c) onElegir(c);
+      } catch (e) {
+        avisar({ texto: errorATexto(e), tipo: 'error' });
+      }
+    });
   return (
     <Modal titulo="¿A quién se lo anotás?" onCerrar={onCerrar}>
       <div className="formulario">

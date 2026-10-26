@@ -1,5 +1,5 @@
 import { liveQuery } from 'dexie';
-import { useEffect, useState, type DependencyList } from 'react';
+import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react';
 
 /** Lee de la base y se actualiza sola cuando los datos cambian. */
 export function useConsulta<T>(consulta: () => Promise<T>, deps: DependencyList, inicial: T): T {
@@ -48,3 +48,24 @@ export function pitido(tipo: 'ok' | 'error' = 'ok') {
   }
 }
 
+
+/**
+ * Evita guardar dos veces por un doble clic o doble Enter:
+ * mientras una acción está en curso, las siguientes se ignoran.
+ */
+export function useUnaVez(): [boolean, (accion: () => Promise<void>) => Promise<void>] {
+  const [enCurso, setEnCurso] = useState(false);
+  const bloqueo = useRef(false);
+  const ejecutar = useCallback(async (accion: () => Promise<void>) => {
+    if (bloqueo.current) return;
+    bloqueo.current = true;
+    setEnCurso(true);
+    try {
+      await accion();
+    } finally {
+      bloqueo.current = false;
+      setEnCurso(false);
+    }
+  }, []);
+  return [enCurso, ejecutar];
+}

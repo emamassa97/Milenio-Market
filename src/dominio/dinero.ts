@@ -36,6 +36,7 @@ export function parsePesos(texto: string): Pesos | null {
       decimales = m[2]!;
     }
   }
+  if (entero.includes('.') && !/^\d{1,3}(\.\d{3})+$/.test(entero)) return null;
   entero = entero.replace(/\./g, '');
   if (entero === '' && decimales === '') return null;
   if (!/^\d*$/.test(entero) || !/^\d*$/.test(decimales)) return null;

@@ -5,7 +5,7 @@ import { nombreMedio, type MovimientoCaja, type TipoMovimientoCaja, type Turno, 
 import { db } from '../datos/db';
 import { anularVenta, cerrarTurno, registrarMovimientoCaja, turnoAbierto } from '../datos/operaciones';
 import { CampoPesos, errorATexto, fechaCorta, hora, Modal, useAvisar, Vacio } from '../ui/componentes';
-import { useConsulta } from '../ui/hooks';
+import { useConsulta, useUnaVez } from '../ui/hooks';
 
 interface Datos {
   turno: Turno;
@@ -79,16 +79,18 @@ function CierreAbierto({ datos }: { datos: Datos }) {
   const [nota, setNota] = useState('');
   const [movimiento, setMovimiento] = useState(false);
   const [confirmar, setConfirmar] = useState(false);
+  const [cerrando, unaVez] = useUnaVez();
   const contado = totalConteo(conteo);
   const contoAlgo = Object.values(conteo).some((v) => v > 0);
   const diferencia = contado - resumen.efectivoEsperado;
   const fiadoCobrado = Object.values(resumen.cobrosFiado).reduce((a, b) => a + b, 0);
 
-  const cerrar = async () => {
+  const cerrar = () => {
     if (!confirmar) {
       setConfirmar(true);
       return;
     }
+    unaVez(async () => {
     try {
       await cerrarTurno(db, conteo, nota);
       avisar({
@@ -98,6 +100,7 @@ function CierreAbierto({ datos }: { datos: Datos }) {
     } catch (e) {
       avisar({ texto: errorATexto(e), tipo: 'error' });
     }
+    });
   };
 
   return (
@@ -219,7 +222,7 @@ function CierreAbierto({ datos }: { datos: Datos }) {
               ))}
               <div className="billete">
                 <span>Monedas y otros</span>
-                <CampoPesos valor={conteo['monedas'] || null} onCambio={(v) => setConteo({ ...conteo, monedas: v ?? 0 })} />
+                <CampoPesos valor={conteo['monedas'] || null} onCambio={(v) => setConteo({ ...conteo, monedas: Math.max(0, v ?? 0) })} />
                 <span />
               </div>
             </div>
@@ -228,7 +231,7 @@ function CierreAbierto({ datos }: { datos: Datos }) {
               <strong className="importe">{formatPesos(contado)}</strong>
             </div>
           </section>
-          <button type="button" className={`boton boton-grande ${confirmar ? 'boton-peligro' : 'boton-primario'}`} onClick={cerrar}>
+          <button type="button" className={`boton boton-grande ${confirmar ? 'boton-peligro' : 'boton-primario'}`} onClick={cerrar} disabled={cerrando}>
             {confirmar ? (contoAlgo ? 'Confirmar cierre' : 'No contaste nada. ¿Cerrar igual?') : 'Cerrar turno'}
           </button>
           <button type="button" className="boton" onClick={() => setMovimiento(true)}>
@@ -295,19 +298,22 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
   const [tipo, setTipo] = useState<TipoMovimientoCaja>('gasto');
   const [monto, setMonto] = useState<number | null>(null);
   const [motivo, setMotivo] = useState('');
+  const [enCurso, unaVez] = useUnaVez();
   return (
     <Modal titulo="Retiro, gasto o ingreso" onCerrar={onCerrar}>
       <form
         className="formulario"
-        onSubmit={async (e) => {
+        onSubmit={(e) => {
           e.preventDefault();
-          try {
-            await registrarMovimientoCaja(db, tipo, monto ?? 0, motivo);
-            avisar({ texto: 'Anotado.', tipo: 'ok' });
-            onCerrar();
-          } catch (err) {
-            avisar({ texto: errorATexto(err), tipo: 'error' });
-          }
+          unaVez(async () => {
+            try {
+              await registrarMovimientoCaja(db, tipo, monto ?? 0, motivo);
+              avisar({ texto: 'Anotado.', tipo: 'ok' });
+              onCerrar();
+            } catch (err) {
+              avisar({ texto: errorATexto(err), tipo: 'error' });
+            }
+          });
         }}
       >
         <div className="chips" role="group" aria-label="Tipo">
@@ -328,7 +334,7 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
           <span className="campo-etiqueta">Motivo</span>
           <input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej.: Pago a Coca-Cola" />
         </label>
-        <button type="submit" className="boton boton-primario boton-grande" disabled={!monto || monto <= 0}>
+        <button type="submit" className="boton boton-primario boton-grande" disabled={!monto || monto <= 0 || enCurso}>
           Anotar
         </button>
       </form>
