@@ -73,8 +73,8 @@ function Entrar() {
           {error}
         </p>
       )}
-      <button className="boton boton-primario boton-grande" type="submit" disabled={enCurso}>
-        Entrar
+      <button className="boton boton-primario boton-grande" type="submit" disabled={enCurso} aria-busy={enCurso}>
+        {enCurso ? 'Entrando…' : 'Entrar'}
       </button>
     </form>
   );

@@ -73,6 +73,7 @@ kbd {
 }
 .lateral-logo { display: block; padding: 8px 6px 4px; }
 .lateral-logo img { display: block; width: 164px; height: auto; aspect-ratio: 980 / 600; }
+.lateral-logo .logo-corto { display: none; }
 .lateral-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .lateral-nav a {
   display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 14px; border-radius: var(--radio);
@@ -178,6 +179,7 @@ a.estado-chip:hover { background: var(--grafito-claro); color: #fff; }
 /* Período de los reportes: los botones y, al lado, un día puntual del calendario. */
 .filtros-periodo { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
 .filtro-dia { display: flex; }
+@media (hover: hover) { .filtro-dia:hover input[type='date'] { border-color: var(--grafito); } }
 .filtro-dia input[type='date'] { min-height: 44px; width: auto; padding: 0 10px; font-size: 0.92rem; color: var(--suave); border-color: var(--borde-fuerte); font-family: inherit; }
 .filtro-dia.activo input[type='date'] { background: var(--grafito); color: #fff; border-color: var(--grafito); font-weight: 600; color-scheme: dark; }
 .periodo-elegido { margin: -6px 0 0; font-weight: 500; }
@@ -226,8 +228,9 @@ input[type='file'] { padding: 10px; }
 .modal-cuerpo { padding: 20px 24px 24px; overflow: auto; flex: 1 1 auto; min-height: 0; }
 .modal-cabecera { flex: none; }
 .modal-cuerpo .botonera-final { position: sticky; bottom: -24px; background: #fff; margin: 4px -24px -24px; padding: 12px 24px 16px; border-top: 1px solid var(--borde); }
-.modal-pie { position: sticky; bottom: -24px; background: #fff; margin: 4px -24px -24px; padding: 12px 24px 16px; border-top: 1px solid var(--borde); display: flex; flex-direction: column; gap: 8px; }
+.modal-pie { position: sticky; bottom: -24px; background: #fff; margin: 4px -24px -24px; padding: 12px 24px 16px; border-top: 1px solid var(--borde); display: flex; flex-direction: column; gap: 8px; box-shadow: 0 -8px 12px -8px rgba(0, 0, 0, 0.12); }
 .modal-pie .boton-grande { width: 100%; }
+.modal-pie .vuelto { border-top: none; padding-top: 0; }
 .texto-centrado { text-align: center; margin: 0; font-size: 0.85rem; }
 .permiso-motivo { display: flex; gap: 10px; align-items: flex-start; background: var(--gris); border-radius: var(--radio); padding: 12px 14px; }
 .permiso-motivo svg { flex: none; margin-top: 1px; color: var(--rojo); }
@@ -274,6 +277,13 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
   .vuelto strong { font-size: 1.7rem; }
   .ultima-venta { padding: 6px 10px; }
   .boton-cobrar { min-height: 56px; }
+  /* Los atajos de teclado son ayuda, no controles: en pantallas bajas ceden su lugar a "Última venta" y las acciones. */
+  .caja-izquierda .ayuda-teclas { display: none; }
+  /* La tira de "Última venta" en una sola fila: el importe a la izquierda, Ticket / Devolver / Anular a la derecha. */
+  .caja-pie-izquierda .ultima-venta { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .caja-pie-izquierda .ultima-venta .botonera { width: auto; grid-template-columns: repeat(3, auto); }
+  /* Los avisos van abajo a la derecha, debajo de Cobrar, y no tapan Ticket ni Devolver. */
+  .avisos { left: auto; right: 28px; width: 392px; }
 }
 .buscador { display: flex; gap: 10px; }
 .precio-consultado { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px; background: var(--gris); border-radius: var(--radio); }
@@ -343,19 +353,23 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 .cantidad { display: flex; align-items: center; gap: 4px; }
 .cantidad .boton-icono { background: var(--gris); width: 40px; height: 40px; }
 @media (hover: hover) { .cantidad .boton-icono:hover { background: var(--borde); } }
-.cantidad input { width: 52px; min-height: 38px; text-align: center; font-weight: 700; padding: 0 4px; font-size: 1.07rem; }
+.cantidad .boton-icono:disabled { opacity: 0.35; cursor: not-allowed; }
+.cantidad input { width: 52px; min-height: 40px; text-align: center; font-weight: 700; padding: 0 4px; font-size: 1.07rem; }
 .boton-quitar { color: var(--suave); }
 .total {
   background: var(--grafito); color: #fff; border-radius: var(--radio-grande); padding: 16px 20px 16px; display: flex; flex-direction: column;
   position: relative; overflow: hidden;
 }
-.total::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: var(--rojo); }
+.total::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: var(--rojo); transition: background-color 160ms; }
+.total strong { transition: color 160ms; }
+@media (prefers-reduced-motion: reduce) { .total::after, .total strong { transition: none; } }
 .total span { color: #b9bec8; font-size: 0.9rem; }
 .total strong { font-size: 3rem; font-weight: 700; line-height: 1.1; letter-spacing: -0.03em; margin-top: 2px; }
 .total small { color: #9aa0ab; }
 /* Después de cobrar, el vuelto ocupa el lugar del total hasta la próxima venta. */
 .total-cobrado::after { background: #4ade80; }
 .total-cobrado strong { color: #4ade80; }
+.total-cobrado > span:first-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .total-siguiente { align-self: flex-start; margin-top: 12px; background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.28); color: #fff; }
 .total-siguiente:hover:not(:disabled) { background: rgba(255, 255, 255, 0.2); }
 .cobro { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
@@ -373,7 +387,9 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 .medio kbd { position: absolute; top: 50%; transform: translateY(-50%); right: 10px; font-size: 0.8rem; padding: 0; background: none; border: none; color: var(--suave); }
 .medio.activo kbd { color: #d7dae0; }
 /* El texto del medio no se mete debajo del atajo, y un nombre largo de fiado se corta con puntos. */
-.medio:has(kbd) .medio-nombre { padding-right: 26px; }
+.medio:has(kbd) .medio-nombre { padding-right: 22px; }
+.medio { gap: 6px; padding: 4px 10px; }
+.medio-nombre { white-space: nowrap; }
 .medio-ancho .medio-nombre { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .medio-ancho kbd { right: 14px; }
 .cobro-cabecera { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -387,13 +403,13 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 .dividir-medio { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .dividir-medio svg { color: var(--suave); }
 .dividir-cliente { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; background: var(--gris); border-radius: var(--radio); }
-@media (max-width: 560px) { .dividir-fila { grid-template-columns: 1fr auto; } .dividir-medio { grid-column: 1 / -1; } .medio kbd { display: none; } }
+@media (max-width: 560px) { .dividir-fila { grid-template-columns: 1fr auto; } .dividir-medio { grid-column: 1 / -1; } .medio kbd { display: none; } .medio:has(kbd) .medio-nombre { padding-right: 0; } }
 .medio-ancho { grid-column: 1 / -1; }
 .sugeridos { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 6px; }
 .sugeridos .chip { min-height: 38px; padding: 0 4px; justify-content: center; font-size: 0.86rem; letter-spacing: -0.01em; }
 /* El chip de vuelto redondo ($10.600 para $4.600) dice cuánto se devuelve. */
-.sugeridos .chip-redondo { flex-direction: column; gap: 0; line-height: 1.15; }
-.sugeridos .chip-redondo small { font-size: 0.7rem; font-weight: 500; color: var(--apagado); }
+.sugeridos .chip-redondo { grid-column: span 2; flex-direction: row; gap: 6px; line-height: 1.15; min-width: 0; }
+.sugeridos .chip-redondo small { font-size: 0.8rem; font-weight: 500; color: var(--apagado); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .sugeridos .chip-redondo.activo small { color: #d7dae0; }
 .cobro-hoja > .boton:not(.boton-primario) { margin-top: 2px; }
 .vuelto { display: flex; justify-content: space-between; align-items: baseline; border-top: 1px solid var(--borde); padding-top: 10px; }
@@ -403,10 +419,11 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 .vuelto-cero strong { color: var(--apagado); }
 .vuelto-ok strong { display: inline-flex; align-items: center; gap: 6px; font-size: 1.3rem; }
 .boton-cobrar { min-height: 64px; font-size: 1.3rem; border-radius: var(--radio-grande); justify-content: space-between; padding: 0 22px; }
-.boton-cobrar kbd { color: #fff; background: rgba(255, 255, 255, 0.16); border-color: rgba(255, 255, 255, 0.3); }
+.boton-cobrar kbd { color: #fff; background: rgba(0, 0, 0, 0.22); border-color: rgba(255, 255, 255, 0.3); }
 .boton-cobrar:disabled kbd { color: var(--apagado); background: transparent; border-color: var(--borde-fuerte); }
 .ultima-venta { display: grid; grid-template-columns: 1fr; gap: 6px; padding: 8px 10px 8px 12px; border: 1px dashed var(--borde-fuerte); border-radius: var(--radio); min-height: 46px; }
 .ultima-venta-vacia strong { font-weight: 500; font-size: 0.88rem; }
+.ultima-venta small { font-size: 0.8rem; }
 .ultima-venta > span:first-child { display: flex; flex-direction: column; line-height: 1.25; font-size: 0.88rem; min-width: 0; }
 .ultima-venta .botonera { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; width: 100%; }
 .ultima-venta .boton-chico { min-height: 36px; padding: 0 6px; white-space: nowrap; }
@@ -415,6 +432,9 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 .ultima-venta-arriba { display: none; }
 .boton-retiro { align-self: center; font-size: 0.92rem; color: var(--texto); }
 .acciones-caja { gap: 4px 16px; }
+/* En pantallas altas las acciones van bajo "Última venta", de a dos por fila y centradas. */
+.caja-pie-derecha .acciones-caja { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 2px 14px; }
+.caja-pie-derecha .acciones-caja .boton-retiro { min-height: 36px; }
 .buscar-ventas .buscador-campo { margin: 4px 0 8px; }
 .acciones-caja .boton-retiro { align-self: auto; }
 .acciones-secundarias { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -471,7 +491,7 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 .stock-bajo { background: var(--ambar-suave); color: var(--ambar); border-color: transparent; }
 .stock-cero { background: var(--rojo-suave); color: var(--alerta); border-color: transparent; }
 .fila-acciones { display: flex; justify-content: flex-end; }
-.estrella-activa { color: #b8740a; }
+.estrella-activa { color: var(--ambar); }
 .estrella-activa svg { fill: currentColor; }
 .vista-previa { background: var(--gris); border-radius: var(--radio); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
 .vista-previa ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -604,6 +624,12 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 .saldo-cliente strong { font-size: 2.4rem; font-weight: 700; }
 
 /* ---------- Anchos ---------- */
+/* Productos: el principal arriba a la derecha en todos los anchos; las cinco secundarias en su fila, sin íconos hasta 1400 px. */
+.cabecera-productos { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px 16px; }
+.cabecera-productos > .botonera { grid-column: 1 / -1; }
+@media (max-width: 1400px) {
+  .cabecera-productos > .botonera .boton svg { display: none; }
+}
 @media (max-width: 1400px) {
   /* Con menos ancho, la venta va antes que los rápidos para verla siempre (como en el celular). */
   .caja-izquierda .lista-venta { order: -1; }
@@ -615,11 +641,15 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
   /* Sin los íconos, los seis botones de Productos siguen en una línea. */
   .pagina-cabecera > .botonera .boton:not(.boton-primario) svg { display: none; }
   :root { --lateral: 216px; }
+  /* Con el lateral angosto el nombre de quien atiende no entraba ("E…"): el círculo con la inicial sobra. */
+  .lateral-usuario .avatar { display: none; }
+  .lateral-usuario { gap: 4px; padding: 8px 6px 8px 12px; }
   .caja { grid-template-columns: minmax(0, 1fr) 340px; }
   .total strong { font-size: 2.6rem; }
   /* Medios más compactos. */
   .medio { font-size: 0.85rem; padding: 4px 8px; gap: 6px; }
   .medio kbd { display: none; }
+  .medio:has(kbd) .medio-nombre { padding-right: 0; }
   .rapidos { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .rapido { min-height: 70px; padding: 10px; }
   .buscador .boton:not(.boton-cuadrado) { padding: 0 12px; }
@@ -723,7 +753,7 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
     padding: 8px 8px 8px 16px; align-items: center; justify-content: space-between; gap: 12px; border-radius: var(--radio-grande); box-shadow: var(--sombra-alta);
   }
   .barra-cobro-movil div { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; flex: 1; }
-  .barra-cobro-movil small { color: #b9bec8; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .barra-cobro-movil small { color: #b9bec8; font-size: 0.8rem; overflow: hidden; white-space: normal; line-height: 1.2; max-height: 2.4em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .barra-cobro-movil strong { font-size: clamp(1.1rem, 5.6vw, 1.4rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .barra-cobro-movil .boton { flex: none; white-space: nowrap; padding: 0 16px; }
   .barra-cobro-movil .boton-chico { min-height: 44px; padding: 0 12px; background: rgba(255, 255, 255, 0.12); color: #fff; border-color: transparent; }
@@ -929,4 +959,69 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
   .inicio-total .importe { font-size: 2.6rem; }
   .semana { height: 160px; gap: 4px; }
   .semana-monto { display: none; }
+}
+
+/* Pantalla para el cliente (#visor): se lee a dos metros, del otro lado del mostrador. */
+.visor { min-height: 100vh; display: flex; flex-direction: column; background: var(--grafito); color: #fff; padding: clamp(16px, 4vw, 48px); gap: clamp(16px, 3vw, 32px); }
+.visor-cabecera img { height: clamp(48px, 9vw, 96px); display: block; }
+.visor main { flex: 1; display: flex; flex-direction: column; }
+.visor-venta { gap: 16px; }
+.visor-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: clamp(1.1rem, 2.6vw, 1.8rem); }
+.visor-lista li { display: grid; grid-template-columns: auto 1fr auto; gap: 16px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.12); }
+.visor-lista .visor-nuevo { color: #fff; font-weight: 600; }
+.visor-lista li:not(.visor-nuevo) { color: rgba(255, 255, 255, 0.78); }
+.visor-cant { font-variant-numeric: tabular-nums; min-width: 3.5ch; }
+.visor-nombre { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.visor-mas { display: block !important; border-bottom: 0 !important; font-size: 0.8em; }
+.visor-descuento { font-size: clamp(1rem, 2.2vw, 1.5rem); display: flex; justify-content: space-between; color: rgba(255, 255, 255, 0.85); }
+.visor-total { margin-top: auto; background: var(--rojo); border-radius: var(--radio-grande); padding: clamp(16px, 3vw, 32px); display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.visor-total span { font-size: clamp(1.4rem, 3.5vw, 2.6rem); font-weight: 600; }
+.visor-total strong { font-size: clamp(2.6rem, 9vw, 7rem); font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+.visor-gracias, .visor-espera { justify-content: center; align-items: center; text-align: center; gap: 12px; }
+.visor-gracias strong, .visor-espera strong { font-size: clamp(2.4rem, 8vw, 6rem); font-weight: 700; letter-spacing: -0.02em; }
+.visor-gracias p { font-size: clamp(1.6rem, 5vw, 3.6rem); }
+.visor-gracias p .importe { color: #7ee2a0; font-weight: 700; }
+.visor-espera p { font-size: clamp(1.1rem, 2.6vw, 1.8rem); color: rgba(255, 255, 255, 0.78); }
+
+/* Notebook chica (901 a 1100 px): el menú pasa a una columna de íconos y la página gana 144 px. El nombre queda en el
+   título de cada ícono y para los lectores de pantalla. */
+@media (min-width: 901px) and (max-width: 1100px) {
+  :root { --lateral: 72px; }
+  .lateral { padding: 16px 10px; gap: 16px; }
+  .lateral-logo { padding: 4px 0; }
+  .lateral-logo .logo-largo { display: none; }
+  .lateral-logo .logo-corto { display: block; width: 40px; height: auto; margin: 0 auto; }
+  .lateral-nav a { justify-content: center; padding: 0; }
+  .lateral-nav a.activo::before { left: -10px; }
+  .lateral-nav a span, .estado-chip span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .lateral-estados { align-items: center; }
+  .estado-chip { padding: 8px; }
+  .lateral-usuario { flex-direction: column; padding: 8px 2px; gap: 4px; }
+  .lateral-usuario-nombre { display: none; }
+}
+
+/* Celular: los nombres de producto usan dos renglones antes de cortarse. */
+@media (max-width: 900px) {
+  .lista-pedido-cabecera, .lista-pedido-fila { grid-template-columns: minmax(0, 1fr) 56px 80px 40px; }
+  .lista-pedido-nombre, .fila-producto-nombre strong { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }
+  .top li { grid-template-columns: minmax(0, 1fr) 72px 72px; }
+}
+
+/* Va al final para ganarle a las reglas base de la caja (que están más abajo que el bloque de pantallas bajas). */
+@media (max-height: 820px) and (min-width: 901px) {
+  .rapidos { gap: 8px; }
+  .rapido { min-height: 72px; padding: 10px 12px; gap: 4px; }
+}
+/* 1280×720 y menos: la columna de cobro entra entera, con chips y todo. */
+@media (max-height: 740px) and (min-width: 901px) {
+  .total { padding: 10px 16px; }
+  .total strong { font-size: 2.2rem; }
+  .medio { min-height: 40px; }
+  .cobro { padding: 12px; }
+  .caja-derecha > .cobro { min-height: 340px; }
+  .vuelto { padding-top: 6px; }
+  .vuelto strong { font-size: 1.5rem; }
+  .boton-cobrar { min-height: 52px; }
+  .caja { padding-top: 16px; padding-bottom: 16px; }
+  .caja-izquierda { gap: 10px; }
 }

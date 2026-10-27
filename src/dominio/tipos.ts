@@ -81,6 +81,8 @@ export interface Devolucion {
 
 export interface Venta {
   id?: number;
+  /** La venta armada en la caja de la que salió: la misma no se cobra dos veces (por ejemplo, desde dos pestañas). */
+  idCarrito?: string;
   fecha: number;
   turnoId: number;
   cajero: string;

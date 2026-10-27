@@ -24,7 +24,7 @@ import {
   type Carrito,
 } from '../dominio/carrito';
 import { formatPesos } from '../dominio/dinero';
-import { codigoEscaneado, gramosDeTexto, normalizarTexto as normalizar } from '../dominio/entrada';
+import { codigoAlFinal, codigoEscaneado, gramosDeTexto, normalizarTexto as normalizar } from '../dominio/entrada';
 import { saldoCliente } from '../dominio/fiado';
 import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type Pago, type Producto, type Venta } from '../dominio/tipos';
 import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
@@ -52,8 +52,13 @@ import { DevolverVenta } from './Devolver';
 import { IngresoMercaderia } from './Productos';
 
 // El carrito y las ventas en espera sobreviven a cambiar de pantalla, a recargar y a cerrar el navegador.
-function useGuardado<T>(llave: string, inicial: T) {
+// Si la caja está abierta en otra pestaña, lo que cambia allá se ve acá al instante (y al revés).
+function useGuardado<T>(llave: string, inicial: T, alCambiarAfuera?: (antes: T, ahora: T) => void) {
   const [valor, setValor] = useState<T>(() => leerGuardado(llave, inicial));
+  const valorRef = useRef(valor);
+  valorRef.current = valor;
+  const avisoRef = useRef(alCambiarAfuera);
+  avisoRef.current = alCambiarAfuera;
   useEffect(() => {
     try {
       localStorage.setItem(llave, JSON.stringify(valor));
@@ -61,6 +66,17 @@ function useGuardado<T>(llave: string, inicial: T) {
       /* sin almacenamiento: queda en memoria */
     }
   }, [llave, valor]);
+  useEffect(() => {
+    const otraPestaña = (e: StorageEvent) => {
+      if (e.storageArea !== localStorage || e.key !== llave) return;
+      const ahora = leerGuardado(llave, inicial);
+      avisoRef.current?.(valorRef.current, ahora);
+      setValor(ahora);
+    };
+    window.addEventListener('storage', otraPestaña);
+    return () => window.removeEventListener('storage', otraPestaña);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [llave]);
   return [valor, setValor] as const;
 }
 
@@ -88,6 +104,11 @@ const MONTO_MAXIMO = 1_000_000;
 // Teclas de función para elegir el medio sin mouse (F3 lleva a "Paga con").
 const TECLA_DE: Record<MedioPago, string> = { efectivo: 'F5', mercadopago: 'F6', tarjeta: 'F7', transferencia: 'F9', fiado: 'F10' };
 const TECLA_MEDIO: Record<string, MedioPago> = Object.fromEntries(Object.entries(TECLA_DE).map(([m, t]) => [t, m as MedioPago]));
+
+// Lo que le queda a un cliente después de pagar su fiado (negativo: le quedó a favor).
+const textoQueda = (queda?: number) => (queda && queda > 0 ? `Debe ${formatPesos(queda)}` : queda && queda < 0 ? `${formatPesos(-queda)} a favor` : 'Quedó al día');
+
+const nuevoIdCarrito = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
 // Para que entre en un botón del celular: "Marta (la del 3°)" → "Marta".
 const primerNombre = (n: string) => n.replace(/\(.*?\)/g, '').trim().split(/\s+/)[0] || n;
@@ -170,7 +191,13 @@ function Caja() {
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
   const pedirDueño = usePedirDueño();
   const { sesion } = useSesion();
-  const [carrito, setCarrito] = useGuardado<Carrito>(LLAVE_CARRITO, carritoVacio);
+  const carritoDeAfuera = useRef<Carrito | null>(null);
+  const [carrito, setCarrito] = useGuardado<Carrito>(LLAVE_CARRITO, carritoVacio, (antes, ahora) => {
+    carritoDeAfuera.current = ahora;
+    // La otra pestaña cobró, canceló o cambió esta venta: lo de "Paga con" ya no corresponde.
+    setPagaCon(null);
+    if (antes.items.length > 0 && ahora.items.length === 0) avisar({ texto: 'Esta venta se cobró o se cambió en otra pantalla.', tipo: 'info' });
+  });
   const [espera, setEspera] = useGuardado<Espera[]>(LLAVE_ESPERA, []);
   const [ultima, setUltima] = useGuardado<UltimaVenta | null>(LLAVE_ULTIMA, null);
   const ticket = useConsulta(() => leerAjustesTicket(db), [], TICKET_INICIAL);
@@ -212,6 +239,13 @@ function Caja() {
   const ultimoAgregado = useRef(0);
   const ultimoError = useRef(0);
 
+  // Cada venta que se arma lleva su id desde el primer producto: así la misma venta no se cobra dos veces.
+  // Sólo la pestaña donde se armó le pone el id (si no, dos pestañas se pisarían ids distintos).
+  useEffect(() => {
+    if (carrito === carritoDeAfuera.current) return;
+    if (carrito.items.length > 0 && !carrito.id) setCarrito((c) => (c.items.length > 0 && !c.id ? { ...c, id: nuevoIdCarrito() } : c));
+  }, [carrito, setCarrito]);
+
   const total = totalCarrito(carrito);
   const vuelto = pagaCon === null ? 0 : calcularVuelto(total, pagaCon);
   const rapidos = useMemo(() => productos.filter((p) => p.rapido).slice(0, 24), [productos]);
@@ -242,7 +276,7 @@ function Caja() {
   };
 
   const agregar = useCallback(
-    (p: Producto, cantidad: number) => {
+    (p: Producto, cantidad: number, conservarPagaCon = false) => {
       if (buscador.current) buscador.current.value = '';
       // Mientras se guarda el cobro, lo escaneado no entra: se borraría con el carrito.
       if (cobrandoRef.current) {
@@ -266,7 +300,7 @@ function Caja() {
       setCarrito((c) => agregarItem(c, itemDeProducto(p, cantidad)));
       setEntrada('');
       setResaltado(0);
-      setPagaCon(null);
+      if (!conservarPagaCon) setPagaCon(null);
       pitido('ok');
       enfocar();
     },
@@ -274,12 +308,13 @@ function Caja() {
   );
 
   // Un código leído por el lector cuando el cursor está en "Paga con" o en otro campo: se suma como producto.
-  const escaneoEnCampo = (texto: string): boolean => {
+  // Desde "Paga con", el monto que ya estaba escrito queda ("5.000" y después pasaron una Coca): el vuelto se recalcula solo.
+  const escaneoEnCampo = (texto: string, conservarPagaCon = false): boolean => {
     const q = codigoEscaneado(texto);
     if (!q) return false;
     const p = porCodigo.get(q);
-    setPagaCon(null);
-    if (p) agregar(p, 1);
+    if (!conservarPagaCon) setPagaCon(null);
+    if (p) agregar(p, 1, conservarPagaCon);
     else {
       pitido('error');
       setModal({ tipo: 'nuevo', codigo: q, cantidad: 1 });
@@ -403,6 +438,22 @@ function Caja() {
         }
       }
     }
+    // La caja abierta en dos pestañas: si la otra cambió o cobró esta venta y acá todavía no se vio, no se cobra lo viejo.
+    // (Si las dos cobran a la vez, la base rechaza la segunda por el id de la venta.)
+    let cambioAfuera = false;
+    try {
+      const guardado = localStorage.getItem(LLAVE_CARRITO);
+      cambioAfuera = guardado !== null && guardado !== JSON.stringify(carrito);
+    } catch {
+      /* sin almacenamiento: no hay otra pestaña con qué comparar */
+    }
+    if (cambioAfuera) {
+      pitido('error');
+      avisar({ texto: 'Esta venta se cobró o cambió en otra pantalla. Revisá antes de cobrar.', tipo: 'error' });
+      setCarrito(leerGuardado(LLAVE_CARRITO, carritoVacio));
+      setPagaCon(null);
+      return;
+    }
     setCobrando(true);
     cobrandoRef.current = true;
     try {
@@ -413,6 +464,7 @@ function Caja() {
         clienteId: fiado > 0 ? (cliente?.id ?? null) : null,
         ...(pagos ? { pagos } : {}),
         ...(carrito.descuento ? { descuento: carrito.descuento } : {}),
+        ...(carrito.id ? { idCarrito: carrito.id } : {}),
       }, sesion?.usuario);
       pitido('ok');
       const dividido = !!pagos && pagos.length > 1;
@@ -427,6 +479,11 @@ function Caja() {
     } catch (e) {
       pitido('error');
       avisar({ texto: errorATexto(e), tipo: 'error' });
+      // La otra pestaña ya la cobró: acá se vacía también, para no intentarlo de nuevo.
+      if (e instanceof Error && /otra pantalla/.test(e.message)) {
+        setCarrito(carritoVacio);
+        limpiarCobro();
+      }
     } finally {
       cobrandoRef.current = false;
       setCobrando(false);
@@ -672,7 +729,7 @@ function Caja() {
                   id={idPagaCon}
                   valor={pagaCon}
                   onCambio={setPagaCon}
-                  onEscaneo={escaneoEnCampo}
+                  onEscaneo={(codigo) => escaneoEnCampo(codigo, true)}
                   grande
                   placeholder="Justo"
                   onKeyDown={(e) => {
@@ -926,20 +983,16 @@ function Caja() {
           <div className="total total-cobrado" role="status">
             <span>
               {cobrado.pagoFiado
-                ? `Fiado cobrado a ${cobrado.cliente ?? ''} con ${nombreMedio(cobrado.medio)}`
+                ? `Fiado cobrado a ${primerNombre(cobrado.cliente ?? '')} con ${nombreMedio(cobrado.medio)}`
                 : cobrado.vuelto && cobrado.vuelto > 0
                   ? `Cobrado ${formatPesos(cobrado.total)} · Vuelto`
                   : cobrado.medio === 'fiado'
-                    ? `Anotado a ${cobrado.cliente ?? 'fiado'}`
+                    ? `Anotado a ${primerNombre(cobrado.cliente ?? 'fiado')}`
                     : `Cobrado ${cobrado.dividido ? 'en 2 pagos' : `con ${nombreMedio(cobrado.medio)}`}`}
             </span>
             <strong className="importe">{formatPesos(cobrado.vuelto && cobrado.vuelto > 0 ? cobrado.vuelto : cobrado.total)}</strong>
-            {cobrado.pagoFiado && <small>{cobrado.queda && cobrado.queda > 0 ? `Le quedan ${formatPesos(cobrado.queda)}` : 'Quedó al día'}</small>}
-            {cobrado.fiado && cobrado.fiado > 0 && (
-              <small>
-                {formatPesos(cobrado.fiado)} anotados a {cobrado.cliente}
-              </small>
-            )}
+            {cobrado.pagoFiado && <small>{textoQueda(cobrado.queda)}</small>}
+            {cobrado.dividido && cobrado.fiado && cobrado.fiado > 0 ? <small>{formatPesos(cobrado.fiado)} anotados a {primerNombre(cobrado.cliente ?? '')}</small> : null}
             <button
               type="button"
               className="boton boton-chico total-siguiente"
@@ -1005,7 +1058,7 @@ function Caja() {
           <div>
             <small>
               {cobrado.pagoFiado
-                ? `Fiado cobrado a ${primerNombre(cobrado.cliente ?? '')}${cobrado.queda && cobrado.queda > 0 ? ` · le quedan ${formatPesos(cobrado.queda)}` : ' · al día'}`
+                ? `Fiado · ${primerNombre(cobrado.cliente ?? '')} · ${textoQueda(cobrado.queda).toLowerCase()}`
                 : cobrado.vuelto && cobrado.vuelto > 0
                   ? `Cobrado ${formatPesos(cobrado.total)} · Vuelto`
                   : cobrado.medio === 'fiado'
@@ -1069,7 +1122,7 @@ function Caja() {
           cliente={modal.cliente}
           saldo={modal.saldo}
           onHecho={({ monto, medio: m, resto }) =>
-            setCobrado({ id: 0, total: monto, medio: m, hora: Date.now(), cliente: modal.cliente.nombre, pagoFiado: true, queda: Math.max(0, resto) })
+            setCobrado({ id: 0, total: monto, medio: m, hora: Date.now(), cliente: modal.cliente.nombre, pagoFiado: true, queda: resto })
           }
           onCerrar={() => {
             setModal(null);
@@ -1535,13 +1588,39 @@ function ProductoNuevoRapido({
         </p>
         <label className="campo">
           <span className="campo-etiqueta">Nombre</span>
-          <input value={nombre} onChange={(e) => setNombre(e.target.value)} autoFocus placeholder="Ej.: Alfajor Jorgito" />
+          <input
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+            onKeyDown={(e) => {
+              // La cajera pasó otro producto con el cursor acá: el código no queda como parte del nombre.
+              const pegado = e.key === 'Enter' ? codigoAlFinal(nombre) : null;
+              if (!pegado) return;
+              e.preventDefault();
+              setNombre(pegado.texto);
+              pitido('error');
+              avisar({ texto: 'El lector pasó otro código. Primero terminá de cargar este producto y después pasalo de nuevo.', tipo: 'info' });
+            }}
+            autoFocus
+            placeholder="Ej.: Alfajor Jorgito"
+          />
         </label>
         <div className="fila-campos">
           <CampoPesos etiqueta="Precio de venta" valor={precio} onCambio={setPrecio} />
           <label className="campo">
             <span className="campo-etiqueta">Stock (opcional)</span>
-            <input inputMode="numeric" value={stock} onChange={(e) => setStock(e.target.value.replace(/[^\d]/g, ''))} placeholder="0" />
+            <input
+              inputMode="numeric"
+              value={stock}
+              onChange={(e) => setStock(e.target.value.replace(/[^\d]/g, ''))}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || stock.length <= 5) return;
+                e.preventDefault();
+                setStock('');
+                pitido('error');
+                avisar({ texto: 'Eso fue el lector, no un stock. Primero terminá de cargar este producto.', tipo: 'info' });
+              }}
+              placeholder="0"
+            />
           </label>
         </div>
         <button className="boton boton-primario boton-grande" type="submit" disabled={!nombre.trim() || !precio || enCurso}>
@@ -1629,7 +1708,7 @@ function ElegirCliente({
             <li key={c.id}>
               <button type="button" className={i === resaltado ? 'resaltado' : ''} onClick={() => onElegir(c, saldo)}>
                 <span>{c.nombre}</span>
-                <span className={saldo > 0 ? 'texto-alerta importe' : 'texto-suave importe'}>{saldo > 0 ? `debe ${formatPesos(saldo)}` : 'al día'}</span>
+                <span className={saldo > 0 ? 'texto-alerta importe' : 'texto-suave importe'}>{saldo > 0 ? `debe ${formatPesos(saldo)}` : saldo < 0 ? `${formatPesos(-saldo)} a favor` : 'al día'}</span>
               </button>
             </li>
           ))}

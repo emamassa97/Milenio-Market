@@ -33,6 +33,24 @@ function leerLarga(): Guardada | null {
   return s;
 }
 
+// Cada persona recordada tiene además su propia copia: si entra otra con "Recordarme" (o sale), la de esta no se pisa.
+const llaveDe = (usuario: string) => `${LLAVE}.de.${usuario}`;
+
+function leerDe(usuario: string): Guardada | null {
+  const crudo = localStorage.getItem(llaveDe(usuario));
+  if (!crudo) {
+    // Sesiones guardadas antes de que existiera la copia propia.
+    const larga = leerLarga();
+    return larga?.usuario === usuario ? larga : null;
+  }
+  const s = JSON.parse(crudo) as Guardada;
+  if (!s.vence || s.vence < Date.now()) {
+    localStorage.removeItem(llaveDe(usuario));
+    return null;
+  }
+  return s;
+}
+
 function leer(): Guardada | null {
   try {
     const corta = sessionStorage.getItem(LLAVE);
@@ -40,14 +58,13 @@ function leer(): Guardada | null {
       const s = JSON.parse(corta) as Guardada;
       // Si era recordada y otra pestaña salió (o venció), acá también se corta.
       if (!s.vence) return s;
-      const larga = leerLarga();
-      if (!larga) {
+      // Si en otra pestaña entró otra persona con "Recordarme", esta pestaña sigue siendo de quien era.
+      const propia = leerDe(s.usuario);
+      if (!propia) {
         sessionStorage.removeItem(LLAVE);
         return null;
       }
-      // Si en otra pestaña entró otra persona con "Recordarme", esta pestaña sigue siendo de quien era (hasta su vencimiento).
-      if (larga.usuario !== s.usuario) return s.vence > Date.now() ? s : null;
-      return larga;
+      return propia;
     }
     if (sessionStorage.getItem(LLAVE_OTRA)) return null;
     const larga = leerLarga();
@@ -55,6 +72,7 @@ function leer(): Guardada | null {
     // El empleado renueva el plazo cada vez que abre; el dueño no.
     const renovada = larga.admin ? larga : { ...larga, vence: vencimiento(false) };
     localStorage.setItem(LLAVE, JSON.stringify(renovada));
+    localStorage.setItem(llaveDe(renovada.usuario), JSON.stringify(renovada));
     sessionStorage.setItem(LLAVE, JSON.stringify(renovada));
     return renovada;
   } catch {
@@ -71,6 +89,7 @@ const Contexto = createContext<{ sesion: Sesion | null; entrar: (u: Sesion, reco
 
 /** Saca la sesión recordada del equipo sólo si es de este usuario: la de otra persona (en otra pestaña) no se toca. */
 function olvidarSiEsDe(usuario: string) {
+  localStorage.removeItem(llaveDe(usuario));
   if (leerLarga()?.usuario === usuario) localStorage.removeItem(LLAVE);
 }
 
@@ -81,7 +100,7 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     let larga = recordar;
     if (larga === undefined) {
       try {
-        larga = leerLarga()?.usuario === u.usuario;
+        larga = leerDe(u.usuario) !== null;
       } catch {
         larga = false;
       }
@@ -90,7 +109,10 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     try {
       sessionStorage.removeItem(LLAVE_OTRA);
       sessionStorage.setItem(LLAVE, JSON.stringify(s));
-      if (larga) localStorage.setItem(LLAVE, JSON.stringify(s));
+      if (larga) {
+        localStorage.setItem(LLAVE, JSON.stringify(s));
+        localStorage.setItem(llaveDe(u.usuario), JSON.stringify(s));
+      }
       // Entrar sin "Recordarme" olvida la propia sesión recordada; la de otra persona queda.
       else if (recordar === false) olvidarSiEsDe(u.usuario);
     } catch {
@@ -122,15 +144,10 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
   // Salir en una pestaña cierra la sesión recordada de esa misma persona en todas las demás.
   useEffect(() => {
     const cambio = (e: StorageEvent) => {
-      if (e.key !== LLAVE || e.newValue !== null) return;
-      let quien: string | null = null;
-      try {
-        quien = e.oldValue ? (JSON.parse(e.oldValue) as Guardada).usuario : null;
-      } catch {
-        quien = null;
-      }
+      if (!e.key?.startsWith(`${LLAVE}.de.`) || e.newValue !== null) return;
+      const quien = e.key.slice(`${LLAVE}.de.`.length);
       setSesion((s) => {
-        if (!s?.vence || (quien !== null && quien !== s.usuario)) return s;
+        if (!s?.vence || quien !== s.usuario) return s;
         try {
           sessionStorage.removeItem(LLAVE);
         } catch {

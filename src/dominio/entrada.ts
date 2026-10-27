@@ -6,6 +6,16 @@ export function codigoEscaneado(texto: string): string | null {
   return /^\d{8,14}$/.test(digitos) && digitos.length === texto.trim().length ? digitos : null;
 }
 
+/**
+ * Un código que el lector dejó pegado al final de un texto ("Alfajor Jorgito7790895000997").
+ * Ningún nombre termina en 8 cifras o más, así que se separa: el texto queda y el código aparte.
+ */
+export function codigoAlFinal(texto: string): { texto: string; codigo: string } | null {
+  const m = /^(.*?)(\d{8,14})$/.exec(texto.trim());
+  if (!m) return null;
+  return { texto: m[1]!.trimEnd(), codigo: m[2]! };
+}
+
 /** "250" son gramos; "0,5" o "1.2" son kilos (nadie pesa medio gramo). */
 export function gramosDeTexto(texto: string): number {
   const t = texto.trim().replace(',', '.');

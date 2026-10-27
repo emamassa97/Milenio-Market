@@ -87,8 +87,8 @@ function ClaveDelDueño({ motivo, onListo }: { motivo: string; onListo: (u: stri
             {error}
           </p>
         )}
-        <button type="submit" className="boton boton-primario boton-grande" disabled={!usuario.trim() || !clave || enCurso}>
-          Autorizar
+        <button type="submit" className="boton boton-primario boton-grande" disabled={!usuario.trim() || !clave || enCurso} aria-busy={enCurso}>
+          {enCurso ? 'Comprobando la clave…' : 'Autorizar'}
         </button>
       </form>
     </Modal>

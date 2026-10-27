@@ -93,8 +93,9 @@ export function ProveedorAvisos({ children }: { children: ReactNode }) {
   const siguiente = useRef(1);
   const avisar = useCallback((a: Omit<Aviso, 'id'>) => {
     const id = siguiente.current++;
-    // De a dos como mucho, y un "listo" nuevo reemplaza al anterior: no se apilan sobre lo que ya se ve.
-    setAvisos((lista) => [...lista.filter((x) => !(a.tipo === 'ok' && x.tipo === 'ok')).slice(-1), { ...a, id }]);
+    // De a dos como mucho y uno de cada tipo: el nuevo reemplaza al anterior del mismo tipo, y un "listo" borra el error
+    // que quedaba (si se pudo hacer, el error ya no corre).
+    setAvisos((lista) => [...lista.filter((x) => x.tipo !== a.tipo && !(a.tipo === 'ok' && x.tipo === 'error')).slice(-1), { ...a, id }]);
     window.setTimeout(() => setAvisos((lista) => lista.filter((x) => x.id !== id)), a.accion ? 6000 : 3000);
   }, []);
   return (
@@ -150,11 +151,15 @@ export function Modal({
       // React ya enfocó el campo con autoFocus; showModal() lo movería a la ✕.
       const previo = document.activeElement as HTMLElement | null;
       d.showModal();
+      // En una pantalla táctil un campo enfocado abre el teclado encima de la hoja: ahí sólo se enfoca lo pedido con autoFocus.
+      const tactil = !window.matchMedia('(pointer: fine)').matches;
       const elegido =
         previo && d.contains(previo) && !previo.closest('.modal-cabecera')
           ? previo
-          : d.querySelector<HTMLElement>('.modal-cuerpo input:not([type=checkbox]), .modal-cuerpo select, .modal-cuerpo textarea') ??
-            d.querySelector<HTMLElement>('.modal-cuerpo button');
+          : tactil
+            ? null
+            : d.querySelector<HTMLElement>('.modal-cuerpo input:not([type=checkbox]), .modal-cuerpo select, .modal-cuerpo textarea') ??
+              d.querySelector<HTMLElement>('.modal-cuerpo button');
       elegido?.focus();
     }
     const cancelar = (e: Event) => {

@@ -1,5 +1,5 @@
 import { formatoPeso, pagosDeVenta, subtotal } from '../dominio/carrito';
-import { itemsNetos, totalDevuelto } from '../dominio/devoluciones';
+import { cantidadDevuelta, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { nombreMedio, type Venta } from '../dominio/tipos';
 import type { BaseKiosco } from '../datos/db';
@@ -38,14 +38,20 @@ export const escapar = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCo
 
 export function htmlTicket(venta: Venta, a: AjustesTicket): string {
   const fecha = new Date(venta.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
-  // Reimpreso después de una devolución, el ticket muestra lo que quedó.
+  // Reimpreso después de una devolución: los renglones de la venta tal como se cobró, y abajo qué volvió,
+  // así el subtotal sale de lo impreso y el total final es lo que quedó.
   const devuelto = totalDevuelto(venta);
-  const renglones = itemsNetos(venta)
+  const renglones = venta.items
     .map((it) => {
       const detalle = it.gramos ? `<div class="sub">${formatoPeso(it.gramos)}${it.cantidad > 1 ? ` x ${Number(it.cantidad)}` : ''}</div>` : it.cantidad > 1 ? `<div class="sub">${Number(it.cantidad)} x ${formatPesos(it.precioUnitario)}</div>` : '';
       const promo = subtotal(it) < it.precioUnitario * it.cantidad ? `<div class="sub">Promo ${Number(it.promo!.cantidad)} x ${formatPesos(it.promo!.precio)}</div>` : '';
       return `<tr><td>${escapar(it.nombre)}${detalle}${promo}</td><td class="der">${formatPesos(subtotal(it))}</td></tr>`;
     })
+    .join('');
+  const volvio = venta.items
+    .map((it, i) => ({ it, n: cantidadDevuelta(venta, i) }))
+    .filter((r) => r.n > 0)
+    .map((r) => `<div class="sub">${r.it.gramos ? '' : `${r.n} `}${escapar(r.it.nombre)}</div>`)
     .join('');
   const pagos = pagosDeVenta(venta)
     .map((p) => `<tr><td>${escapar(nombreMedio(p.medio))}</td><td class="der">${formatPesos(p.monto)}</td></tr>`)
@@ -77,7 +83,7 @@ td { vertical-align: top; padding: 1px 0; }
 </style></head><body>
 <div class="centro">${encabezado}<div>${fecha}</div><div>Venta N° ${venta.id ?? ''}</div></div>
 <hr><table>${renglones}</table><hr>
-<table>${descuento}<tr class="total"><td>TOTAL</td><td class="der">${formatPesos(venta.total - devuelto)}</td></tr>${devuelto > 0 ? `<tr><td>Cobrado</td><td class="der">${formatPesos(venta.total)}</td></tr><tr><td>Devuelto</td><td class="der">-${formatPesos(devuelto)}</td></tr>` : ''}${pagos}${vuelto}</table>
+<table>${descuento}${devuelto > 0 ? `<tr><td>Cobrado</td><td class="der">${formatPesos(venta.total)}</td></tr><tr><td>Devuelto${volvio}</td><td class="der">-${formatPesos(devuelto)}</td></tr>` : ''}<tr class="total"><td>TOTAL</td><td class="der">${formatPesos(venta.total - devuelto)}</td></tr>${pagos}${vuelto}</table>
 <hr><div class="centro">${escapar(a.pie)}</div><div class="centro sub">Comprobante no válido como factura</div>
 </body></html>`;
 }
@@ -105,6 +111,11 @@ export function imprimirHTML(html: string) {
     marco.contentWindow?.print();
     window.setTimeout(quitar, 60_000);
   };
-  if (doc.readyState === 'complete') window.setTimeout(imprimir, 50);
-  else marco.onload = imprimir;
+  // Se imprime cuando están las fuentes (la lista de precios trae la Poppins); si tardan, no se espera más de 1,5 s.
+  const cuandoHayFuentes = () => {
+    const listas = doc.fonts?.ready ?? Promise.resolve();
+    Promise.race([listas, new Promise((r) => window.setTimeout(r, 1500))]).then(() => window.setTimeout(imprimir, 50));
+  };
+  if (doc.readyState === 'complete') cuandoHayFuentes();
+  else marco.onload = cuandoHayFuentes;
 }

@@ -10,6 +10,7 @@ import { PantallaClientes } from './pantallas/Clientes';
 import { PantallaProductos } from './pantallas/Productos';
 import { PantallaReportes } from './pantallas/Reportes';
 import { PantallaInicio } from './pantallas/Inicio';
+import { Visor } from './pantallas/Visor';
 import { Icono, ProveedorAvisos, type NombreIcono } from './ui/componentes';
 import { ProveedorPermisos, useEsDueño } from './ui/permisos';
 import logoBolsa from './assets/logo-bolsa.svg';
@@ -50,6 +51,8 @@ export function App() {
 
 function Contenido() {
   const { sesion } = useSesion();
+  // La pantalla para el cliente no lleva sesión: sólo muestra la venta que se está cobrando.
+  if (window.location.hash === '#visor') return <Visor />;
   if (!import.meta.env.VITE_DEMO && !sesion) return <PantallaIngreso />;
   return <Sistema />;
 }
@@ -140,11 +143,12 @@ function Sistema() {
     <div className="marco">
       <aside className="lateral" aria-label="Menú">
         <a href="#caja" className="lateral-logo" onClick={() => ir('caja')}>
-          <img src={logo} alt="Milenio Market" />
+          <img src={logo} alt="Milenio Market" className="logo-largo" />
+          <img src={logoBolsa} alt="" className="logo-corto" aria-hidden="true" />
         </a>
         <nav className="lateral-nav" aria-label="Secciones">
           {visibles.map((p) => (
-            <a key={p.id} href={`#${p.id}`} className={pantalla === p.id ? 'activo' : ''} aria-current={pantalla === p.id ? 'page' : undefined}>
+            <a key={p.id} href={`#${p.id}`} className={pantalla === p.id ? 'activo' : ''} aria-current={pantalla === p.id ? 'page' : undefined} title={p.nombre}>
               <Icono nombre={p.icono} tam={20} />
               <span>{p.nombre}</span>
             </a>

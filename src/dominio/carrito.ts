@@ -9,6 +9,8 @@ export const COMPRA_MAXIMA = 99_999;
 export const CANTIDAD_MAXIMA = 999;
 
 export interface Carrito {
+  /** Identifica esta venta mientras se arma; se guarda con la venta cobrada para no cobrarla dos veces. */
+  id?: string;
   items: ItemVenta[];
   /** Descuento sobre toda la venta ("dejámelo en 3.000"). Siempre menor que la suma de los renglones. */
   descuento?: Pesos;
