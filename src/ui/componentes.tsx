@@ -134,10 +134,15 @@ export function Modal({
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) {
+      // React ya enfocó el campo con autoFocus; showModal() lo movería a la ✕.
+      const previo = document.activeElement as HTMLElement | null;
       d.showModal();
-      // El navegador enfoca la ✕; mejor el primer campo para poder escribir directo.
-      const primero = d.querySelector<HTMLElement>('[autofocus], .modal-cuerpo input, .modal-cuerpo select, .modal-cuerpo textarea, .modal-cuerpo button');
-      primero?.focus();
+      const elegido =
+        previo && d.contains(previo) && !previo.closest('.modal-cabecera')
+          ? previo
+          : d.querySelector<HTMLElement>('.modal-cuerpo input:not([type=checkbox]), .modal-cuerpo select, .modal-cuerpo textarea') ??
+            d.querySelector<HTMLElement>('.modal-cuerpo button');
+      elegido?.focus();
     }
     const cancelar = (e: Event) => {
       e.preventDefault();

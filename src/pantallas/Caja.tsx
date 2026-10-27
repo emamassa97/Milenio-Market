@@ -501,9 +501,13 @@ function Caja() {
                       <strong>{it.nombre}</strong>
                       <small className={quedan !== null && prod && prod.stockMinimo > 0 && quedan <= prod.stockMinimo ? 'texto-alerta' : ''}>
                         {it.gramos ? 'por peso' : `${formatPesos(it.precioUnitario)} c/u`}
-                        {it.promo && ahorroPromo(it) > 0 && <span className="promo-etiqueta"> Promo {it.promo.cantidad} x {formatPesos(it.promo.precio)}: ahorra {formatPesos(ahorroPromo(it))}</span>}
                         {quedan !== null && prod && prod.stockMinimo > 0 && quedan <= prod.stockMinimo ? ` · quedan ${Math.max(quedan, 0)}: reponer` : ''}
                       </small>
+                      {it.promo && ahorroPromo(it) > 0 && (
+                        <span className="promo-etiqueta">
+                          <Icono nombre="promo" tam={13} /> Promo {it.promo.cantidad} x {formatPesos(it.promo.precio)}: ahorra {formatPesos(ahorroPromo(it))}
+                        </span>
+                      )}
                     </div>
                     <div className="cantidad">
                       <button type="button" className="boton-icono" aria-label={`Uno menos de ${it.nombre}`} onClick={() => setCarrito((c) => cambiarCantidad(c, i, it.cantidad - 1))}>
@@ -546,7 +550,14 @@ function Caja() {
         </div>
 
         <div className="tarjeta cobro">
-          <h2 className="titulo-chico">Medio de pago</h2>
+          <div className="cobro-cabecera">
+            <h2 className="titulo-chico">Medio de pago</h2>
+            {medio !== 'fiado' && (
+              <button type="button" className="enlace boton-dividir" onClick={() => setModal({ tipo: 'dividir' })} disabled={carrito.items.length === 0}>
+                <Icono nombre="dividir" tam={15} /> Dividir pago
+              </button>
+            )}
+          </div>
           <div className="medios">
             {MEDIOS.map((m) => (
               <button
@@ -594,11 +605,6 @@ function Caja() {
                 <strong className="importe">{formatPesos(vuelto === null ? total - (pagaCon ?? 0) : vuelto)}</strong>
               </div>
             </>
-          )}
-          {medio !== 'fiado' && (
-            <button type="button" className="boton boton-chico boton-dividir" onClick={() => setModal({ tipo: 'dividir' })} disabled={carrito.items.length === 0}>
-              <Icono nombre="dividir" tam={16} /> Pagar con dos medios
-            </button>
           )}
           {medio === 'fiado' && cliente && (
             <button type="button" className="boton boton-texto" onClick={() => setModal({ tipo: 'cliente' })}>

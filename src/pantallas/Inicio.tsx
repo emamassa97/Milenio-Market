@@ -23,7 +23,12 @@ function inicioDelDia(offset = 0): number {
 
 function saludo(): string {
   const h = new Date().getHours();
-  return h < 13 ? 'Buen día' : h < 20 ? 'Buenas tardes' : 'Buenas noches';
+  return h >= 6 && h < 13 ? 'Buen día' : h >= 13 && h < 20 ? 'Buenas tardes' : 'Buenas noches';
+}
+
+function fechaLarga(): string {
+  const t = new Date().toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' }).replace(',', '');
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 function variacion(hoy: number, antes: number): { texto: string; tono: 'sube' | 'baja' | 'igual' } | null {
@@ -107,7 +112,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
         <div>
           <p className="texto-suave">
             {saludo()}
-            {sesion ? `, ${sesion.nombre.split(' ')[0]}` : ''}. {new Date().toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}
+            {sesion ? `, ${sesion.nombre.split(' ')[0]}` : ''}. {fechaLarga()}
           </p>
           <h1 className="inicio-total">
             <span className="importe">{formatPesos(r.total)}</span>
@@ -142,7 +147,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
         </div>
         <div className="tarjeta indicador">
           <span>Fiado sin cobrar</span>
-          <strong className="importe texto-alerta">{formatPesos(fiado.total)}</strong>
+          <strong className={`importe ${fiado.total > 0 ? 'texto-alerta' : ''}`}>{formatPesos(fiado.total)}</strong>
           <small className="texto-suave">
             {fiado.deudores} {fiado.deudores === 1 ? 'cliente debe' : 'clientes deben'}
           </small>
