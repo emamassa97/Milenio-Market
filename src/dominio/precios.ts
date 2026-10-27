@@ -18,6 +18,16 @@ export function aplicarAumento(precio: Pesos, porcentaje: number, redondeo: Redo
   return Math.max(0, redondo);
 }
 
+/**
+ * El precio que mantiene el mismo margen con un costo nuevo, redondeado hacia
+ * arriba: con 38% de margen, un costo de $500 pide $810 (redondeo a $10).
+ */
+export function precioParaMargen(costo: Pesos, margenPorcentaje: number, redondeo: Redondeo = 10): Pesos {
+  if (!(costo > 0) || !(margenPorcentaje < 100)) return 0;
+  const exacto = costo / (1 - Math.max(0, margenPorcentaje) / 100);
+  return Math.ceil(exacto / redondeo - 1e-9) * redondeo;
+}
+
 /** Margen sobre el precio de venta, en %. null si no hay costo cargado. */
 export function margen(precio: Pesos, costo: Pesos): number | null {
   if (costo <= 0 || precio <= 0) return null;

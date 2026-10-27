@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
 import { esGastoDelLocal, resumirTurno } from '../dominio/caja';
+import { totalNeto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { saldoCliente } from '../dominio/fiado';
 import { paraReponer, porVencer, resumirVentas } from '../dominio/reportes';
-import type { MovimientoCaja, Producto, Venta } from '../dominio/tipos';
+import type { Evento, MovimientoCaja, Producto, Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { turnoAbierto } from '../datos/operaciones';
 import { hora, Icono, sinCortes } from '../ui/componentes';
@@ -47,6 +48,30 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
     async () =>
       (await db.movimientosCaja.filter((m: MovimientoCaja) => m.fecha >= inicioDelDia() && esGastoDelLocal(m)).toArray())
         .reduce((s, m) => s + m.monto, 0),
+    [],
+    0,
+  );
+  // Control del dueño: ventas que se armaron y se cancelaron antes de cobrar.
+  const canceladas = useConsulta(
+    async () => {
+      const evs = (await db.eventos.where('fecha').aboveOrEqual(inicioDelDia()).toArray()).filter((e: Evento) => e.tipo === 'cancelacion');
+      const porUsuario = new Map<string, number>();
+      for (const e of evs) porUsuario.set(e.usuario ?? 'sin usuario', (porUsuario.get(e.usuario ?? 'sin usuario') ?? 0) + 1);
+      return { cantidad: evs.length, monto: evs.reduce((s, e) => s + e.monto, 0), porUsuario: [...porUsuario.entries()].sort((a, b) => b[1] - a[1]) };
+    },
+    [],
+    { cantidad: 0, monto: 0, porUsuario: [] as [string, number][] },
+  );
+  // Plata devuelta hoy, aunque la venta sea de otro día.
+  const devueltoHoy = useConsulta(
+    async () => {
+      const hoy = inicioDelDia();
+      let total = 0;
+      for (const v of await db.ventas.filter((v: Venta) => !!v.devoluciones?.length).toArray()) {
+        for (const d of v.devoluciones ?? []) if (d.fecha >= hoy) total += d.monto;
+      }
+      return total;
+    },
     [],
     0,
   );
@@ -98,7 +123,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
   const dias = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => {
       const desde = hace7 + i * DIA;
-      const total = ventas.filter((v) => !v.anulada && v.fecha >= desde && v.fecha < desde + DIA).reduce((s, v) => s + v.total, 0);
+      const total = ventas.filter((v) => !v.anulada && v.fecha >= desde && v.fecha < desde + DIA).reduce((s, v) => s + totalNeto(v), 0);
       const fecha = new Date(desde);
       return { total, etiqueta: i === 6 ? 'Hoy' : fecha.toLocaleDateString('es-AR', { weekday: 'short' }).replace('.', ''), hoy: i === 6 };
     });
@@ -189,6 +214,12 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
                 <dt>Ventas del turno</dt>
                 <dd className="importe">{formatPesos(caja.resumen.totalVendido)}</dd>
               </div>
+              {caja.resumen.devuelto > 0 && (
+                <div>
+                  <dt>Devuelto</dt>
+                  <dd className="importe">− {formatPesos(caja.resumen.devuelto)}</dd>
+                </div>
+              )}
               <div className="cuentas-total">
                 <dt>Efectivo que debería haber</dt>
                 <dd className="importe">{formatPesos(caja.resumen.efectivoEsperado)}</dd>
@@ -264,6 +295,31 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
                 </span>
               </button>
             </li>
+            {(canceladas.cantidad > 0 || devueltoHoy > 0) && (
+              <li>
+                <button type="button" onClick={() => ir('cierre')}>
+                  <span className={`alerta-icono ${canceladas.cantidad >= 3 ? 'alerta-aviso' : 'alerta-ok'}`}>
+                    <Icono nombre="deshacer" tam={18} />
+                  </span>
+                  <span>
+                    <strong>
+                      {canceladas.cantidad > 0
+                        ? `${canceladas.cantidad} ${canceladas.cantidad === 1 ? 'venta cancelada' : 'ventas canceladas'} antes de cobrar`
+                        : `Devoluciones de hoy: ${formatPesos(devueltoHoy)}`}
+                    </strong>
+                    <small>
+                      {[
+                        canceladas.cantidad > 0 && `${formatPesos(canceladas.monto)} sin cobrar`,
+                        canceladas.porUsuario.length > 1 && canceladas.porUsuario.map(([u, c]) => `${u}: ${c}`).join(', '),
+                        canceladas.cantidad > 0 && devueltoHoy > 0 && `devoluciones de hoy: ${formatPesos(devueltoHoy)}`,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </small>
+                  </span>
+                </button>
+              </li>
+            )}
           </ul>
         </section>
       </div>

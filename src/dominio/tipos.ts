@@ -36,6 +36,8 @@ export interface Producto {
   promo?: Promo | null;
   /** Fecha de vencimiento más próxima, 'AAAA-MM-DD'. */
   vence?: string | null;
+  /** A quién se le compra, para armar el pedido por proveedor. */
+  proveedor?: string;
   creado: number;
   actualizado: number;
 }
@@ -63,6 +65,20 @@ export interface ItemVenta {
   promo?: Promo | null;
 }
 
+/** Parte de una venta que volvió: el cliente devolvió o cambió algo ya cobrado. */
+export interface Devolucion {
+  fecha: number;
+  /** Caja abierta cuando se devolvió: la plata sale de ahí. */
+  turnoId: number;
+  /** Renglón de `items` y cuántas unidades volvieron. */
+  items: { indice: number; cantidad: number }[];
+  monto: Pesos;
+  /** Cómo se devolvió la plata. 'fiado' se descuenta de la cuenta del cliente. */
+  medio: MedioPago;
+  motivo: string;
+  usuario?: string;
+}
+
 export interface Venta {
   id?: number;
   fecha: number;
@@ -82,6 +98,8 @@ export interface Venta {
   usuario?: string;
   /** Usuario que anuló la venta. */
   anuladaPor?: string;
+  /** Lo que se devolvió después de cobrar. `total` sigue siendo lo cobrado. */
+  devoluciones?: Devolucion[];
 }
 
 export interface Turno {
@@ -101,7 +119,8 @@ export interface Turno {
   usuarioCierre?: string;
 }
 
-export type TipoMovimientoCaja = 'retiro' | 'gasto' | 'ingreso';
+/** 'devolucion' es plata que vuelve al cliente por una venta ya cobrada; la anota el sistema, no se carga a mano. */
+export type TipoMovimientoCaja = 'retiro' | 'gasto' | 'ingreso' | 'devolucion';
 
 export interface MovimientoCaja {
   id?: number;
@@ -114,6 +133,8 @@ export interface MovimientoCaja {
   usuario?: string;
   /** Pago de mercadería: ya está en el costo, no cuenta como gasto del local. */
   mercaderia?: boolean;
+  /** Devolución: de qué venta salió la plata. */
+  ventaId?: number;
 }
 
 export interface Cliente {
@@ -133,8 +154,21 @@ export interface MovimientoFiado {
   monto: Pesos;
   ventaId: number | null;
   turnoId: number | null;
-  /** Cómo pagó (sólo en pagos). */
+  /** Cómo pagó (sólo en pagos). Un pago sin medio es una devolución que se descontó de la cuenta. */
   medio: MedioPago | null;
   nota: string;
   anulado: boolean;
+  /** Usuario que anuló el pago. */
+  anuladoPor?: string;
+}
+
+/** Algo que pasó en la caja y conviene que el dueño vea, como una venta cancelada antes de cobrar. */
+export interface Evento {
+  id?: number;
+  fecha: number;
+  tipo: 'cancelacion';
+  turnoId: number | null;
+  monto: Pesos;
+  detalle: string;
+  usuario?: string;
 }

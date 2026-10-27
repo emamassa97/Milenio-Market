@@ -69,6 +69,7 @@ export function PantallaReportes() {
   );
 
   const r = useMemo(() => resumirVentas(ventas), [ventas]);
+  const cobradoBruto = Math.max(1, Object.values(r.porMedio).reduce((a, b) => a + b, 0));
   const reponer = useMemo(() => paraReponer(productos), [productos]);
   const quietos = useMemo(() => sinMovimiento(productos, ventas30).slice(0, 10), [productos, ventas30]);
   const maxHora = Math.max(...r.porHora, 1);
@@ -94,6 +95,7 @@ export function PantallaReportes() {
         <div className="tarjeta indicador">
           <span>Vendiste</span>
           <strong className="importe">{formatPesos(r.total)}</strong>
+          {r.devuelto > 0 && <small className="texto-suave">Ya descontados {formatPesos(r.devuelto)} devueltos de estas ventas</small>}
         </div>
         <div className="tarjeta indicador">
           <span>Ventas</span>
@@ -138,7 +140,7 @@ export function PantallaReportes() {
                 <li key={m.id}>
                   <span>{m.nombre}</span>
                   <div className="barra-medio">
-                    <div style={{ width: `${(r.porMedio[m.id] / r.total) * 100}%` }} />
+                    <div style={{ width: `${(r.porMedio[m.id] / cobradoBruto) * 100}%` }} />
                   </div>
                   <span className="importe">{formatPesos(r.porMedio[m.id])}</span>
                 </li>

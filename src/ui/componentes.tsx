@@ -53,6 +53,7 @@ import {
   Trash2,
   TriangleAlert,
   Undo2,
+  PackageX,
   Upload,
   UserRound,
   Wifi,
@@ -280,6 +281,7 @@ const ICONOS = {
   usuario: UserRound,
   reloj: Clock,
   deshacer: Undo2,
+  devolver: PackageX,
   copiar: Copy,
   bandeja: Inbox,
   dividir: Split,
@@ -296,6 +298,32 @@ const ICONOS = {
 } satisfies Record<string, LucideIcon>;
 
 export type NombreIcono = keyof typeof ICONOS;
+
+/** Copia al portapapeles; en http (sin https) el navegador no da navigator.clipboard y se usa el método viejo. */
+export async function copiarTexto(texto: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(texto);
+      return true;
+    }
+  } catch {
+    /* se prueba el método viejo */
+  }
+  try {
+    const area = document.createElement('textarea');
+    area.value = texto;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
 
 export function Icono({ nombre, tam = 22 }: { nombre: NombreIcono; tam?: number }) {
   const Componente = ICONOS[nombre];

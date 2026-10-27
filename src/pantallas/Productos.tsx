@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/csv';
 import { formatPesos } from '../dominio/dinero';
 import { cantidadDeTexto, codigoEscaneado } from '../dominio/entrada';
-import { aplicarAumento, margen, type Redondeo } from '../dominio/precios';
+import { aplicarAumento, margen, precioParaMargen, type Redondeo } from '../dominio/precios';
 import type { Producto } from '../dominio/tipos';
 import { diasParaVencer } from '../dominio/reportes';
 import { db } from '../datos/db';
@@ -16,7 +16,7 @@ import {
   ingresarMercaderia,
   type DatosProducto,
 } from '../datos/operaciones';
-import { CampoPesos, descargarArchivo, Desplegable, errorATexto, Icono, Modal, sinCortes, useAvisar, Vacio } from '../ui/componentes';
+import { CampoPesos, copiarTexto, descargarArchivo, Desplegable, errorATexto, Icono, Modal, sinCortes, useAvisar, Vacio } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
 import { pitido, useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
@@ -60,6 +60,10 @@ export function PantallaProductos() {
 
   const categorias = useMemo(
     () => [...new Set(productos.map((p) => p.categoria).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [productos],
+  );
+  const proveedores = useMemo(
+    () => [...new Set(productos.map((p) => p.proveedor?.trim() ?? '').filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [productos],
   );
 
@@ -237,17 +241,17 @@ export function PantallaProductos() {
         </div>
       )}
 
-      {modal?.tipo === 'editar' && <EditarProducto producto={modal.producto} categorias={categorias} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'editar' && <EditarProducto producto={modal.producto} categorias={categorias} proveedores={proveedores} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'aumento' && <AumentoPrecios productos={productos} visibles={visibles} categorias={categorias} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'planilla' && <Planilla productos={productos} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'stock' && <SumarStock producto={modal.producto} onCerrar={() => setModal(null)} />}
-      {modal?.tipo === 'compra' && <IngresoMercaderia productos={productos} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'compra' && <IngresoMercaderia productos={productos} proveedores={proveedores} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'pedido' && <PedidoProveedor productos={productos.filter(necesitaReponer)} onCerrar={() => setModal(null)} />}
     </div>
   );
 }
 
-function EditarProducto({ producto, categorias, onCerrar }: { producto?: Producto; categorias: string[]; onCerrar: () => void }) {
+function EditarProducto({ producto, categorias, proveedores, onCerrar }: { producto?: Producto; categorias: string[]; proveedores: string[]; onCerrar: () => void }) {
   const avisar = useAvisar();
   const [d, setD] = useState<DatosProducto>(
     producto
@@ -263,8 +267,9 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
           porPeso: producto.porPeso ?? false,
           promo: producto.promo ?? null,
           vence: producto.vence ?? null,
+          proveedor: producto.proveedor ?? '',
         }
-      : { codigo: '', nombre: '', precio: 0, costo: 0, stock: 0, stockMinimo: 0, categoria: '', rapido: false, porPeso: false, promo: null, vence: null },
+      : { codigo: '', nombre: '', precio: 0, costo: 0, stock: 0, stockMinimo: 0, categoria: '', rapido: false, porPeso: false, promo: null, vence: null, proveedor: '' },
   );
   const [precio, setPrecio] = useState<number | null>(producto ? producto.precio : null);
   const [costo, setCosto] = useState<number | null>(producto && producto.costo > 0 ? producto.costo : null);
@@ -338,15 +343,26 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
             <input inputMode="numeric" value={d.stockMinimo} onChange={(e) => setD({ ...d, stockMinimo: Number(e.target.value.replace(/\D/g, '')) || 0 })} />
           </label>
         </div>
-        <label className="campo">
-          <span className="campo-etiqueta">Categoría</span>
-          <input list="categorias" value={d.categoria} onChange={(e) => setD({ ...d, categoria: e.target.value })} placeholder="Ej.: Bebidas, Golosinas, Cigarrillos" />
-          <datalist id="categorias">
-            {categorias.map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
-        </label>
+        <div className="fila-campos">
+          <label className="campo">
+            <span className="campo-etiqueta">Categoría</span>
+            <input list="categorias" value={d.categoria} onChange={(e) => setD({ ...d, categoria: e.target.value })} placeholder="Ej.: Bebidas, Golosinas" />
+            <datalist id="categorias">
+              {categorias.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+          </label>
+          <label className="campo">
+            <span className="campo-etiqueta">Proveedor (opcional)</span>
+            <input list="proveedores" value={d.proveedor ?? ''} onChange={(e) => setD({ ...d, proveedor: e.target.value })} placeholder="Para armar el pedido" />
+            <datalist id="proveedores">
+              {proveedores.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+          </label>
+        </div>
         <label className="casilla">
           <input type="checkbox" checked={d.rapido} onChange={(e) => setD({ ...d, rapido: e.target.checked })} />
           <span>Botón rápido en la caja (para lo que más sale)</span>
@@ -626,22 +642,46 @@ function Planilla({ productos, onCerrar }: { productos: Producto[]; onCerrar: ()
   );
 }
 
+const SIN_PROVEEDOR = 'Sin proveedor';
+
 function PedidoProveedor({ productos, onCerrar }: { productos: Producto[]; onCerrar: () => void }) {
   const avisar = useAvisar();
   const [cantidades, setCantidades] = useState<Record<number, number>>(() =>
     Object.fromEntries(productos.map((p) => [p.id!, Math.max(1, p.stockMinimo * 2 - p.stock)])),
   );
+  // Un pedido por proveedor: cada uno recibe sólo lo suyo.
+  const grupos = useMemo(() => {
+    const m = new Map<string, Producto[]>();
+    for (const p of productos) {
+      const k = p.proveedor?.trim() || SIN_PROVEEDOR;
+      m.set(k, [...(m.get(k) ?? []), p]);
+    }
+    return [...m.entries()].sort(([a], [b]) => (a === SIN_PROVEEDOR ? 1 : b === SIN_PROVEEDOR ? -1 : a.localeCompare(b)));
+  }, [productos]);
+  const [elegido, setGrupo] = useState<string | null>(null);
+  // Si el grupo elegido desapareció (se repuso desde otro equipo), se pasa al primero.
+  const grupo = elegido !== null && grupos.some(([k]) => k === elegido) ? elegido : (grupos[0]?.[0] ?? SIN_PROVEEDOR);
+  const lista = grupos.find(([k]) => k === grupo)?.[1] ?? [];
   const texto = [
     'Hola, te paso el pedido de Milenio Market:',
-    ...productos.filter((p) => (cantidades[p.id!] ?? 0) > 0).map((p) => `• ${cantidades[p.id!]} x ${p.nombre}`),
+    ...lista.filter((p) => (cantidades[p.id!] ?? 0) > 0).map((p) => `• ${cantidades[p.id!]} x ${p.nombre}`),
     'Gracias!',
   ].join('\n');
   return (
     <Modal titulo="Pedido al proveedor" onCerrar={onCerrar} ancho="ancho">
       <div className="formulario">
         <p className="texto-suave">Lo que está por debajo del mínimo. Ajustá las cantidades y mandalo por WhatsApp.</p>
+        {grupos.length > 1 && (
+          <div className="segmentos segmentos-scroll" role="group" aria-label="Proveedor">
+            {grupos.map(([k, ps]) => (
+              <button key={k} type="button" className={grupo === k ? 'activo' : ''} aria-pressed={grupo === k} onClick={() => setGrupo(k)}>
+                {k} ({ps.length})
+              </button>
+            ))}
+          </div>
+        )}
         <ul className="lista-pedido">
-          {productos.map((p) => (
+          {lista.map((p) => (
             <li key={p.id}>
               <span>
                 {p.nombre} <small className="texto-suave">(quedan {p.stock})</small>
@@ -659,12 +699,7 @@ function PedidoProveedor({ productos, onCerrar }: { productos: Producto[]; onCer
           <button
             type="button"
             className="boton"
-            onClick={() =>
-              navigator.clipboard
-                .writeText(texto)
-                .then(() => avisar({ texto: 'Pedido copiado.', tipo: 'ok' }))
-                .catch(() => avisar({ texto: 'No se pudo copiar.', tipo: 'error' }))
-            }
+            onClick={async () => avisar((await copiarTexto(texto)) ? { texto: 'Pedido copiado.', tipo: 'ok' } : { texto: 'No se pudo copiar.', tipo: 'error' })}
           >
             <Icono nombre="copiar" tam={18} /> Copiar
           </button>
@@ -683,11 +718,19 @@ function Vencimiento({ vence }: { vence: string }) {
   return <span className={`insignia ${dias <= 7 ? 'insignia-alerta' : dias <= 15 ? 'insignia-aviso' : ''}`}>{texto}</span>;
 }
 
-function IngresoMercaderia({ productos, onCerrar }: { productos: Producto[]; onCerrar: () => void }) {
+interface RenglonIngreso {
+  p: Producto;
+  cantidad: string;
+  costo: number | null;
+  /** Subir el precio de venta para mantener el margen con el costo nuevo. */
+  mantenerMargen: boolean;
+}
+
+function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Producto[]; proveedores: string[]; onCerrar: () => void }) {
   const avisar = useAvisar();
   const { sesion } = useSesion();
   const [q, setQ] = useState('');
-  const [renglones, setRenglones] = useState<{ p: Producto; cantidad: string; costo: number | null }[]>([]);
+  const [renglones, setRenglones] = useState<RenglonIngreso[]>([]);
   const [proveedor, setProveedor] = useState('');
   const [deCaja, setDeCaja] = useState(false);
   const [pagado, setPagado] = useState<number | null>(null);
@@ -701,9 +744,17 @@ function IngresoMercaderia({ productos, onCerrar }: { productos: Producto[]; onC
   }, [q, productos, renglones]);
   const porCodigo = useMemo(() => new Map(productos.filter((p) => p.codigo).map((p) => [p.codigo, p])), [productos]);
   const sumar = (p: Producto) => {
-    setRenglones((r) => (r.some((x) => x.p.id === p.id) ? r : [...r, { p, cantidad: '', costo: p.costo > 0 ? p.costo : null }]));
+    setRenglones((r) => (r.some((x) => x.p.id === p.id) ? r : [...r, { p, cantidad: '', costo: p.costo > 0 ? p.costo : null, mantenerMargen: true }]));
     setQ('');
     buscador.current?.focus();
+    if (!proveedor && p.proveedor) setProveedor(p.proveedor);
+  };
+  // Si el costo subió, el precio sugerido conserva el margen que tenía el producto.
+  const precioNuevo = (r: RenglonIngreso): number | null => {
+    const m = margen(r.p.precio, r.p.costo);
+    if (m === null || r.costo === null || r.costo <= r.p.costo) return null;
+    const nuevo = precioParaMargen(r.costo, m);
+    return nuevo > r.p.precio ? nuevo : null;
   };
   // El lector escribe donde esté el cursor: un código en cualquier campo se toma como escaneo.
   const escaneo = (texto: string): boolean => {
@@ -741,11 +792,18 @@ function IngresoMercaderia({ productos, onCerrar }: { productos: Producto[]; onC
             try {
               const gasto = await ingresarMercaderia(
                 db,
-                renglones.map((r) => ({ productoId: r.p.id!, cantidad: cant(r), costo: r.costo ?? 0 })),
+                renglones.map((r) => {
+                  const nuevo = r.mantenerMargen ? precioNuevo(r) : null;
+                  return { productoId: r.p.id!, cantidad: cant(r), costo: r.costo ?? 0, ...(nuevo ? { precio: nuevo } : {}) };
+                }),
                 { proveedor, pagadoDeCaja: deCaja, montoPagado: deCaja ? montoCaja : undefined },
                 sesion?.usuario,
               );
-              avisar({ texto: `Stock actualizado${deCaja && gasto > 0 ? `. Gasto de ${formatPesos(gasto)} anotado en la caja` : ''}.`, tipo: 'ok' });
+              const conPrecio = renglones.filter((r) => r.mantenerMargen && precioNuevo(r)).length;
+              avisar({
+                texto: `Stock actualizado${conPrecio > 0 ? ` y ${conPrecio === 1 ? '1 precio subido' : `${conPrecio} precios subidos`}` : ''}${deCaja && gasto > 0 ? `. Gasto de ${formatPesos(gasto)} anotado en la caja` : ''}.`,
+                tipo: 'ok',
+              });
               onCerrar();
             } catch (err) {
               avisar({ texto: errorATexto(err), tipo: 'error' });
@@ -792,11 +850,18 @@ function IngresoMercaderia({ productos, onCerrar }: { productos: Producto[]; onC
         </div>
         {renglones.length > 0 && (
           <ul className="lista-compra">
-            {renglones.map((r, i) => (
-              <li key={r.p.id}>
+            {renglones.map((r, i) => {
+              const nuevo = precioNuevo(r);
+              const m = margen(r.p.precio, r.p.costo);
+              const mNuevo = r.costo ? margen(r.p.precio, r.costo) : null;
+              return (
+              <li key={r.p.id} className={nuevo ? 'lista-compra-con-precio' : ''}>
                 <span className="lista-compra-nombre">
                   <strong>{r.p.nombre}</strong>
-                  <small className="texto-suave">hay {textoStock(r.p)}</small>
+                  <small className="texto-suave">
+                    hay {textoStock(r.p)} · vendés a {formatPesos(r.p.precio)}
+                    {m !== null && ` (ganás ${m}%)`}
+                  </small>
                 </span>
                 <label className="campo">
                   <span className="campo-etiqueta">{r.p.porPeso ? 'Kilos' : 'Cantidad'}</span>
@@ -821,14 +886,29 @@ function IngresoMercaderia({ productos, onCerrar }: { productos: Producto[]; onC
                 <button type="button" className="boton-icono" aria-label={`Sacar ${r.p.nombre}`} onClick={() => setRenglones((x) => x.filter((_, j) => j !== i))}>
                   <Icono nombre="basura" tam={18} />
                 </button>
+                {nuevo && (
+                  <label className="casilla lista-compra-precio">
+                    <input type="checkbox" checked={r.mantenerMargen} onChange={(e) => setRenglones((x) => x.map((y, j) => (j === i ? { ...y, mantenerMargen: e.target.checked } : y)))} />
+                    <span>
+                      Subir el precio a <strong>{formatPesos(nuevo)}</strong> para seguir ganando {m}%
+                      {mNuevo !== null && !r.mantenerMargen && <small className="texto-aviso"> (si no, pasás a ganar {mNuevo}%)</small>}
+                    </span>
+                  </label>
+                )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
         <div className="fila-campos">
           <label className="campo">
             <span className="campo-etiqueta">Proveedor (opcional)</span>
-            <input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej.: Distribuidora Arcor" />
+            <input list="proveedores-ingreso" value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej.: Distribuidora Arcor" />
+            <datalist id="proveedores-ingreso">
+              {proveedores.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
           </label>
         </div>
         <label className="casilla">

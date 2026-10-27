@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { Cliente, MovimientoCaja, MovimientoFiado, Producto, Turno, Venta } from '../dominio/tipos';
+import type { Cliente, Evento, MovimientoCaja, MovimientoFiado, Producto, Turno, Venta } from '../dominio/tipos';
 
 export interface Ajuste {
   clave: string;
@@ -15,7 +15,7 @@ export interface Borrado {
 }
 
 /** Tablas que se copian a la nube. Cada fila lleva `_v`: cuándo cambió por última vez. */
-export const TABLAS_NUBE = ['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes'] as const;
+export const TABLAS_NUBE = ['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes', 'eventos'] as const;
 export type TablaNube = (typeof TABLAS_NUBE)[number];
 
 let ultimaMarca = 0;
@@ -59,6 +59,7 @@ export class BaseKiosco extends Dexie {
   movimientosFiado!: Table<MovimientoFiado, number>;
   ajustes!: Table<Ajuste, string>;
   borrados!: Table<Borrado, number>;
+  eventos!: Table<Evento, number>;
 
   constructor(nombre = 'milenio-market') {
     super(nombre);
@@ -87,6 +88,7 @@ export class BaseKiosco extends Dexie {
       .upgrade(async (tx) => {
         let n = 0;
         for (const t of TABLAS_NUBE) {
+          if (t === 'eventos') continue; // recién existe en la versión 3
           await tx
             .table(t)
             .toCollection()
@@ -95,6 +97,8 @@ export class BaseKiosco extends Dexie {
             });
         }
       });
+    // Versión 3: eventos de la caja (ventas canceladas antes de cobrar) para que el dueño los vea.
+    this.version(3).stores({ eventos: '++id, fecha, tipo, _v' });
     for (const t of TABLAS_NUBE) {
       const tabla = this.table(t);
       tabla.hook('creating', (_clave, fila: Record<string, unknown>) => {

@@ -20,7 +20,7 @@ export interface Dependencias {
  * src/datos/db.ts (acá no se puede importar Dexie); un test controla que
  * coincidan.
  */
-export const TABLAS_SERVIDOR = ['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes'] as const;
+export const TABLAS_SERVIDOR = ['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes', 'eventos'] as const;
 const TABLAS = new Set<string>(TABLAS_SERVIDOR);
 const MAX_REGISTROS = 1000;
 const PAGINA = 1000;
