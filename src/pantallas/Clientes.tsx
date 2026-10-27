@@ -58,7 +58,7 @@ export function PantallaClientes() {
       </div>
 
       {filas.length === 0 ? (
-        <Vacio titulo="Todavía no hay clientes">
+        <Vacio titulo="Todavía no hay clientes" icono="clientes">
           <p className="texto-suave">Se crean acá o en la caja, al elegir "Fiado" como medio de pago.</p>
         </Vacio>
       ) : (
@@ -134,7 +134,7 @@ export function PantallaClientes() {
                 </ul>
               </>
             ) : (
-              <Vacio titulo="Elegí un cliente para ver su cuenta" />
+              <Vacio titulo="Elegí un cliente para ver su cuenta" icono="usuario" />
             )}
           </section>
         </div>

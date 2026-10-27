@@ -7,6 +7,48 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import {
+  Banknote,
+  Calculator,
+  ChartColumn,
+  Check,
+  Clock,
+  Cloud,
+  CloudOff,
+  Copy,
+  CreditCard,
+  Download,
+  Ellipsis,
+  Inbox,
+  Landmark,
+  Lock,
+  LogOut,
+  MessageCircle,
+  Minus,
+  NotebookPen,
+  Package,
+  PackageOpen,
+  Pause,
+  Pencil,
+  Percent,
+  Plus,
+  QrCode,
+  Receipt,
+  ScanBarcode,
+  Search,
+  Settings,
+  ShoppingCart,
+  Star,
+  Trash2,
+  TriangleAlert,
+  Undo2,
+  Upload,
+  UserRound,
+  Wifi,
+  WifiOff,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import { formatPesos, parsePesos } from '../dominio/dinero';
 import { ErrorKiosco } from '../datos/operaciones';
 
@@ -81,7 +123,12 @@ export function Modal({
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
-    if (d && !d.open) d.showModal();
+    if (d && !d.open) {
+      d.showModal();
+      // El navegador enfoca la ✕; mejor el primer campo para poder escribir directo.
+      const primero = d.querySelector<HTMLElement>('[autofocus], .modal-cuerpo input, .modal-cuerpo select, .modal-cuerpo textarea, .modal-cuerpo button');
+      primero?.focus();
+    }
     const cancelar = (e: Event) => {
       e.preventDefault();
       onCerrar();
@@ -162,72 +209,63 @@ function formatearEdicion(v: number): string {
   return formatPesos(v).replace('$ ', '');
 }
 
-// ---------- Íconos (trazo, heredan el color del texto) ----------
+// ---------- Íconos (Lucide, heredan el color del texto) ----------
 
-const TRAZOS: Record<string, ReactNode> = {
-  cerrar: <path d="M6 6l12 12M18 6L6 18" />,
-  camara: (
-    <>
-      <path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2" />
-      <path d="M8 8v8M11 8v8M14 8v8M17 8v8" />
-    </>
-  ),
-  mas: <path d="M12 5v14M5 12h14" />,
-  menos: <path d="M5 12h14" />,
-  basura: <path d="M5 7h14M10 11v6M14 11v6M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12M9 7V4h6v3" />,
-  estrella: <path d="M12 4l2.4 5 5.4.7-4 3.7 1 5.4L12 16.3 7.2 18.8l1-5.4-4-3.7 5.4-.7z" />,
-  lapiz: <path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4" />,
-  buscar: (
-    <>
-      <circle cx="11" cy="11" r="6" />
-      <path d="M20 20l-4.5-4.5" />
-    </>
-  ),
-  check: <path d="M5 12l5 5L19 7" />,
-  pausa: <path d="M9 6v12M15 6v12" />,
-  whatsapp: <path d="M5 19l1.2-3.6A7.5 7.5 0 1 1 9 18.6zM9.5 9.5c0 3 2 5 5 5l1-1.5-2-1-1 1c-1 0-2.5-1.5-2.5-2.5l1-1-1-2z" />,
-  descargar: <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />,
-  subir: <path d="M12 16V5M7 10l5-5 5 5M5 20h14" />,
-  nube: <path d="M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6 9.5 4.25 4.25 0 0 0 7 18Z" />,
-  porcentaje: (
-    <>
-      <path d="M6 18L18 6" />
-      <circle cx="7.5" cy="7.5" r="2" />
-      <circle cx="16.5" cy="16.5" r="2" />
-    </>
-  ),
-  caja: <path d="M4 8h16v11H4zM4 8l2-4h12l2 4M9 12h6" />,
-  ajustes: (
-    <>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
-    </>
-  ),
-  copiar: <path d="M9 9h10v10H9zM5 15V5h10" />,
-  deshacer: <path d="M9 7L4 12l5 5M4 12h11a5 5 0 0 1 0 10h-2" />,
-};
+const ICONOS = {
+  cerrar: X,
+  camara: ScanBarcode,
+  mas: Plus,
+  menos: Minus,
+  basura: Trash2,
+  estrella: Star,
+  lapiz: Pencil,
+  buscar: Search,
+  check: Check,
+  pausa: Pause,
+  whatsapp: MessageCircle,
+  descargar: Download,
+  subir: Upload,
+  nube: Cloud,
+  'nube-no': CloudOff,
+  porcentaje: Percent,
+  caja: ShoppingCart,
+  productos: Package,
+  cierre: Calculator,
+  reportes: ChartColumn,
+  clientes: NotebookPen,
+  ajustes: Settings,
+  salir: LogOut,
+  wifi: Wifi,
+  'wifi-no': WifiOff,
+  menu: Ellipsis,
+  candado: Lock,
+  efectivo: Banknote,
+  tarjeta: CreditCard,
+  qr: QrCode,
+  transferencia: Landmark,
+  ticket: Receipt,
+  alerta: TriangleAlert,
+  vacio: PackageOpen,
+  usuario: UserRound,
+  reloj: Clock,
+  deshacer: Undo2,
+  copiar: Copy,
+  bandeja: Inbox,
+} satisfies Record<string, LucideIcon>;
 
-export function Icono({ nombre, tam = 22 }: { nombre: keyof typeof TRAZOS | string; tam?: number }) {
-  return (
-    <svg
-      width={tam}
-      height={tam}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {TRAZOS[nombre]}
-    </svg>
-  );
+export type NombreIcono = keyof typeof ICONOS;
+
+export function Icono({ nombre, tam = 22 }: { nombre: NombreIcono; tam?: number }) {
+  const Componente = ICONOS[nombre];
+  return <Componente size={tam} strokeWidth={1.75} aria-hidden="true" />;
 }
 
-export function Vacio({ titulo, children }: { titulo: string; children?: ReactNode }) {
+export function Vacio({ titulo, children, icono = 'vacio' }: { titulo: string; children?: ReactNode; icono?: NombreIcono }) {
   return (
     <div className="vacio">
+      <span className="vacio-icono">
+        <Icono nombre={icono} tam={28} />
+      </span>
       <p className="vacio-titulo">{titulo}</p>
       {children}
     </div>

@@ -101,7 +101,7 @@ export function PantallaReportes() {
       </div>
 
       {r.cantidad === 0 ? (
-        <Vacio titulo="No hay ventas en este período" />
+        <Vacio titulo="No hay ventas en este período" icono="reportes" />
       ) : (
         <div className="reportes">
           <section className="tarjeta">

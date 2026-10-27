@@ -4,8 +4,17 @@ import { formatPesos } from '../dominio/dinero';
 import { nombreMedio, type MovimientoCaja, type TipoMovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { anularVenta, cerrarTurno, registrarMovimientoCaja, turnoAbierto } from '../datos/operaciones';
-import { CampoPesos, errorATexto, fechaCorta, hora, Modal, useAvisar, Vacio } from '../ui/componentes';
+import { CampoPesos, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
+import { usePedirDueño } from '../ui/permisos';
+
+interface Resultado {
+  diferencia: number;
+  contado: number;
+  esperado: number;
+  vendido: number;
+  ventas: number;
+}
 
 interface Datos {
   turno: Turno;
@@ -35,13 +44,16 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
     [] as Turno[],
   );
 
+  const [resultado, setResultado] = useState<Resultado | null>(null);
   if (datos === null) return null;
   return (
     <div className="pagina">
       {datos ? (
-        <CierreAbierto datos={datos} />
+        <CierreAbierto datos={datos} onCerrado={setResultado} />
+      ) : resultado ? (
+        <ResultadoCierre r={resultado} irACaja={irACaja} />
       ) : (
-        <Vacio titulo="La caja está cerrada">
+        <Vacio titulo="La caja está cerrada" icono="caja">
           <button type="button" className="boton boton-primario" onClick={irACaja}>
             Abrir la caja
           </button>
@@ -72,7 +84,7 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
   );
 }
 
-function CierreAbierto({ datos }: { datos: Datos }) {
+function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resultado) => void }) {
   const avisar = useAvisar();
   const { turno, ventas, movimientos, resumen } = datos;
   const [conteo, setConteo] = useState<Record<string, number>>({});
@@ -92,11 +104,8 @@ function CierreAbierto({ datos }: { datos: Datos }) {
     }
     unaVez(async () => {
     try {
+      onCerrado({ diferencia, contado, esperado: resumen.efectivoEsperado, vendido: resumen.totalVendido, ventas: resumen.cantidadVentas });
       await cerrarTurno(db, conteo, nota);
-      avisar({
-        texto: diferencia === 0 ? 'Caja cerrada. ¡Dio justo!' : `Caja cerrada. ${diferencia < 0 ? 'Faltaron' : 'Sobraron'} ${formatPesos(Math.abs(diferencia))}.`,
-        tipo: diferencia === 0 ? 'ok' : 'info',
-      });
     } catch (e) {
       avisar({ texto: errorATexto(e), tipo: 'error' });
     }
@@ -244,8 +253,42 @@ function CierreAbierto({ datos }: { datos: Datos }) {
   );
 }
 
+function ResultadoCierre({ r, irACaja }: { r: Resultado; irACaja: () => void }) {
+  const tono = r.diferencia === 0 ? 'justo' : r.diferencia < 0 ? 'falta' : 'sobra';
+  return (
+    <section className={`tarjeta resultado-cierre resultado-${tono}`}>
+      <span className="resultado-icono">
+        <Icono nombre={r.diferencia === 0 ? 'check' : 'alerta'} tam={30} />
+      </span>
+      <h1>{r.diferencia === 0 ? 'Caja cerrada: dio justo' : r.diferencia < 0 ? `Faltaron ${formatPesos(-r.diferencia)}` : `Sobraron ${formatPesos(r.diferencia)}`}</h1>
+      <dl className="resultado-cifras">
+        <div>
+          <dt>Vendiste</dt>
+          <dd className="importe">{formatPesos(r.vendido)}</dd>
+        </div>
+        <div>
+          <dt>Ventas</dt>
+          <dd className="importe">{r.ventas}</dd>
+        </div>
+        <div>
+          <dt>Debía haber</dt>
+          <dd className="importe">{formatPesos(r.esperado)}</dd>
+        </div>
+        <div>
+          <dt>Contaste</dt>
+          <dd className="importe">{formatPesos(r.contado)}</dd>
+        </div>
+      </dl>
+      <button type="button" className="boton boton-primario" onClick={irACaja}>
+        Abrir un turno nuevo
+      </button>
+    </section>
+  );
+}
+
 function VentasDelTurno({ ventas }: { ventas: Venta[] }) {
   const avisar = useAvisar();
+  const pedirDueño = usePedirDueño();
   const [anulando, setAnulando] = useState<number | null>(null);
   const [abierta, setAbierta] = useState(false);
   const ordenadas = [...ventas].sort((a, b) => b.fecha - a.fecha);
@@ -273,6 +316,7 @@ function VentasDelTurno({ ventas }: { ventas: Venta[] }) {
                   className={`boton boton-chico ${anulando === v.id ? 'boton-peligro' : 'boton-texto-peligro'}`}
                   onClick={async () => {
                     if (anulando !== v.id) return setAnulando(v.id!);
+                    if (!(await pedirDueño('Anular una venta'))) return setAnulando(null);
                     try {
                       await anularVenta(db, v.id!);
                       avisar({ texto: 'Venta anulada. El stock volvió.', tipo: 'info' });
@@ -295,6 +339,7 @@ function VentasDelTurno({ ventas }: { ventas: Venta[] }) {
 
 function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
   const avisar = useAvisar();
+  const pedirDueño = usePedirDueño();
   const [tipo, setTipo] = useState<TipoMovimientoCaja>('gasto');
   const [monto, setMonto] = useState<number | null>(null);
   const [motivo, setMotivo] = useState('');
@@ -306,6 +351,7 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
         onSubmit={(e) => {
           e.preventDefault();
           unaVez(async () => {
+            if (tipo === 'retiro' && !(await pedirDueño('Sacar plata de la caja'))) return;
             try {
               await registrarMovimientoCaja(db, tipo, monto ?? 0, motivo);
               avisar({ texto: 'Anotado.', tipo: 'ok' });

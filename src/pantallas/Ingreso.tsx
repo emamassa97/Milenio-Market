@@ -12,10 +12,11 @@ export function PantallaIngreso() {
   if (usuarios === null) return null;
   return (
     <div className="ingreso">
-      <div className="ingreso-logo">
+      <div className="ingreso-marca">
         <img src={logo} alt="Milenio Market" />
+        <p>Caja, stock, fiado y cierre de tu kiosco. Anda con o sin internet.</p>
       </div>
-      {usuarios.length === 0 ? <PrimerUsuario /> : <Entrar />}
+      <div className="ingreso-lado">{usuarios.length === 0 ? <PrimerUsuario /> : <Entrar />}</div>
     </div>
   );
 }
