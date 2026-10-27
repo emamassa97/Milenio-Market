@@ -236,7 +236,7 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
       ) : (
         <>
           <p className="texto-suave">
-            Es una copia de seguridad: cada venta, producto y fiado se guarda también en internet, por si la compu se rompe o se la roban. No sincroniza entre equipos (atender desde dos compus a la vez queda para más adelante). La caja sigue andando igual sin conexión y sube lo pendiente cuando vuelve. La primera caja se activa sola; en una compu nueva, escribí la clave que figura en la primera para recuperar todo.
+            Es una copia de seguridad: cada venta, producto y fiado se guarda también en internet, por si la compu se rompe o se la roban. No sincroniza entre equipos (atender desde dos compus a la vez queda para más adelante). La caja sigue andando igual sin conexión y sube lo pendiente cuando vuelve. La primera caja se activa sola; en una compu o celular nuevo, entrá con tu usuario de siempre y se trae todo solo.
           </p>
           <label className="campo">
             <span className="campo-etiqueta">Clave de la nube</span>
