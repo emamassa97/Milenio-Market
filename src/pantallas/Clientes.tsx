@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { formatPesos } from '../dominio/dinero';
+import { telefonoWhatsApp } from '../dominio/entrada';
 import { deudaDesde, saldoCliente } from '../dominio/fiado';
 import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type MovimientoFiado } from '../dominio/tipos';
 import { db } from '../datos/db';
@@ -14,8 +15,9 @@ interface Fila {
   desde: number | null;
 }
 
-function dias(desde: number) {
-  return Math.floor((Date.now() - desde) / 86400000);
+function desdeCuando(desde: number): string {
+  const d = Math.floor((Date.now() - desde) / 86400000);
+  return d <= 0 ? 'desde hoy' : d === 1 ? 'desde ayer' : `desde hace ${d} días`;
 }
 
 function normalizar(t: string) {
@@ -41,7 +43,9 @@ export function PantallaClientes() {
   const [modal, setModal] = useState<null | { tipo: 'cliente'; cliente?: Cliente } | { tipo: 'pago'; fila: Fila }>(null);
   const visibles = useMemo(() => filas.filter((f) => normalizar(f.cliente.nombre).includes(normalizar(q.trim()))), [filas, q]);
   const total = filas.reduce((s, f) => s + Math.max(0, f.saldo), 0);
+  const deudores = filas.filter((f) => f.saldo > 0).length;
   const detalle = filas.find((f) => f.cliente.id === elegido) ?? null;
+  const whatsapp = detalle ? telefonoWhatsApp(detalle.cliente.telefono) : null;
 
   return (
     <div className="pagina">
@@ -49,7 +53,13 @@ export function PantallaClientes() {
         <div>
           <h1>Clientes y fiado</h1>
           <p className="texto-suave">
-            Te deben <strong className="texto-alerta">{formatPesos(total)}</strong> entre {filas.filter((f) => f.saldo > 0).length} clientes
+            {deudores === 0 ? (
+              'Nadie debe fiado'
+            ) : (
+              <>
+                Te deben <strong className="texto-normal">{formatPesos(total)}</strong> {deudores === 1 ? 'un cliente' : `entre ${deudores} clientes`}
+              </>
+            )}
           </p>
         </div>
         <button type="button" className="boton boton-primario" onClick={() => setModal({ tipo: 'cliente' })}>
@@ -74,9 +84,9 @@ export function PantallaClientes() {
                   <button type="button" className={elegido === f.cliente.id ? 'activo' : ''} onClick={() => setElegido(f.cliente.id!)}>
                     <span>
                       <strong>{f.cliente.nombre}</strong>
-                      <small className="texto-suave">{f.saldo > 0 && f.desde ? `debe hace ${dias(f.desde)} días` : 'al día'}</small>
+                      <small className="texto-suave">{f.saldo > 0 && f.desde ? `debe ${desdeCuando(f.desde)}` : 'al día'}</small>
                     </span>
-                    <span className={`importe ${f.saldo > 0 ? 'texto-alerta' : 'texto-suave'}`}>{formatPesos(f.saldo)}</span>
+                    <strong className={`importe ${f.saldo > 0 ? '' : 'texto-suave'}`}>{formatPesos(f.saldo)}</strong>
                   </button>
                 </li>
               ))}
@@ -98,24 +108,31 @@ export function PantallaClientes() {
                   </button>
                 </div>
                 <div className="saldo-cliente">
-                  <span>Debe</span>
-                  <strong className={`importe ${detalle.saldo > 0 ? 'texto-alerta' : ''}`}>{formatPesos(detalle.saldo)}</strong>
+                  <span>
+                    Saldo <span className={`insignia ${detalle.saldo > 0 ? 'insignia-aviso' : 'insignia-promo'}`}>{detalle.saldo > 0 ? 'Debe' : 'Al día'}</span>
+                  </span>
+                  <strong className="importe">{formatPesos(detalle.saldo)}</strong>
                 </div>
                 <div className="botonera">
                   <button type="button" className="boton boton-primario" disabled={detalle.saldo <= 0} onClick={() => setModal({ tipo: 'pago', fila: detalle })}>
                     Registrar pago
                   </button>
-                  {detalle.saldo > 0 && (
+                  {detalle.saldo > 0 && whatsapp && (
                     <a
                       className="boton"
                       target="_blank"
                       rel="noreferrer"
-                      href={`https://wa.me/${detalle.cliente.telefono.replace(/\D/g, '')}?text=${encodeURIComponent(
+                      href={`https://wa.me/${whatsapp}?text=${encodeURIComponent(
                         `Hola ${detalle.cliente.nombre}! Te escribo de Milenio Market. Te quedó un saldo de ${formatPesos(detalle.saldo)}. Cuando puedas pasá. Gracias!`,
                       )}`}
                     >
                       <Icono nombre="whatsapp" tam={18} /> Recordarle por WhatsApp
                     </a>
+                  )}
+                  {detalle.saldo > 0 && !whatsapp && (
+                    <button type="button" className="boton" onClick={() => setModal({ tipo: 'cliente', cliente: detalle.cliente })}>
+                      <Icono nombre="whatsapp" tam={18} /> Cargale el WhatsApp para recordarle
+                    </button>
                   )}
                 </div>
                 <ul className="movimientos-fiado">

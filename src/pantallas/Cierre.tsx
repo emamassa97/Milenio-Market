@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { DENOMINACIONES, resumirTurno, totalConteo, type ResumenTurno } from '../dominio/caja';
+import { pagosDeVenta } from '../dominio/carrito';
 import { formatPesos } from '../dominio/dinero';
 import { nombreMedio, type MovimientoCaja, type TipoMovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { anularVenta, cerrarTurno, registrarMovimientoCaja, turnoAbierto } from '../datos/operaciones';
-import { CampoPesos, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
+import { CampoPesos, Desplegable, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
-import { usePedirDueño } from '../ui/permisos';
+import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 
 interface Resultado {
@@ -46,6 +47,7 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
   );
 
   const [resultado, setResultado] = useState<Resultado | null>(null);
+  const dueño = useEsDueño();
   if (datos === null) return null;
   return (
     <div className="pagina">
@@ -72,9 +74,13 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
                     {fechaCorta(t.apertura)} a {hora(t.cierre!)} · {t.cajero}
                     {t.nota && <small className="texto-suave"> · {t.nota}</small>}
                   </span>
-                  <span className={`importe ${dif < 0 ? 'texto-alerta' : dif > 0 ? 'texto-positivo' : ''}`}>
-                    {dif === 0 ? 'Justo' : dif < 0 ? `Faltaron ${formatPesos(-dif)}` : `Sobraron ${formatPesos(dif)}`}
-                  </span>
+                  {dueño ? (
+                    <span className={`importe ${dif < 0 ? 'texto-alerta' : dif > 0 ? 'texto-positivo' : ''}`}>
+                      {dif === 0 ? 'Justo' : dif < 0 ? `Faltaron ${formatPesos(-dif)}` : `Sobraron ${formatPesos(dif)}`}
+                    </span>
+                  ) : (
+                    <span className="texto-suave">Cerrada</span>
+                  )}
                 </li>
               );
             })}
@@ -94,6 +100,8 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
   const [confirmar, setConfirmar] = useState(false);
   const [cerrando, unaVez] = useUnaVez();
   const { sesion } = useSesion();
+  // El empleado cuenta a ciegas: si viera cuánto debería haber, podría acomodar el número.
+  const dueño = useEsDueño();
   const contado = totalConteo(conteo);
   const contoAlgo = Object.values(conteo).some((v) => v > 0);
   const diferencia = contado - resumen.efectivoEsperado;
@@ -153,10 +161,12 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
                 <dt>Retiros y gastos</dt>
                 <dd className="importe">− {formatPesos(resumen.retiros + resumen.gastos)}</dd>
               </div>
-              <div className="cuentas-total">
-                <dt>Debería haber</dt>
-                <dd className="importe">{formatPesos(resumen.efectivoEsperado)}</dd>
-              </div>
+              {dueño && (
+                <div className="cuentas-total">
+                  <dt>Debería haber</dt>
+                  <dd className="importe">{formatPesos(resumen.efectivoEsperado)}</dd>
+                </div>
+              )}
               {contoAlgo && (
                 <div className="cuentas-total">
                   <dt>Contaste</dt>
@@ -164,7 +174,8 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
                 </div>
               )}
             </dl>
-            {contoAlgo && (
+            {!dueño && <p className="texto-suave">La diferencia se ve al confirmar el cierre.</p>}
+            {contoAlgo && dueño && (
               <div className={`diferencia ${diferencia === 0 ? 'diferencia-justa' : diferencia < 0 ? 'diferencia-falta' : 'diferencia-sobra'}`}>
                 <strong>{diferencia === 0 ? 'Da justo' : diferencia < 0 ? `Faltan ${formatPesos(-diferencia)}` : `Sobran ${formatPesos(diferencia)}`}</strong>
                 {diferencia !== 0 && <input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Anotá el motivo (opcional)" aria-label="Motivo de la diferencia" />}
@@ -228,12 +239,12 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
                     onChange={(e) => setConteo({ ...conteo, [String(d)]: Number(e.target.value.replace(/\D/g, '')) || 0 })}
                     aria-label={`Cantidad de billetes de ${formatPesos(d)}`}
                   />
-                  <span className="importe texto-suave">{formatPesos(d * (conteo[String(d)] ?? 0))}</span>
+                  {conteo[String(d)] ? <span className="importe texto-suave">{formatPesos(d * conteo[String(d)]!)}</span> : <span className="billete-vacio">—</span>}
                 </label>
               ))}
               <div className="billete">
-                <span>Monedas y otros</span>
-                <CampoPesos valor={conteo['monedas'] || null} onCambio={(v) => setConteo({ ...conteo, monedas: Math.max(0, v ?? 0) })} />
+                <span>Monedas</span>
+                <CampoPesos valor={conteo['monedas'] || null} onCambio={(v) => setConteo({ ...conteo, monedas: Math.max(0, v ?? 0) })} ariaLabel="Monedas y otros" />
                 <span />
               </div>
             </div>
@@ -297,16 +308,13 @@ function VentasDelTurno({ ventas }: { ventas: Venta[] }) {
   if (ventas.length === 0) return null;
   return (
     <section className="tarjeta">
-      <button type="button" className="desplegable" aria-expanded={abierta} onClick={() => setAbierta(!abierta)}>
-        <span className="titulo-chico">Ventas del turno ({ventas.length})</span>
-        <span className="texto-suave">{abierta ? 'Ocultar' : 'Ver y anular'}</span>
-      </button>
+      <Desplegable abierto={abierta} titulo={`Ventas del turno (${ventas.length})`} texto={abierta ? 'Ocultar' : 'Ver y anular'} onClick={() => setAbierta(!abierta)} />
       {abierta && (
         <ul className="ventas-turno">
           {ordenadas.map((v) => (
             <li key={v.id} className={v.anulada ? 'anulada' : ''}>
               <span>
-                <strong>{hora(v.fecha)}</strong> · {nombreMedio(v.medio)}
+                <strong>{hora(v.fecha)}</strong> · {pagosDeVenta(v).map((p) => nombreMedio(p.medio)).join(' + ')}
                 <small className="texto-suave"> · {v.items.map((i) => `${i.cantidad} ${i.nombre}`).join(', ')}</small>
               </span>
               <span className="importe">{formatPesos(v.total)}</span>
@@ -344,7 +352,7 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
   const avisar = useAvisar();
   const pedirDueño = usePedirDueño();
   const { sesion } = useSesion();
-  const [tipo, setTipo] = useState<TipoMovimientoCaja>('gasto');
+  const [tipo, setTipo] = useState<TipoMovimientoCaja | 'mercaderia'>('mercaderia');
   const [monto, setMonto] = useState<number | null>(null);
   const [motivo, setMotivo] = useState('');
   const [enCurso, unaVez] = useUnaVez();
@@ -355,10 +363,12 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
         onSubmit={(e) => {
           e.preventDefault();
           unaVez(async () => {
-            const quien = tipo === 'retiro' ? await pedirDueño('Sacar plata de la caja') : sesion?.usuario;
-            if (tipo === 'retiro' && !quien) return;
+            // Retiros y gastos sacan plata de la caja: para un empleado los autoriza el dueño.
+            const real = tipo === 'mercaderia' ? 'gasto' : tipo;
+            const quien = real !== 'ingreso' ? await pedirDueño(real === 'retiro' ? 'Sacar plata de la caja' : 'Pagar un gasto con plata de la caja') : sesion?.usuario;
+            if (real !== 'ingreso' && !quien) return;
             try {
-              await registrarMovimientoCaja(db, tipo, monto ?? 0, motivo, quien ?? undefined);
+              await registrarMovimientoCaja(db, real, monto ?? 0, motivo, quien ?? undefined, tipo === 'mercaderia');
               avisar({ texto: 'Anotado.', tipo: 'ok' });
               onCerrar();
             } catch (err) {
@@ -367,23 +377,43 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
           });
         }}
       >
-        <div className="chips" role="group" aria-label="Tipo">
+        <div className="segmentos" role="group" aria-label="Tipo">
           {(
             [
-              ['gasto', 'Gasto (pago a proveedor, compras)'],
-              ['retiro', 'Retiro (me llevo plata)'],
-              ['ingreso', 'Ingreso (agrego cambio)'],
+              ['mercaderia', 'Mercadería'],
+              ['gasto', 'Gasto'],
+              ['retiro', 'Retiro'],
+              ['ingreso', 'Ingreso'],
             ] as const
           ).map(([id, texto]) => (
-            <button key={id} type="button" className={`chip ${tipo === id ? 'activo' : ''}`} aria-pressed={tipo === id} onClick={() => setTipo(id)}>
+            <button
+              key={id}
+              type="button"
+              className={tipo === id ? 'activo' : ''}
+              aria-pressed={tipo === id}
+              onClick={() => {
+                setTipo(id);
+                // Lo que se escriba después va al monto, no al botón.
+                document.getElementById('monto-movimiento')?.focus();
+              }}
+            >
               {texto}
             </button>
           ))}
         </div>
-        <CampoPesos etiqueta="Monto" valor={monto} onCambio={setMonto} autoFocus grande />
+        <p className="texto-suave">
+          {tipo === 'mercaderia'
+            ? 'Lo que le pagaste a un proveedor con plata de la caja. No cuenta como gasto del local: ya está en el costo.'
+            : tipo === 'gasto'
+              ? 'Luz, limpieza, delivery, sueldos: gastos del local pagados de la caja.'
+              : tipo === 'retiro'
+                ? 'Plata que sacás de la caja (para el banco, para vos).'
+                : 'Cambio que ponés en la caja.'}
+        </p>
+        <CampoPesos id="monto-movimiento" etiqueta="Monto" valor={monto} onCambio={setMonto} autoFocus grande />
         <label className="campo">
           <span className="campo-etiqueta">Motivo</span>
-          <input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej.: Pago a Coca-Cola" />
+          <input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder={tipo === 'mercaderia' ? 'Ej.: Distribuidora Coca-Cola' : tipo === 'gasto' ? 'Ej.: Luz, limpieza, delivery' : tipo === 'retiro' ? 'Ej.: Me llevo para el banco' : 'Ej.: Cambio del banco'} />
         </label>
         <button type="submit" className="boton boton-primario boton-grande" disabled={!monto || monto <= 0 || enCurso}>
           Anotar

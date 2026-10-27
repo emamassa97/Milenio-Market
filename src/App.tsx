@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import logo from './assets/logo-rojo.svg';
+import logo from './assets/logo-oscuro.svg';
 import { db } from './datos/db';
 import { estaVacia } from './datos/copia';
 import { cargarEjemplo } from './datos/ejemplo';
@@ -9,9 +9,10 @@ import { PantallaCierre } from './pantallas/Cierre';
 import { PantallaClientes } from './pantallas/Clientes';
 import { PantallaProductos } from './pantallas/Productos';
 import { PantallaReportes } from './pantallas/Reportes';
+import { PantallaInicio } from './pantallas/Inicio';
 import { Icono, ProveedorAvisos, type NombreIcono } from './ui/componentes';
 import { ProveedorPermisos, useEsDueño } from './ui/permisos';
-import logoIcono from './assets/logo-icono.svg';
+import logoBolsa from './assets/logo-bolsa.svg';
 import { PantallaIngreso } from './pantallas/Ingreso';
 import { ProveedorSesion, useSesion } from './ui/sesion';
 import { useConexion, useCopiaEnLaNube, useEstadoNube } from './ui/hooks';
@@ -19,6 +20,7 @@ import { revalidarSesion } from './datos/usuarios';
 
 const PANTALLAS = [
   { id: 'caja', nombre: 'Caja', corto: 'Caja', icono: 'caja', dueño: false },
+  { id: 'inicio', nombre: 'Panel del día', corto: 'Panel', icono: 'inicio', dueño: true },
   { id: 'productos', nombre: 'Productos', corto: 'Productos', icono: 'productos', dueño: true },
   { id: 'cierre', nombre: 'Cierre de caja', corto: 'Cierre', icono: 'cierre', dueño: false },
   { id: 'clientes', nombre: 'Clientes y fiado', corto: 'Fiado', icono: 'clientes', dueño: true },
@@ -158,7 +160,7 @@ function Sistema() {
       </aside>
 
       <header className="cabecera-movil">
-        <img src={logoIcono} alt="Milenio Market" className="cabecera-movil-logo" />
+        <img src={logoBolsa} alt="Milenio Market" className="cabecera-movil-logo" />
         <strong className="cabecera-movil-titulo">{actual.nombre}</strong>
         <span className={`punto-red ${online ? '' : 'punto-red-sin'}`} title={online ? 'Con internet' : 'Sin internet: se sigue cobrando'} />
         {sesion && (
@@ -177,6 +179,7 @@ function Sistema() {
         {!online && <p className="aviso-sin-red">Sin internet. Seguí cobrando normal: todo queda guardado y se sube a la nube cuando vuelva.</p>}
         <main>
           {pantalla === 'caja' && <PantallaCaja />}
+          {pantalla === 'inicio' && <PantallaInicio ir={ir} />}
           {pantalla === 'productos' && <PantallaProductos />}
           {pantalla === 'cierre' && <PantallaCierre irACaja={() => ir('caja')} />}
           {pantalla === 'reportes' && <PantallaReportes />}

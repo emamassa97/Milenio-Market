@@ -175,7 +175,8 @@ export async function estadoNube(db: BaseKiosco): Promise<EstadoNube> {
     leerAjuste<string | null>(db, 'nube.estado', null),
     leerAjuste<string | null>(db, 'nube.error', null),
     leerAjuste<number | null>(db, 'nube.ultima', null),
-    pendientes(db),
+    // Contar pendientes recorre las tablas: sin nube activa no hace falta.
+    leerAjuste<string>(db, 'nube.clave', '').then((c) => (c ? pendientes(db) : 0)),
   ]);
   const activa = Boolean(clave);
   const sinActivar = !activa && estado === 'sin-activar';

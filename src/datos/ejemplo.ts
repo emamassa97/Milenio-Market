@@ -37,6 +37,15 @@ export async function cargarEjemplo(db: BaseKiosco): Promise<void> {
         codigo, nombre, precio, costo, stock, stockMinimo, categoria, rapido, creado: ahora, actualizado: ahora,
       })),
     );
+    // Un ejemplo de cada cosa: promo, venta por peso y vencimientos.
+    const enDias = (d: number) => new Date(ahora + d * 86_400_000).toISOString().slice(0, 10);
+    await db.productos.where('nombre').equals('Alfajor simple').modify({ promo: { cantidad: 3, precio: 1700 } });
+    await db.productos.where('nombre').equals('Leche 1 l').modify({ vence: enDias(4) });
+    await db.productos.where('nombre').equals('Pan lactal').modify({ vence: enDias(9) });
+    await db.productos.add({
+      codigo: '', nombre: 'Queso de máquina', precio: 12000, costo: 8200, stock: 3.5, stockMinimo: 1, categoria: 'Fiambrería',
+      rapido: true, porPeso: true, creado: ahora, actualizado: ahora,
+    });
     await db.clientes.bulkAdd([
       { nombre: 'Marta (3° B)', telefono: '', limite: 20000, creado: ahora },
       { nombre: 'Juan del taller', telefono: '', limite: 0, creado: ahora },
@@ -54,6 +63,9 @@ export async function borrarTodo(db: BaseKiosco): Promise<void> {
     const enPrueba = await leerAjuste(db, 'modoPrueba', false);
     const cierres = await db.turnos.filter((t) => t.cierre !== null).count();
     if (!enPrueba || cierres > 0) throw new ErrorKiosco('Ya hay cajas cerradas: no se puede borrar todo.');
+    // Se conservan los usuarios, el id de este equipo y la nube: sólo se borran los datos de prueba.
+    const guardar = (await db.ajustes.toArray()).filter((x) => x.clave === 'usuarios' || x.clave === 'dispositivo' || x.clave.startsWith('nube.'));
     for (const t of db.tables) await t.clear();
+    if (guardar.length) await db.ajustes.bulkPut(guardar);
   });
 }

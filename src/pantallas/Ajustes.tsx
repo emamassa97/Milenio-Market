@@ -6,6 +6,7 @@ import { guardarAjuste, leerAjuste } from '../datos/operaciones';
 import { descargarArchivo, errorATexto, fechaCorta, Icono, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
+import { htmlTicket, imprimirTicket, leerAjustesTicket, TICKET_INICIAL, type AjustesTicket } from '../ui/ticket';
 import { borrarUsuario, cambiarClave, crearUsuario, leerUsuarios } from '../datos/usuarios';
 import { pendientes, recuperarDeLaNube, sincronizarAhora, activarNube } from '../datos/nube';
 
@@ -65,6 +66,7 @@ export function PantallaAjustes() {
 
       {sesion && !sesion.admin ? null : (
         <>
+      <AjustesDelTicket />
       <section className="tarjeta formulario">
         <h2 className="titulo-chico">Copia de seguridad</h2>
         <p className="texto-suave">
@@ -365,9 +367,9 @@ function Usuarios() {
               <input type="password" value={nuevo.clave} onChange={(e) => setNuevo({ ...nuevo, clave: e.target.value })} autoComplete="new-password" />
             </label>
           </div>
-          <label className="campo-check">
+          <label className="casilla">
             <input type="checkbox" checked={nuevo.admin} onChange={(e) => setNuevo({ ...nuevo, admin: e.target.checked })} />
-            Es dueño (puede entrar a Ajustes y manejar usuarios)
+            <span>Es dueño (puede entrar a Ajustes y manejar usuarios)</span>
           </label>
           <button
             type="button"
@@ -389,6 +391,89 @@ function Usuarios() {
           </button>
         </>
       )}
+    </section>
+  );
+}
+
+const VENTA_DE_MUESTRA = {
+  id: 1234,
+  fecha: Date.now(),
+  turnoId: 0,
+  cajero: '',
+  items: [
+    { productoId: 1, codigo: '', nombre: 'Coca-Cola 500 ml', precioUnitario: 1400, costoUnitario: 0, cantidad: 2 },
+    { productoId: 2, codigo: '', nombre: 'Alfajor triple', precioUnitario: 1100, costoUnitario: 0, cantidad: 1 },
+  ],
+  total: 3900,
+  medio: 'efectivo' as const,
+  pagaCon: 5000,
+  vuelto: 1100,
+  clienteId: null,
+  anulada: false,
+};
+
+function AjustesDelTicket() {
+  const avisar = useAvisar();
+  const [a, setA] = useState<AjustesTicket>(TICKET_INICIAL);
+  useEffect(() => {
+    leerAjustesTicket(db).then(setA);
+  }, []);
+  const guardar = async (nuevo: AjustesTicket) => {
+    setA(nuevo);
+    await guardarAjuste(db, 'ticket', nuevo);
+  };
+  return (
+    <section className="tarjeta formulario">
+      <h2 className="titulo-chico">Ticket</h2>
+      <p className="texto-suave">Para impresoras térmicas. No es factura: es el comprobante para el cliente.</p>
+      <div className="ticket-ajustes">
+        <div className="formulario">
+          <div className="chips" role="group" aria-label="Ancho del papel">
+            {([58, 80] as const).map((ancho) => (
+              <button key={ancho} type="button" className={`chip ${a.ancho === ancho ? 'activo' : ''}`} aria-pressed={a.ancho === ancho} onClick={() => guardar({ ...a, ancho })}>
+                Papel de {ancho} mm
+              </button>
+            ))}
+          </div>
+          <label className="campo">
+            <span className="campo-etiqueta">Encabezado (nombre, dirección, teléfono)</span>
+            <textarea rows={3} value={a.encabezado} onChange={(e) => setA({ ...a, encabezado: e.target.value })} onBlur={() => guardar(a)} />
+          </label>
+          <label className="campo">
+            <span className="campo-etiqueta">Mensaje al pie</span>
+            <input value={a.pie} onChange={(e) => setA({ ...a, pie: e.target.value })} onBlur={() => guardar(a)} />
+          </label>
+          <label className="casilla">
+            <input type="checkbox" checked={a.auto} onChange={(e) => guardar({ ...a, auto: e.target.checked })} />
+            <span>Imprimir el ticket solo, cada vez que se cobra</span>
+          </label>
+          <div className="botonera">
+            <button
+              type="button"
+              className="boton"
+              onClick={async () => {
+                await guardar(a);
+                imprimirTicket(VENTA_DE_MUESTRA, a);
+                avisar({ texto: 'Mandé un ticket de prueba a la impresora.', tipo: 'info' });
+              }}
+            >
+              <Icono nombre="impresora" tam={18} /> Imprimir prueba
+            </button>
+          </div>
+        </div>
+        <iframe
+          className="ticket-vista"
+          // Sin scripts; el mismo origen sólo para medir el alto y que la vista no deje blanco de más.
+          sandbox="allow-same-origin"
+          title="Vista previa del ticket"
+          srcDoc={htmlTicket(VENTA_DE_MUESTRA, a)}
+          style={{ width: `${a.ancho * 3.78 + 4}px` }}
+          onLoad={(e) => {
+            const alto = e.currentTarget.contentDocument?.documentElement.scrollHeight;
+            if (alto) e.currentTarget.style.height = `${alto + 4}px`;
+          }}
+        />
+      </div>
     </section>
   );
 }

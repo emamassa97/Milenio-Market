@@ -1,6 +1,11 @@
-import type { ItemVenta, Pesos, Producto } from './tipos';
+import type { ItemVenta, Pago, Pesos, Producto, Venta } from './tipos';
 
 /** Más que esto en un renglón es casi seguro un error (un código en el campo cantidad). */
+/** Más que esto en un renglón o de vuelto no es una venta de kiosco: es un código de barras en el campo equivocado. */
+export const RENGLON_MAXIMO = 5_000_000;
+export const VUELTO_MAXIMO = 500_000;
+/** Unidades que pueden llegar de una vez en una compra. */
+export const COMPRA_MAXIMA = 99_999;
 export const CANTIDAD_MAXIMA = 999;
 
 export interface Carrito {
@@ -37,7 +42,37 @@ export function itemDeProducto(producto: Producto, cantidad: number): ItemVenta 
     precioUnitario: producto.precio,
     costoUnitario: producto.costo,
     cantidad,
+    ...(producto.promo && producto.promo.cantidad > 1 ? { promo: producto.promo } : {}),
   };
+}
+
+/** Un producto por peso: el precio es por kilo y se cobra lo que pesó. */
+export function itemPorPeso(producto: Producto, gramos: number): ItemVenta {
+  if (producto.id === undefined) throw new Error('El producto no está guardado');
+  const g = Math.round(gramos);
+  return {
+    productoId: producto.id,
+    codigo: producto.codigo,
+    nombre: producto.nombre,
+    precioUnitario: Math.round((producto.precio * g) / 1000),
+    costoUnitario: Math.round((producto.costo * g) / 1000),
+    cantidad: 1,
+    gramos: g,
+  };
+}
+
+export function formatoPeso(gramos: number): string {
+  return gramos >= 1000 ? `${(gramos / 1000).toLocaleString('es-AR', { maximumFractionDigits: 3 })} kg` : `${gramos} g`;
+}
+
+/** Cuánto stock descuenta un renglón: unidades, o kilos si es por peso. */
+export function stockQueUsa(item: ItemVenta): number {
+  return item.gramos ? (item.gramos * item.cantidad) / 1000 : item.cantidad;
+}
+
+/** Los pagos de una venta, aunque sea de antes del pago dividido. */
+export function pagosDeVenta(venta: Pick<Venta, 'medio' | 'total' | 'pagos'>): Pago[] {
+  return venta.pagos && venta.pagos.length > 0 ? venta.pagos : [{ medio: venta.medio, monto: venta.total }];
 }
 
 export function itemMontoLibre(monto: Pesos, descripcion: string): ItemVenta {
@@ -53,8 +88,8 @@ export function itemMontoLibre(monto: Pesos, descripcion: string): ItemVenta {
 
 /** Agrega un ítem; si el mismo producto ya está, suma la cantidad y lo sube arriba. */
 export function agregarItem(carrito: Carrito, item: ItemVenta): Carrito {
-  if (item.productoId !== null) {
-    const i = carrito.items.findIndex((x) => x.productoId === item.productoId);
+  if (item.productoId !== null && !item.gramos) {
+    const i = carrito.items.findIndex((x) => x.productoId === item.productoId && !x.gramos);
     if (i >= 0) {
       const existente = carrito.items[i]!;
       const actualizado = { ...existente, cantidad: Math.min(existente.cantidad + item.cantidad, CANTIDAD_MAXIMA) };
@@ -78,8 +113,21 @@ export function quitarItem(carrito: Carrito, indice: number): Carrito {
   return { items: carrito.items.filter((_, i) => i !== indice) };
 }
 
+/** Con promo "N por $X" se cobran los grupos completos a precio de promo y el resto suelto. */
 export function subtotal(item: ItemVenta): Pesos {
+  const p = item.promo;
+  if (p && p.cantidad > 1 && item.cantidad >= p.cantidad) {
+    const grupos = Math.floor(item.cantidad / p.cantidad);
+    const conPromo = grupos * p.precio + (item.cantidad - grupos * p.cantidad) * item.precioUnitario;
+    // Una promo mal cargada nunca puede cobrar más que suelto ni dar negativo.
+    return Math.max(0, Math.min(conPromo, item.precioUnitario * item.cantidad));
+  }
   return item.precioUnitario * item.cantidad;
+}
+
+/** Lo que se ahorró el cliente por la promo en este renglón. */
+export function ahorroPromo(item: ItemVenta): Pesos {
+  return item.precioUnitario * item.cantidad - subtotal(item);
 }
 
 export function totalCarrito(carrito: Carrito): Pesos {
