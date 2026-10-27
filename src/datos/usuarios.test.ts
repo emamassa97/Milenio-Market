@@ -1,7 +1,8 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BaseKiosco } from './db';
-import { borrarUsuario, cambiarClave, crearUsuario, ingresar, leerUsuarios, revalidarSesion } from './usuarios';
+import { guardarAjuste, leerAjuste } from './operaciones';
+import { borrarUsuario, cambiarClave, crearUsuario, empezarDeCero, ingresar, leerUsuarios, resumenEquipo, revalidarSesion } from './usuarios';
 
 let db: BaseKiosco;
 let n = 0;
@@ -14,6 +15,19 @@ afterEach(async () => {
 });
 
 describe('usuarios', () => {
+  it('empezar de cero borra usuarios y datos pero deja la nube andando', async () => {
+    await crearUsuario(db, { usuario: 'ema', nombre: '', clave: '4826', admin: true });
+    await guardarAjuste(db, 'nube.clave', 'ABC-123');
+    await guardarAjuste(db, 'nube.marcas', { productos: 5 });
+    await db.clientes.add({ id: 'c1', nombre: 'Ana' } as never);
+    expect((await resumenEquipo(db)).clientes).toBe(1);
+    await empezarDeCero(db);
+    expect(await leerUsuarios(db)).toEqual([]);
+    expect(await resumenEquipo(db)).toEqual({ productos: 0, ventas: 0, clientes: 0 });
+    expect(await leerAjuste(db, 'nube.clave', '')).toBe('ABC-123');
+    expect(await leerAjuste(db, 'nube.marcas', null)).toBeNull();
+  });
+
   it('entra con la clave correcta y no guarda la clave', async () => {
     await crearUsuario(db, { usuario: 'Ema', nombre: 'Emanuel', clave: '4826', admin: true });
     expect((await ingresar(db, 'ema', '4826'))?.nombre).toBe('Emanuel');
