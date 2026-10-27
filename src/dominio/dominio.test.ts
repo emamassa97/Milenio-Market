@@ -4,6 +4,7 @@ import {
   agregarItem,
   calcularVuelto,
   cambiarCantidad,
+  quitarItem,
   carritoVacio,
   esCodigo,
   interpretarEntrada,
@@ -67,6 +68,15 @@ describe('carrito', () => {
       [2, 1],
     ]);
     expect(totalCarrito(c)).toBe(350);
+  });
+  it('el último agregado queda primero (Supr y "-" en la caja corrigen items[0])', () => {
+    let c = agregarItem(carritoVacio, item(1, 100));
+    c = agregarItem(c, item(2, 50));
+    expect(c.items[0]!.productoId).toBe(2);
+    c = agregarItem(c, item(3, 70, 2));
+    expect(c.items[0]!.productoId).toBe(3);
+    expect(quitarItem(c, 0).items.map((i) => i.productoId)).toEqual([2, 1]);
+    expect(cambiarCantidad(c, 0, 1).items[0]!.cantidad).toBe(1);
   });
   it('los montos libres no se juntan', () => {
     let c = agregarItem(carritoVacio, itemMontoLibre(500, ''));

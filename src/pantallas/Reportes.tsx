@@ -132,7 +132,7 @@ export function PantallaReportes() {
       {r.cantidad === 0 ? (
         <Vacio titulo="No hay ventas en este período" icono="reportes" />
       ) : (
-        <div className="reportes">
+        <div className="reportes reportes-ventas">
           <section className="tarjeta">
             <h2 className="titulo-chico">Cómo te pagaron</h2>
             <ul className="barras">
@@ -174,7 +174,7 @@ export function PantallaReportes() {
         </div>
       )}
 
-      <div className="reportes">
+      <div className="reportes reportes-stock">
         <section className="tarjeta">
           <h2 className="titulo-chico">Para reponer ({reponer.length})</h2>
           {reponer.length === 0 ? (

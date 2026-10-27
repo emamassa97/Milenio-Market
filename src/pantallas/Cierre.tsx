@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { DENOMINACIONES, resumirTurno, textoCierre, totalConteo, type ResumenTurno } from '../dominio/caja';
-import { pagosDeVenta } from '../dominio/carrito';
+import { pagosDeVenta, totalCarrito, type Carrito } from '../dominio/carrito';
 import { describirItems, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { nombreMedio, type Cliente, type MovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
@@ -8,7 +8,7 @@ import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket'
 import { db } from '../datos/db';
 import { anularVenta, cerrarTurno, registrarMovimientoCaja, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
 import { CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
-import { useConsulta, useUnaVez } from '../ui/hooks';
+import { leerGuardado, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 import { DevolverVenta } from './Devolver';
@@ -58,7 +58,7 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
   return (
     <div className="pagina">
       {datos ? (
-        <CierreAbierto datos={datos} onCerrado={setResultado} />
+        <CierreAbierto datos={datos} onCerrado={setResultado} irACaja={irACaja} />
       ) : resultado ? (
         <ResultadoCierre r={resultado} irACaja={irACaja} />
       ) : (
@@ -104,7 +104,19 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
   );
 }
 
-function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resultado) => void }) {
+// Ventas que quedaron armadas en la caja sin cobrar (el navegador las guarda aunque se cambie de pantalla).
+function ventasSinCobrar(): string | null {
+  const espera = leerGuardado<{ carrito: Carrito }[]>('milenio.espera', []);
+  const carrito = leerGuardado<Carrito>('milenio.carrito', { items: [] });
+  if (espera.length === 0 && carrito.items.length === 0) return null;
+  const partes = [
+    espera.length > 0 && `${espera.length === 1 ? 'una venta en espera' : `${espera.length} ventas en espera`} (${formatPesos(espera.reduce((s, e) => s + totalCarrito(e.carrito), 0))})`,
+    carrito.items.length > 0 && `una venta sin cobrar (${formatPesos(totalCarrito(carrito))})`,
+  ].filter(Boolean);
+  return `Hay ${partes.join(' y ')}.`;
+}
+
+function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado: (r: Resultado) => void; irACaja: () => void }) {
   const avisar = useAvisar();
   const { turno, ventas, movimientos, resumen } = datos;
   const [conteo, setConteo] = useState<Record<string, number>>({});
@@ -119,6 +131,14 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
   const contoAlgo = Object.values(conteo).some((v) => v > 0);
   const diferencia = contado - resumen.efectivoEsperado;
   const fiadoCobrado = Object.values(resumen.cobrosFiado).reduce((a, b) => a + b, 0);
+  const sinCobrar = useMemo(ventasSinCobrar, []);
+  const textoCerrar = !confirmar
+    ? 'Cerrar turno'
+    : sinCobrar
+      ? 'Hay ventas sin cobrar. ¿Cerrar igual?'
+      : !contoAlgo
+        ? 'No contaste nada. ¿Cerrar igual?'
+        : `Sí, cerrar · contaste ${formatPesos(contado)}`;
 
   const cerrar = () => {
     if (!confirmar) {
@@ -152,6 +172,16 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
           </p>
         </div>
       </div>
+      {sinCobrar && (
+        <div className="aviso-tarjeta aviso-ambar" role="status">
+          <span>
+            <strong>{sinCobrar}</strong> Cobralas o cancelalas antes de cerrar.
+          </span>
+          <button type="button" className="boton boton-chico" onClick={irACaja}>
+            Ir a la caja
+          </button>
+        </div>
+      )}
       <div className="cierre">
         <div className="cierre-izquierda">
           <section className="tarjeta">
@@ -201,12 +231,6 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
               )}
             </dl>
             {!dueño && <p className="texto-suave">La diferencia se ve al confirmar el cierre.</p>}
-            {contoAlgo && dueño && (
-              <div className={`diferencia ${diferencia === 0 ? 'diferencia-justa' : diferencia < 0 ? 'diferencia-falta' : 'diferencia-sobra'}`}>
-                <strong>{diferencia === 0 ? 'Da justo' : diferencia < 0 ? `Faltan ${formatPesos(-diferencia)}` : `Sobran ${formatPesos(diferencia)}`}</strong>
-                {diferencia !== 0 && <input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Anotá el motivo (opcional)" aria-label="Motivo de la diferencia" />}
-              </div>
-            )}
             {movimientos.length > 0 && (
               <ul className="movimientos">
                 {movimientos.map((m) => (
@@ -286,17 +310,26 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
                 <span />
               </div>
             </div>
+          </section>
+          {/* Queda a la vista mientras se cuentan los billetes, aunque la lista sea larga. */}
+          <div className="cierre-pie">
             <div className="billetes-total">
               <span>Total contado</span>
               <strong className="importe">{formatPesos(contado)}</strong>
             </div>
-          </section>
-          <button type="button" className={`boton boton-grande ${confirmar ? 'boton-peligro' : 'boton-primario'}`} onClick={cerrar} disabled={cerrando}>
-            {confirmar ? (contoAlgo ? 'Confirmar cierre' : 'No contaste nada. ¿Cerrar igual?') : 'Cerrar turno'}
-          </button>
-          <button type="button" className="boton" onClick={() => setMovimiento(true)}>
-            Anotar un retiro o gasto
-          </button>
+            {contoAlgo && dueño && (
+              <div className={`diferencia ${diferencia === 0 ? 'diferencia-justa' : diferencia < 0 ? 'diferencia-falta' : 'diferencia-sobra'}`}>
+                <strong>{diferencia === 0 ? 'Da justo' : diferencia < 0 ? `Faltan ${formatPesos(-diferencia)}` : `Sobran ${formatPesos(diferencia)}`}</strong>
+                {diferencia !== 0 && <input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Anotá el motivo (opcional)" aria-label="Motivo de la diferencia" />}
+              </div>
+            )}
+            <button type="button" className={`boton boton-grande ${confirmar ? 'boton-peligro' : 'boton-primario'}`} onClick={cerrar} disabled={cerrando}>
+              {textoCerrar}
+            </button>
+            <button type="button" className="boton boton-texto boton-retiro" onClick={() => setMovimiento(true)}>
+              <Icono nombre="billetera" tam={16} /> Anotar un retiro o gasto
+            </button>
+          </div>
         </aside>
       </div>
       {movimiento && <NuevoMovimiento onCerrar={() => setMovimiento(false)} />}
@@ -380,9 +413,11 @@ function VentasDelTurno({ ventas, soloDevolver = false }: { ventas: Venta[]; sol
                     <button type="button" className="boton boton-chico" onClick={() => imprimirTicket(v, ticket)} aria-label="Reimprimir el ticket" title="Reimprimir el ticket">
                       <Icono nombre="ticket" tam={16} />
                     </button>
-                    <button type="button" className="boton boton-chico" onClick={() => setDevolviendo(v)}>
-                      Devolver
-                    </button>
+                    {devuelto < v.total && (
+                      <button type="button" className="boton boton-chico" onClick={() => setDevolviendo(v)}>
+                        Devolver
+                      </button>
+                    )}
                     {devuelto === 0 && !soloDevolver && (
                       <button
                         type="button"
@@ -400,7 +435,7 @@ function VentasDelTurno({ ventas, soloDevolver = false }: { ventas: Venta[]; sol
                           setAnulando(null);
                         }}
                       >
-                        {anulando === v.id ? '¿Seguro?' : 'Anular'}
+                        {anulando === v.id ? 'Sí, anular' : 'Anular'}
                       </button>
                     )}
                   </span>

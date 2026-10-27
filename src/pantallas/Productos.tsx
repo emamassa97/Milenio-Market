@@ -147,9 +147,14 @@ export function PantallaProductos() {
             <Icono nombre="mas" tam={18} /> Nuevo producto
           </button>
         </div>
-        <button type="button" className="boton boton-chico solo-movil" aria-expanded={menuAcciones} onClick={() => setMenuAcciones(true)}>
-          <Icono nombre="menu" tam={18} /> Más acciones
-        </button>
+        <div className="botonera solo-movil">
+          <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'compra' })} disabled={productos.length === 0}>
+            <Icono nombre="camion" tam={18} /> Llegó mercadería
+          </button>
+          <button type="button" className="boton boton-chico" aria-expanded={menuAcciones} onClick={() => setMenuAcciones(true)}>
+            <Icono nombre="menu" tam={18} /> Más acciones
+          </button>
+        </div>
       </div>
       <button type="button" className="fab" onClick={() => setModal({ tipo: 'editar' })} aria-label="Nuevo producto" title="Nuevo producto">
         <Icono nombre="mas" tam={26} />
@@ -471,8 +476,9 @@ function SumarStock({ producto, onCerrar }: { producto: Producto; onCerrar: () =
             </button>
           ))}
         </div>
+        <p className="texto-suave texto-centrado">{n ? `Van a quedar ${quedan}${unidad}.` : `Quedan ${textoStock(producto)}.`}</p>
         <button className="boton boton-primario boton-grande" type="submit" disabled={!n || enCurso || Math.abs(n) > 99999}>
-          {n >= 0 ? `Sumar ${n}${unidad}` : `Restar ${-n}${unidad}`}: quedan {quedan}{unidad}
+          {!n ? 'Sumar al stock' : n > 0 ? `Sumar ${n}${unidad}` : `Restar ${-n}${unidad}`}
         </button>
       </form>
     </Modal>
@@ -569,8 +575,9 @@ function AumentoPrecios({
             {elegidos.length > 6 && <p className="texto-suave">y {elegidos.length - 6} más.</p>}
           </div>
         )}
+        {!valido && <p className="texto-suave texto-centrado">Poné el porcentaje para ver cómo quedan los precios.</p>}
         <button className="boton boton-primario boton-grande" type="submit" disabled={!valido || elegidos.length === 0 || aplicando}>
-          {valido ? `${pct > 0 ? 'Aumentar' : 'Bajar'} ${Math.abs(pct)}% a ${elegidos.length} productos` : 'Poné el porcentaje'}
+          {valido ? `${pct > 0 ? 'Aumentar' : 'Bajar'} ${Math.abs(pct)}% a ${elegidos.length} productos` : 'Aplicar a los precios'}
         </button>
       </form>
     </Modal>
@@ -607,16 +614,19 @@ function Planilla({ productos, onCerrar }: { productos: Producto[]; onCerrar: ()
             <p className="texto-suave">
               En Excel, <em>Guardar como → CSV</em>. Columnas: <strong>nombre</strong> y <strong>precio</strong> (obligatorias), y si querés código, costo, stock, categoría y proveedor. Si el código ya existe, se actualiza el precio y no se toca el stock.
             </p>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              aria-label="Elegir planilla CSV"
-              onChange={async (e) => {
-                const archivo = e.target.files?.[0];
-                if (!archivo) return;
-                setResultado(importarCsv(await archivo.text()));
-              }}
-            />
+            <label className="boton">
+              <Icono nombre="subir" tam={18} /> Elegir planilla CSV
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                hidden
+                onChange={async (e) => {
+                  const archivo = e.target.files?.[0];
+                  if (!archivo) return;
+                  setResultado(importarCsv(await archivo.text()));
+                }}
+              />
+            </label>
           </div>
         </div>
         {resultado && (
@@ -660,6 +670,7 @@ function Planilla({ productos, onCerrar }: { productos: Producto[]; onCerrar: ()
 }
 
 const SIN_PROVEEDOR = 'Sin proveedor';
+const proveedorDe = (p: Producto) => p.proveedor?.trim() || SIN_PROVEEDOR;
 
 /** Cuánto pedir: lo que falta para tener el doble del mínimo, en cajas de 6 (los kilos, enteros). */
 function cantidadSugerida(p: Producto): number {
@@ -682,7 +693,7 @@ function PedidoProveedor({ productos, onCerrar }: { productos: Producto[]; onCer
   const grupos = useMemo(() => {
     const m = new Map<string, Producto[]>();
     for (const p of elegidos) {
-      const k = p.proveedor?.trim() || SIN_PROVEEDOR;
+      const k = proveedorDe(p);
       m.set(k, [...(m.get(k) ?? []), p]);
     }
     return [...m.entries()].sort(([a], [b]) => (a === SIN_PROVEEDOR ? 1 : b === SIN_PROVEEDOR ? -1 : a.localeCompare(b)));
@@ -691,7 +702,6 @@ function PedidoProveedor({ productos, onCerrar }: { productos: Producto[]; onCer
   // Si el grupo elegido desapareció (se repuso desde otro equipo), se pasa al primero.
   const grupo = elegido !== null && grupos.some(([k]) => k === elegido) ? elegido : (grupos[0]?.[0] ?? SIN_PROVEEDOR);
   const lista = grupos.find(([k]) => k === grupo)?.[1] ?? [];
-  const proveedorDe = (p: Producto) => p.proveedor?.trim() || SIN_PROVEEDOR;
   // Primero los del mismo proveedor; los demás, con su proveedor al lado.
   const encontrados = useMemo(() => {
     const t = normalizar(q.trim());
@@ -840,6 +850,8 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
   const [q, setQ] = useState('');
   const [renglones, setRenglones] = useState<RenglonIngreso[]>([]);
   const [proveedor, setProveedor] = useState('');
+  // Si el proveedor lo puso el sistema (del primer producto) y después entra uno de otro proveedor, se vacía.
+  const [proveedorAuto, setProveedorAuto] = useState(false);
   const [deCaja, setDeCaja] = useState(false);
   const [pagado, setPagado] = useState<number | null>(null);
   const [enCurso, unaVez] = useUnaVez();
@@ -855,7 +867,14 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
     setRenglones((r) => (r.some((x) => x.p.id === p.id) ? r : [...r, { p, cantidad: '', costo: p.costo > 0 ? p.costo : null, mantenerMargen: dueño }]));
     setQ('');
     buscador.current?.focus();
-    if (!proveedor && p.proveedor) setProveedor(p.proveedor);
+    const suyo = p.proveedor?.trim();
+    if (!proveedor && suyo) {
+      setProveedor(suyo);
+      setProveedorAuto(true);
+    } else if (proveedorAuto && suyo && suyo !== proveedor) {
+      setProveedor('');
+      setProveedorAuto(false);
+    }
   };
   // Si el costo subió, el precio sugerido conserva el margen que tenía el producto.
   const precioNuevo = (r: RenglonIngreso): number | null => {
@@ -908,9 +927,8 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
                 { proveedor, pagadoDeCaja: deCaja, montoPagado: deCaja ? montoCaja : undefined },
                 sesion?.usuario,
               );
-              const conPrecio = renglones.filter((r) => r.mantenerMargen && precioNuevo(r)).length;
               avisar({
-                texto: `Stock actualizado${conPrecio > 0 ? ` y ${conPrecio === 1 ? '1 precio subido' : `${conPrecio} precios subidos`}` : ''}${deCaja && gasto > 0 ? `. Gasto de ${formatPesos(gasto)} anotado en la caja` : ''}.`,
+                texto: `Stock actualizado${subidas > 0 ? ` y ${subidas === 1 ? '1 precio subido' : `${subidas} precios subidos`}` : ''}${deCaja && gasto > 0 ? `. Gasto de ${formatPesos(gasto)} anotado en la caja` : ''}.`,
                 tipo: 'ok',
               });
               onCerrar();
@@ -1012,12 +1030,21 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
         <div className="fila-campos">
           <label className="campo">
             <span className="campo-etiqueta">Proveedor (opcional)</span>
-            <input list="proveedores-ingreso" value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej.: Distribuidora Arcor" />
+            <input
+              list="proveedores-ingreso"
+              value={proveedor}
+              onChange={(e) => {
+                setProveedor(e.target.value);
+                setProveedorAuto(false);
+              }}
+              placeholder="Ej.: Distribuidora Arcor"
+            />
             <datalist id="proveedores-ingreso">
               {proveedores.map((c) => (
                 <option key={c} value={c} />
               ))}
             </datalist>
+            <small className="texto-suave">Queda como proveedor de los productos que todavía no tienen uno.</small>
           </label>
         </div>
         <label className="casilla">

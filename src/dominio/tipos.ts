@@ -163,10 +163,11 @@ export interface MovimientoFiado {
 }
 
 /** Algo que pasó en la caja y conviene que el dueño vea, como una venta cancelada antes de cobrar. */
+/** Cosas que el dueño quiere ver después: una venta cancelada antes de cobrar, una devolución. */
 export interface Evento {
   id?: number;
   fecha: number;
-  tipo: 'cancelacion';
+  tipo: 'cancelacion' | 'devolucion';
   turnoId: number | null;
   monto: Pesos;
   detalle: string;

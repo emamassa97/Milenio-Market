@@ -45,6 +45,9 @@ p { margin: 0; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--grafito); outline-offset: 2px; }
+/* Sobre fondo oscuro el contorno gris no se ve. */
+.lateral :focus-visible, .cabecera-movil :focus-visible, .total :focus-visible, .segmentos button.activo:focus-visible, .barra-cobro-movil :focus-visible { outline-color: #fff; }
+.boton-cobrar:focus-visible { outline-color: var(--grafito); outline-offset: 3px; }
 .importe { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .texto-suave { color: var(--suave); }
 .texto-alerta { color: var(--alerta); }
@@ -148,7 +151,7 @@ a.estado-chip:hover { background: var(--grafito-claro); color: #fff; }
 .enlace { background: none; border: none; padding: 0; text-decoration: underline; font: inherit; }
 
 .chip {
-  min-height: 42px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--borde-fuerte); background: var(--tarjeta);
+  min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--borde-fuerte); background: var(--tarjeta);
   display: inline-flex; align-items: center; gap: 6px; font-weight: 500; white-space: nowrap;
 }
 .chip:hover { background: var(--gris); }
@@ -234,7 +237,9 @@ input[type='file'] { padding: 10px; }
 /* El panel del medio mide siempre lo mismo (se achica sólo si no entra): Cobrar queda en el mismo lugar con cualquier medio de pago. */
 .caja-derecha { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); }
 .caja-derecha > * { flex: none; }
-.caja-derecha > .cobro { flex: 0 1 auto; height: 400px; min-height: 0; overflow: auto; }
+.caja-derecha > .cobro { flex: 0 1 auto; height: 400px; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+/* El vuelto queda pegado abajo del panel aunque el resto se scrollee. */
+.caja-derecha > .cobro > .vuelto { position: sticky; bottom: -16px; z-index: 1; background: #fff; margin: 0 -16px -16px; padding: 10px 16px 14px; border-top: 1px solid var(--borde); }
 .buscador { display: flex; gap: 10px; }
 .buscador-campo { position: relative; flex: 1; display: flex; align-items: center; min-width: 0; }
 .buscador-campo > svg { position: absolute; left: 18px; color: var(--suave); pointer-events: none; }
@@ -268,7 +273,7 @@ input[type='file'] { padding: 10px; }
 .rapido-nombre { font-weight: 500; line-height: 1.25; font-size: 0.92rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: balance; }
 .rapido-pie { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .rapido-precio { font-weight: 700; font-size: 1.05rem; color: var(--texto); }
-.rapido-stock { font-size: 0.72rem; font-weight: 600; color: var(--ambar); }
+.rapido-stock { font-size: 0.78rem; font-weight: 600; color: var(--ambar); }
 .rapido-stock-cero { color: var(--alerta); }
 .en-espera { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-weight: 500; }
 .lista-venta { padding: 0; overflow: hidden; }
@@ -289,7 +294,7 @@ input[type='file'] { padding: 10px; }
 .renglon-nombre small.texto-aviso { color: var(--ambar); }
 .renglon-subtotal { text-align: right; font-weight: 700; font-size: 1.05rem; }
 .cantidad { display: flex; align-items: center; gap: 4px; }
-.cantidad .boton-icono { background: var(--gris); width: 38px; height: 38px; }
+.cantidad .boton-icono { background: var(--gris); width: 40px; height: 40px; }
 .cantidad .boton-icono:hover { background: var(--borde); }
 .cantidad input { width: 52px; min-height: 38px; text-align: center; font-weight: 700; padding: 0 4px; }
 .boton-quitar { color: var(--suave); }
@@ -318,7 +323,7 @@ input[type='file'] { padding: 10px; }
 .medio.activo svg { color: #fff; }
 .medio { position: relative; }
 .medio-nombre { flex: 1; min-width: 0; line-height: 1.2; }
-.medio kbd { position: absolute; top: 50%; transform: translateY(-50%); right: 10px; font-size: 0.68rem; padding: 0; background: none; border: none; opacity: 0.7; }
+.medio kbd { position: absolute; top: 50%; transform: translateY(-50%); right: 10px; font-size: 0.72rem; padding: 0; background: none; border: none; opacity: 0.7; }
 .medio-ancho kbd { right: 14px; }
 .cobro-cabecera { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .paga-con { display: flex; flex-direction: column; gap: 8px; }
@@ -352,7 +357,7 @@ input[type='file'] { padding: 10px; }
 .ultima-venta .boton-chico svg { flex: none; }
 /* En el celular la tira va arriba de todo, con la venta vacía; en PC vive en el panel de cobro. */
 .ultima-venta-arriba { display: none; }
-.boton-retiro { align-self: center; font-size: 0.85rem; }
+.boton-retiro { align-self: center; font-size: 0.92rem; color: var(--texto); }
 .acciones-secundarias { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .acciones-secundarias .boton { white-space: nowrap; min-height: 46px; font-size: 0.92rem; padding: 0 10px; }
 .barra-cobro-movil { display: none; }
@@ -370,7 +375,15 @@ input[type='file'] { padding: 10px; }
 .filtros .buscador-chico { flex: 0 1 300px; }
 .filtros .chips { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 2px; margin: -2px; }
 .filtros .chips::-webkit-scrollbar { display: none; }
-.filtros .chips select { flex: none; width: auto; border-radius: 999px; padding-right: 32px; max-width: 220px; }
+.filtros .chips select {
+  flex: none; width: auto; border-radius: 999px; padding-right: 38px; max-width: 260px; appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2353586a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat; background-position: right 14px center;
+}
+@media (min-width: 901px) {
+  .filtros { flex-wrap: wrap; }
+  .filtros .chips { flex: 1 1 460px; flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; }
+}
 .filtros .chip, .filtros select, .filtros .buscador-chico > input { min-height: 44px; }
 .fab { display: none; }
 .hoja button { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 14px; border-radius: var(--radio); color: var(--texto); background: none; border: none; font-weight: 500; width: 100%; text-align: left; }
@@ -394,7 +407,7 @@ input[type='file'] { padding: 10px; }
 .fila-producto-nombre strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fila-precio { font-weight: 700; }
 /* El stock sólo se pinta cuando hay que mirarlo. */
-.stock { min-height: 34px; min-width: 52px; border-radius: 999px; border: 1px solid var(--borde); background: transparent; color: var(--texto); font-weight: 600; font-size: 0.88rem; padding: 0 10px; font-variant-numeric: tabular-nums; }
+.stock { min-height: 40px; min-width: 52px; border-radius: 999px; border: 1px solid var(--borde); background: transparent; color: var(--texto); font-weight: 600; font-size: 0.88rem; padding: 0 10px; font-variant-numeric: tabular-nums; }
 .stock:hover { border-color: var(--texto); }
 .stock-bajo { background: var(--ambar-suave); color: var(--ambar); border-color: transparent; }
 .stock-cero { background: var(--rojo-suave); color: var(--alerta); border-color: transparent; }
@@ -422,6 +435,13 @@ input[type='file'] { padding: 10px; }
 .cuentas div { display: flex; justify-content: space-between; gap: 12px; }
 .cuentas dd { margin: 0; }
 .cuentas-total { border-top: 1px solid var(--borde); padding-top: 10px; font-weight: 700; }
+.aviso-tarjeta { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-radius: var(--radio); padding: 12px 16px; font-size: 0.95rem; }
+.aviso-ambar { background: var(--ambar-suave); color: var(--ambar); }
+.aviso-ambar .boton { background: #fff; color: var(--texto); }
+/* Total contado, diferencia y "Cerrar turno" siguen a la vista mientras se cuentan los billetes. */
+.cierre-pie { position: sticky; bottom: 0; z-index: 2; background: var(--fondo); display: flex; flex-direction: column; gap: 12px; padding: 12px 0 8px; margin-top: -4px; }
+.cierre-pie .billetes-total { margin: 0; padding: 12px 16px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); }
+.cierre-pie .diferencia { margin-top: 0; }
 .cuentas-total + .cuentas-total { border-top: none; padding-top: 0; }
 .diferencia { margin-top: 14px; border-radius: 12px; padding: 12px 14px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .diferencia input { flex: 1 1 200px; }
@@ -520,36 +540,61 @@ input[type='file'] { padding: 10px; }
 .saldo-cliente strong { font-size: 2.4rem; font-weight: 700; }
 
 /* ---------- Anchos ---------- */
+@media (max-width: 1400px) {
+  /* Con menos ancho, la venta va antes que los rápidos para verla siempre (como en el celular). */
+  .caja-izquierda .lista-venta { order: -1; }
+  .caja-izquierda .buscador { order: -2; }
+}
 @media (max-width: 1280px) {
   :root { --lateral: 216px; }
   .caja { grid-template-columns: minmax(0, 1fr) 340px; }
   .total strong { font-size: 2.6rem; }
-  /* Medios más compactos y la venta antes que los rápidos, como en el celular. */
+  /* Medios más compactos. */
   .medio { font-size: 0.85rem; padding: 4px 8px; gap: 6px; }
   .medio kbd { display: none; }
   .rapidos { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .rapido { min-height: 70px; padding: 10px; }
-  .caja-izquierda .lista-venta { order: -1; }
-  .caja-izquierda .buscador { order: -2; }
   .buscador .boton:not(.boton-cuadrado) { padding: 0 12px; }
   .ventas-turno li { grid-template-columns: minmax(0, 1fr) auto; }
   .ventas-turno li > :last-child { grid-column: 1 / -1; justify-self: end; }
   .reportes > :nth-child(3) { grid-column: 1 / -1; }
+  .clientes { grid-template-columns: 300px minmax(0, 1fr); }
+  /* Los botones de la cabecera pasan abajo del título, con el principal a la derecha. */
+  .pagina-cabecera > .botonera { flex-basis: 100%; }
+  .pagina-cabecera > .botonera > .boton-primario { margin-left: auto; }
 }
 @media (max-width: 1180px) {
+  .cierre { grid-template-columns: minmax(0, 1fr) 340px; }
+}
+/* Notebook chica: la Caja con panel al costado pero poco ancho para la lista. */
+@media (min-width: 901px) and (max-width: 1100px) {
+  .renglon { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'n s' 'c q'; row-gap: 6px; padding: 12px 10px 12px 16px; }
+  .renglon-nombre { grid-area: n; }
+  .renglon-subtotal { grid-area: s; }
+  .cantidad { grid-area: c; }
+  .boton-quitar { grid-area: q; justify-self: end; }
+  .buscador { flex-wrap: wrap; }
+  .buscador-campo { flex-basis: 100%; }
+  .buscador .boton:not(.boton-cuadrado) { flex: 1; }
+  .rapidos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 1100px) {
+  .indicadores-4 { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 1024px) {
   .cierre { grid-template-columns: minmax(0, 1fr); }
-  .cierre-derecha { position: static; }
+  .cierre-derecha { position: static; order: -1; }
 }
 @media (pointer: coarse) {
   /* Piso táctil de 44 px. */
-  .boton-chico, .stock, .sugeridos .chip { min-height: 44px; }
+  .boton-chico, .stock, .sugeridos .chip, .ultima-venta .boton-chico, .chip, .boton-texto { min-height: 44px; }
   .cantidad .boton-icono { width: 44px; height: 44px; }
   .cantidad input { min-height: 44px; }
 }
 @media (max-width: 900px) {
   /* Celular y tablet chica: barra arriba con el título y pestañas fijas abajo. */
   .lateral { display: none; }
-  .contenido { margin-left: 0; padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
+  .contenido { margin-left: 0; min-height: calc(100vh - 56px); padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
   .cabecera-movil {
     display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 15; background: var(--grafito); color: #fff;
     padding: 8px 8px 8px 12px; min-height: 56px;
@@ -557,10 +602,11 @@ input[type='file'] { padding: 10px; }
   .cabecera-movil-logo { width: 30px; height: 33px; display: block; }
   .cabecera-movil-titulo { flex: 1; font-size: 1.05rem; font-weight: 600; }
   .cabecera-movil .boton-icono { color: #b9bec8; }
+  .cabecera-movil .avatar { width: 32px; height: 32px; font-size: 0.9rem; margin-right: 4px; }
   .punto-red { width: 10px; height: 10px; border-radius: 50%; background: #4ade80; flex: none; }
   .punto-red-sin { background: #fbbf24; }
   /* Al enfocar un campo o un botón abajo de todo, que no quede tapado por las pestañas. */
-  html { scroll-padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+  html { scroll-padding-top: 64px; scroll-padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
   .pestañas {
     display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; position: fixed; left: 0; right: 0; bottom: 0; z-index: 15;
     background: #fff; border-top: 1px solid var(--borde); padding: 4px 4px env(safe-area-inset-bottom);
@@ -579,6 +625,7 @@ input[type='file'] { padding: 10px; }
   }
   .hoja a { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 14px; border-radius: var(--radio); color: var(--texto); text-decoration: none; font-weight: 500; }
   .hoja a.activo, .hoja a:hover { background: var(--gris); }
+  .hoja button small { margin-left: auto; font-size: 0.82rem; }
   .hoja-estados { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 6px 4px; border-top: 1px solid var(--borde); margin-top: 4px; }
   .hoja-estados .estado-chip { color: var(--suave); }
   .hoja-estados .estado-chip svg { color: var(--verde); }
@@ -588,21 +635,27 @@ input[type='file'] { padding: 10px; }
   .caja { padding: 12px 12px 84px; gap: 16px; }
   /* En el celular la venta va antes que los botones rápidos, para verla siempre. */
   .caja-izquierda .lista-venta { order: -1; }
+  .caja-izquierda .en-espera { order: -1; }
   .caja-izquierda .buscador { order: -2; }
   .caja-izquierda .ayuda-teclas { display: none; }
   .caja-derecha { position: static; max-height: none; }
   .caja-derecha > .cobro { overflow: visible; height: auto; }
+  /* Sin scroll propio, el vuelto vuelve a su lugar (pegado al viewport taparía los medios). */
+  .caja-derecha > .cobro > .vuelto { position: static; margin: 0; padding: 10px 0 0; }
   .ultima-venta-arriba { display: block; }
   .cierre-derecha { order: -1; }
+  .cierre-pie { position: static; }
   .abrir-caja { margin-top: 8px; }
   .barra-cobro-movil {
     display: flex; position: fixed; left: 8px; right: 8px; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 9; background: var(--grafito); color: #fff;
     padding: 8px 8px 8px 16px; align-items: center; justify-content: space-between; gap: 12px; border-radius: var(--radio-grande); box-shadow: var(--sombra-alta);
   }
-  .barra-cobro-movil div { display: flex; flex-direction: column; line-height: 1.2; }
-  .barra-cobro-movil small { color: #b9bec8; font-size: 0.75rem; }
+  .barra-cobro-movil div { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; flex: 1; }
+  .barra-cobro-movil small { color: #b9bec8; font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .barra-cobro-movil strong { font-size: 1.4rem; }
-  .barra-cobro-movil .boton { min-width: 120px; }
+  .barra-cobro-movil .boton { flex: none; white-space: nowrap; padding: 0 16px; }
+  .barra-cobro-movil .boton-chico { min-height: 44px; padding: 0 12px; background: rgba(255, 255, 255, 0.12); color: #fff; border-color: transparent; }
+  .barra-cobro-movil.barra-espera { background: var(--grafito-claro); }
   .pagina { padding: 16px 12px 24px; }
   /* La barra de arriba ya dice en qué pantalla estamos. */
   .pagina-cabecera h1, .pagina > h1 { display: none; }
@@ -612,6 +665,13 @@ input[type='file'] { padding: 10px; }
     display: grid; place-items: center; position: fixed; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 14;
     width: 56px; height: 56px; border-radius: 50%; border: none; background: var(--grafito); color: #fff; box-shadow: var(--sombra-alta);
   }
+  /* Que el botón redondo no tape la última fila. */
+  .pagina:has(> .fab) { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
+  /* En Ajustes, la copia de seguridad primero; en Reportes, "Para reponer" enseguida después de las cifras. */
+  .ajustes-copia { order: -2; }
+  .ajustes-nube { order: -1; }
+  .reportes-stock { order: 1; }
+  .reportes-ventas { order: 2; }
   .filtros { flex-wrap: wrap; gap: 10px; }
   .filtros .buscador-chico { flex: 1 1 100%; max-width: none; }
   .filtros .chips { flex: 1 1 100%; margin: 0 -12px; padding: 2px 12px; }
@@ -673,7 +733,6 @@ input[type='file'] { padding: 10px; }
   .dividir-cliente { flex-wrap: wrap; }
   .dividir-cliente .boton { margin-left: auto; }
   .dividir-fila .campo-pesos input { min-height: 44px; }
-  .top li { grid-template-columns: minmax(0, 1fr) 72px 64px; gap: 8px; }
   .ventas-turno li { grid-template-columns: minmax(0, 1fr) auto; }
   .ventas-turno li > :last-child { grid-column: 1 / -1; justify-self: end; }
   .modal-cuerpo { padding: 16px 16px 20px; }
@@ -706,7 +765,7 @@ input[type='file'] { padding: 10px; }
 
 /* ---------- Insignias de producto y mercadería ---------- */
 .insignias { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-.insignia { display: inline-block; white-space: nowrap; vertical-align: 1px; line-height: 1.3; font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--gris); color: var(--suave); }
+.insignia { display: inline-block; white-space: nowrap; vertical-align: 1px; line-height: 1.3; font-size: 0.76rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--gris); color: var(--suave); }
 .ventas-turno .insignia { margin: 0 4px; }
 .insignia-promo { background: var(--verde-suave); color: var(--verde); }
 .insignia-aviso { background: var(--ambar-suave); color: var(--ambar); }
@@ -750,7 +809,7 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
 .semana li { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 6px; min-width: 0; }
 .semana-barra { width: 100%; max-width: 44px; background: #c9cdd4; border-radius: 6px 6px 2px 2px; }
 .semana-hoy .semana-barra { background: var(--rojo); }
-.semana-monto { font-size: 0.68rem; color: var(--suave); }
+.semana-monto { font-size: 0.75rem; color: var(--suave); }
 .semana-dia { font-size: 0.8rem; color: var(--suave); text-transform: capitalize; }
 .semana-hoy .semana-dia, .semana-hoy .semana-monto { color: var(--texto); font-weight: 600; }
 .top { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -777,8 +836,9 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
 .canceladas-detalle li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: baseline; }
 .canceladas-detalle li > span:first-child { color: var(--suave); white-space: nowrap; }
 .canceladas-detalle-items { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1100px) { .inicio-grilla { grid-template-columns: 1fr; } }
 @media (max-width: 900px) {
-  .inicio-grilla { grid-template-columns: 1fr; }
+  .top li { grid-template-columns: minmax(0, 1fr) 72px 64px; gap: 8px; }
   .inicio-total .importe { font-size: 2.6rem; }
   .semana { height: 160px; gap: 4px; }
   .semana-monto { display: none; }

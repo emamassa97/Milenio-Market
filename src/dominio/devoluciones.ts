@@ -1,5 +1,11 @@
 import { pagosDeVenta, stockQueUsa, subtotal } from './carrito';
-import type { ItemVenta, Pesos, Venta } from './tipos';
+import { formatPesos } from './dinero';
+import { nombreMedio, type ItemVenta, type Pago, type Pesos, type Venta } from './tipos';
+
+/** "$ 1.900 efectivo + $ 2.000 fiado": cómo se pagó, en una línea. */
+export function describirPagos(pagos: Pago[]): string {
+  return pagos.map((p) => `${formatPesos(p.monto)} ${p.medio === 'fiado' ? 'fiado' : nombreMedio(p.medio).toLowerCase()}`).join(' + ');
+}
 
 /** "2 Coca-Cola 500 ml, Queso de máquina (250 g)": los renglones en una línea. */
 export function describirItems(items: Pick<ItemVenta, 'nombre' | 'cantidad' | 'gramos'>[]): string {

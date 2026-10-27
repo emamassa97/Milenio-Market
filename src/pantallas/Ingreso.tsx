@@ -25,6 +25,7 @@ function Entrar() {
   const { entrar } = useSesion();
   const [usuario, setUsuario] = useState('');
   const [clave, setClave] = useState('');
+  const [recordar, setRecordar] = useState(true);
   const [error, setError] = useState('');
   const [enCurso, unaVez] = useUnaVez();
   return (
@@ -34,7 +35,7 @@ function Entrar() {
         e.preventDefault();
         unaVez(async () => {
           const u = await ingresar(db, usuario, clave);
-          if (u) entrar(u);
+          if (u) entrar(u, recordar);
           else {
             setError('Usuario o clave incorrectos.');
             setClave('');
@@ -50,6 +51,10 @@ function Entrar() {
       <label className="campo">
         <span className="campo-etiqueta">Clave</span>
         <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} autoComplete="current-password" required />
+      </label>
+      <label className="casilla">
+        <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} />
+        <span>Recordarme en este equipo</span>
       </label>
       {error && (
         <p className="texto-alerta" role="alert">

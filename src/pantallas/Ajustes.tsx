@@ -3,7 +3,7 @@ import { db } from '../datos/db';
 import { estaVacia, exportarTodo, restaurarCopia } from '../datos/copia';
 import { borrarTodo, cargarEjemplo } from '../datos/ejemplo';
 import { guardarAjuste, leerAjuste } from '../datos/operaciones';
-import { descargarArchivo, errorATexto, fechaCorta, Icono, useAvisar } from '../ui/componentes';
+import { copiarTexto, descargarArchivo, errorATexto, fechaCorta, Icono, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
 import { htmlTicket, imprimirTicket, leerAjustesTicket, TICKET_INICIAL, type AjustesTicket } from '../ui/ticket';
@@ -67,7 +67,7 @@ export function PantallaAjustes() {
       {sesion && !sesion.admin ? null : (
         <>
       <AjustesDelTicket />
-      <section className="tarjeta formulario">
+      <section className="tarjeta formulario ajustes-copia">
         <h2 className="titulo-chico">Copia de seguridad</h2>
         <p className="texto-suave">
           Todo se guarda en este equipo y funciona sin internet. Descargá una copia cada tanto: si la compu se rompe, con ese archivo recuperás productos, ventas y fiados en otra.
@@ -189,7 +189,7 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
   if (import.meta.env.VITE_DEMO) return null;
 
   return (
-    <section className="tarjeta formulario">
+    <section className="tarjeta formulario ajustes-nube">
       <h2 className="titulo-chico">Copia en la nube</h2>
       {estado.clave ? (
         <>
@@ -227,7 +227,7 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
       ) : (
         <>
           <p className="texto-suave">
-            Con la copia en la nube, cada venta, producto y fiado se guarda también en internet. La caja sigue andando igual sin conexión y sube lo pendiente cuando vuelve. La primera caja se activa sola; en otra compu, escribí la clave que figura en la primera.
+            Es una copia de seguridad: cada venta, producto y fiado se guarda también en internet, por si la compu se rompe o se la roban. No sincroniza entre equipos (atender desde dos compus a la vez queda para más adelante). La caja sigue andando igual sin conexión y sube lo pendiente cuando vuelve. La primera caja se activa sola; en una compu nueva, escribí la clave que figura en la primera para recuperar todo.
           </p>
           <label className="campo">
             <span className="campo-etiqueta">Clave de la nube</span>
@@ -447,6 +447,14 @@ function AjustesDelTicket() {
             <input type="checkbox" checked={a.auto} onChange={(e) => guardar({ ...a, auto: e.target.checked })} />
             <span>Imprimir el ticket solo, cada vez que se cobra</span>
           </label>
+          {a.auto && (
+            <p className="texto-suave ajuste-nota">
+              Para que salga sin preguntar, abrí Chrome con el agregado <code>--kiosk-printing</code> (en el acceso directo, al final del campo Destino).{' '}
+              <button type="button" className="boton boton-texto boton-chico" onClick={async () => avisar((await copiarTexto('--kiosk-printing')) ? { texto: 'Copiado.', tipo: 'ok' } : { texto: 'No se pudo copiar.', tipo: 'error' })}>
+                <Icono nombre="copiar" tam={14} /> Copiar
+              </button>
+            </p>
+          )}
           <div className="botonera">
             <button
               type="button"
