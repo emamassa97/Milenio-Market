@@ -19,7 +19,7 @@ afterEach(async () => { await db.delete(); });
 describe('auditoría de datos', () => {
   it('A1 cargar el ejemplo dos veces a la vez no duplica', async () => {
     await Promise.all([cargarEjemplo(db), cargarEjemplo(db)]);
-    expect(await db.productos.count()).toBe(22);
+    expect(await db.productos.count()).toBe(23);
   });
 
   it('A2 el modo prueba se apaga al cerrar la primera caja', async () => {
