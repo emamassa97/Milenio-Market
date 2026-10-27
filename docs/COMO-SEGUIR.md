@@ -8,14 +8,15 @@ Neon lo que cambió. Nunca baja datos solo.
 
 1. En el proyecto **milenio-market** → **Storage** → **Create Database** → **Neon**,
    y conectarla al proyecto. Eso crea la variable `DATABASE_URL` (o `POSTGRES_URL`).
-2. En **Settings → Environment Variables**, crear `SYNC_CLAVE` con una clave larga
-   (es la que se escribe en la caja).
-3. Volver a publicar. La tabla `registros` se crea sola con el primer envío.
+2. Nada más. La primera caja que abre la app publicada recibe una clave generada
+   por el servidor y queda emparejada; después nadie más puede pedir una. La clave
+   se ve en **Ajustes → Copia en la nube** (anotarla para recuperar en otra compu).
+   Opcional: `SYNC_CLAVE` en Vercel fija una clave a mano y desactiva el alta automática.
 
 ## En la caja
 
-**Ajustes → Copia en la nube** → escribir la clave → **Activar**. Arriba, en la barra,
-aparece "Nube al día" o "Nube: revisar" si algo falló.
+No hay que hacer nada: se activa sola. Arriba, en la barra, aparece "Nube al día"
+o "Nube: revisar" si algo falló.
 
 ## Si se rompe la compu
 

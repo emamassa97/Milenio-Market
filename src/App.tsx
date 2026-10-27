@@ -42,7 +42,7 @@ export function App() {
     [],
     null,
   );
-  useCopiaEnLaNube(!import.meta.env.VITE_DEMO && nube !== null);
+  useCopiaEnLaNube(!import.meta.env.VITE_DEMO);
 
   // Versión de prueba publicada: arranca con productos de ejemplo.
   useEffect(() => {
