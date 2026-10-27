@@ -2,21 +2,40 @@ import { useEffect, useState } from 'react';
 import logo from '../assets/logo-rojo.svg';
 import { db } from '../datos/db';
 import { recuperarDeLaNube } from '../datos/nube';
-import { crearUsuario, empezarDeCero, ingresar, leerUsuarios, resumenEquipo, type Usuario } from '../datos/usuarios';
+import { hayUsuariosEnLaNube, ingresarDondeSea } from '../datos/ingreso';
+import { crearUsuario, empezarDeCero, leerUsuarios, resumenEquipo, type Usuario } from '../datos/usuarios';
 import { errorATexto, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion, LLAVE_SIGUIENTE } from '../ui/sesion';
 
 export function PantallaIngreso() {
   const usuarios = useConsulta(() => leerUsuarios(db), [], null);
-  if (usuarios === null) return null;
+  // Equipo sin usuarios: si la nube ya tiene, se ingresa con ese usuario; si no, se crea el dueño.
+  const [enLaNube, setEnLaNube] = useState<boolean | null>(null);
+  const [crear, setCrear] = useState(false);
+  const sinUsuarios = usuarios?.length === 0;
+  useEffect(() => {
+    if (!sinUsuarios) return;
+    let vigente = true;
+    hayUsuariosEnLaNube().then((hay) => vigente && setEnLaNube(hay));
+    return () => {
+      vigente = false;
+    };
+  }, [sinUsuarios]);
+  if (usuarios === null || (sinUsuarios && enLaNube === null)) return null;
+  const lado =
+    !sinUsuarios || (enLaNube && !crear) ? (
+      <Entrar usuarios={usuarios} crearNuevo={sinUsuarios ? () => setCrear(true) : undefined} />
+    ) : (
+      <PrimerUsuario yaTengo={() => { setCrear(false); setEnLaNube(true); }} />
+    );
   return (
     <div className="ingreso">
       <div className="ingreso-marca">
         <img src={logo} alt="Milenio Market" />
         <p>Caja, stock, fiado y cierre de tu kiosco. Anda con o sin internet.</p>
       </div>
-      <div className="ingreso-lado">{usuarios.length === 0 ? <PrimerUsuario /> : <Entrar usuarios={usuarios} />}</div>
+      <div className="ingreso-lado">{lado}</div>
     </div>
   );
 }
@@ -31,7 +50,7 @@ function usuarioSiguiente(): string {
   }
 }
 
-function Entrar({ usuarios }: { usuarios: Usuario[] }) {
+function Entrar({ usuarios, crearNuevo }: { usuarios: Usuario[]; crearNuevo?: () => void }) {
   const { entrar } = useSesion();
   const [olvide, setOlvide] = useState(false);
   const [usuario, setUsuario] = useState(usuarioSiguiente);
@@ -47,23 +66,24 @@ function Entrar({ usuarios }: { usuarios: Usuario[] }) {
   const [recordar, setRecordar] = useState(true);
   const [error, setError] = useState('');
   const [enCurso, unaVez] = useUnaVez();
-  if (olvide) return <OlvideClave usuarios={usuarios} volver={() => setOlvide(false)} />;
+  if (olvide) return <OlvideClave usuarios={usuarios} volver={() => setOlvide(false)} crearNuevo={crearNuevo} />;
   return (
     <form
       className="tarjeta formulario ingreso-tarjeta"
       onSubmit={(e) => {
         e.preventDefault();
         unaVez(async () => {
-          const u = await ingresar(db, usuario, clave);
-          if (u) entrar(u, recordar);
-          else {
-            setError('Usuario o clave incorrectos.');
+          try {
+            entrar(await ingresarDondeSea(db, usuario, clave), recordar);
+          } catch (err) {
+            setError(errorATexto(err));
             setClave('');
           }
         });
       }}
     >
       <h1>Ingresar</h1>
+      <p className="texto-suave">Tu usuario sirve en cualquier compu o celular.</p>
       <label className="campo">
         <span className="campo-etiqueta">Usuario</span>
         <input value={usuario} onChange={(e) => setUsuario(e.target.value)} autoComplete="username" autoCapitalize="none" autoFocus={!sugerido} required />
@@ -96,12 +116,30 @@ function Entrar({ usuarios }: { usuarios: Usuario[] }) {
  * de este equipo (por si el olvido es el nombre) y, si no hay forma de entrar,
  * se puede empezar de cero en esta compu. Si hay datos cargados, se pide escribir BORRAR.
  */
-function OlvideClave({ usuarios, volver }: { usuarios: Usuario[]; volver: () => void }) {
+function OlvideClave({ usuarios, volver, crearNuevo }: { usuarios: Usuario[]; volver: () => void; crearNuevo?: () => void }) {
   const avisar = useAvisar();
   const resumen = useConsulta(() => resumenEquipo(db), [], null);
   const [confirmacion, setConfirmacion] = useState('');
   const [enCurso, unaVez] = useUnaVez();
   if (resumen === null) return null;
+  if (crearNuevo) {
+    // Equipo nuevo: todavía no tiene usuarios ni datos que borrar.
+    return (
+      <div className="tarjeta formulario ingreso-tarjeta">
+        <h1>¿No podés entrar?</h1>
+        <p className="texto-suave">
+          Tu usuario es el mismo de la otra compu o celular. Si te olvidaste la clave, entrá donde la tengas guardada y cambiala en Ajustes: después sirve en todos lados.
+        </p>
+        <p className="texto-suave">Si no podés entrar en ningún lado, creá un usuario nuevo en esta compu.</p>
+        <button type="button" className="boton boton-primario boton-grande" onClick={crearNuevo}>
+          Crear un usuario nuevo
+        </button>
+        <button type="button" className="boton" onClick={volver}>
+          Volver
+        </button>
+      </div>
+    );
+  }
   const hayDatos = resumen.productos + resumen.ventas + resumen.clientes > 0;
   const listo = !hayDatos || confirmacion.trim().toUpperCase() === 'BORRAR';
   return (
@@ -122,7 +160,7 @@ function OlvideClave({ usuarios, volver }: { usuarios: Usuario[]; volver: () => 
     >
       <h1>¿No podés entrar?</h1>
       <p>
-        Usuarios de esta compu:{' '}
+        Usuarios:{' '}
         {usuarios.map((u, i) => (
           <span key={u.usuario}>
             {i > 0 && ', '}
@@ -158,7 +196,7 @@ function OlvideClave({ usuarios, volver }: { usuarios: Usuario[]; volver: () => 
   );
 }
 
-function PrimerUsuario() {
+function PrimerUsuario({ yaTengo }: { yaTengo: () => void }) {
   const avisar = useAvisar();
   const { entrar } = useSesion();
   const [nombre, setNombre] = useState('');
@@ -223,7 +261,7 @@ function PrimerUsuario() {
       }}
     >
       <h1>Creá tu usuario</h1>
-      <p className="texto-suave">Es la primera vez que se usa el sistema en esta compu. Este usuario es el dueño: después puede sumar empleados desde Ajustes.</p>
+      <p className="texto-suave">Es la primera vez que se usa el sistema. Este usuario es el dueño y sirve en cualquier compu o celular; después puede sumar empleados desde Ajustes.</p>
       <label className="campo">
         <span className="campo-etiqueta">Tu nombre</span>
         <input value={nombre} onChange={(e) => setNombre(e.target.value)} autoFocus required />
@@ -248,8 +286,11 @@ function PrimerUsuario() {
       <button className="boton boton-primario boton-grande" type="submit" disabled={enCurso}>
         Crear usuario y entrar
       </button>
-      <button type="button" className="boton" onClick={() => setRecuperar(true)}>
-        ¿Compu nueva? Recuperar desde la nube
+      <button type="button" className="boton" onClick={yaTengo}>
+        Ya tengo usuario: ingresar
+      </button>
+      <button type="button" className="boton-texto" onClick={() => setRecuperar(true)}>
+        Recuperar con la clave de la nube
       </button>
     </form>
   );
