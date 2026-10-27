@@ -1,5 +1,5 @@
 import type { BaseKiosco } from './db';
-import { sincronizarAhora } from './nube';
+import { pendientes, sincronizarAhora } from './nube';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
 
 // Usuarios para entrar al sistema. Se guardan en los ajustes (así viajan con la
@@ -116,9 +116,10 @@ export async function revalidarSesion(db: BaseKiosco, usuario: string | Pick<Usu
 }
 
 /** Lo que hay guardado en este equipo, para saber qué se pierde al empezar de cero. */
-export async function resumenEquipo(db: BaseKiosco): Promise<{ productos: number; ventas: number; clientes: number }> {
-  const [productos, ventas, clientes] = await Promise.all([db.productos.count(), db.ventas.count(), db.clientes.count()]);
-  return { productos, ventas, clientes };
+export async function resumenEquipo(db: BaseKiosco): Promise<{ productos: number; ventas: number; clientes: number; sinSubir: number }> {
+  const [productos, ventas, clientes, clave] = await Promise.all([db.productos.count(), db.ventas.count(), db.clientes.count(), leerAjuste<string>(db, 'nube.clave', '')]);
+  // Con nube, lo que todavía no se subió es lo único que se pierde de verdad.
+  return { productos, ventas, clientes, sinSubir: clave ? await pendientes(db) : 0 };
 }
 
 /**

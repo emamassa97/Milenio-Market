@@ -71,7 +71,7 @@ export async function hayUsuariosEnLaNube(url = URL_NUBE): Promise<boolean | nul
   const reloj = setTimeout(() => corte.abort(), 2500);
   try {
     const r = await fetch(`${url}?usuarios=1`, { signal: corte.signal });
-    if (!r.ok) return null;
+    if (!r.ok) return r.status >= 500 ? null : false; // sin nube armada (404, 409) no hay a quién preguntar
     return ((await r.json()) as { hay?: boolean }).hay === true;
   } catch {
     return null;

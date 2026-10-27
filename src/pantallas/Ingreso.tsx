@@ -11,8 +11,10 @@ import { useSesion, LLAVE_SIGUIENTE } from '../ui/sesion';
 export function PantallaIngreso() {
   const usuarios = useConsulta(() => leerUsuarios(db), [], null);
   // Equipo sin usuarios: si la nube ya tiene, se ingresa con ese usuario; si no, se crea el dueño.
-  const [enLaNube, setEnLaNube] = useState<boolean | null>(null);
+  // undefined: preguntando; null: sin internet (no se sabe).
+  const [enLaNube, setEnLaNube] = useState<boolean | null | undefined>(undefined);
   const [crear, setCrear] = useState(false);
+  const [intento, setIntento] = useState(0);
   const sinUsuarios = usuarios?.length === 0;
   useEffect(() => {
     if (!sinUsuarios) return;
@@ -21,13 +23,17 @@ export function PantallaIngreso() {
     return () => {
       vigente = false;
     };
-  }, [sinUsuarios]);
-  if (usuarios === null || (sinUsuarios && enLaNube === null)) return null;
+  }, [sinUsuarios, intento]);
+  if (usuarios === null || (sinUsuarios && enLaNube === undefined)) return null;
   const lado =
     !sinUsuarios || (enLaNube && !crear) ? (
       <Entrar usuarios={usuarios} crearNuevo={sinUsuarios ? () => setCrear(true) : undefined} />
     ) : (
-      <PrimerUsuario yaTengo={() => { setCrear(false); setEnLaNube(true); }} />
+      <PrimerUsuario
+        sinRed={enLaNube === null && !crear}
+        reintentar={() => { setEnLaNube(undefined); setIntento((i) => i + 1); }}
+        yaTengo={() => { setCrear(false); setEnLaNube(true); }}
+      />
     );
   return (
     <div className="ingreso">
@@ -209,6 +215,11 @@ function OlvideClave({ usuarios, volver, crearNuevo }: { usuarios: Usuario[]; vo
       <p className="texto-suave">
         Si te olvidaste la clave de un empleado, entrá como dueño y cambiala desde Ajustes. Si te olvidaste la del dueño, se puede empezar de cero en esta compu y crear un usuario nuevo.
       </p>
+      {resumen.sinSubir > 0 && (
+        <p className="texto-alerta" role="alert">
+          Ojo: {resumen.sinSubir === 1 ? 'hay 1 cambio' : `hay ${resumen.sinSubir} cambios`} de esta compu que todavía no llegaron a la nube. Conectate a internet antes de seguir, o se pierden.
+        </p>
+      )}
       {hayDatos ? (
         <>
           <p className="texto-alerta">
@@ -232,7 +243,7 @@ function OlvideClave({ usuarios, volver, crearNuevo }: { usuarios: Usuario[]; vo
   );
 }
 
-function PrimerUsuario({ yaTengo }: { yaTengo: () => void }) {
+function PrimerUsuario({ yaTengo, sinRed = false, reintentar }: { yaTengo: () => void; sinRed?: boolean; reintentar?: () => void }) {
   const avisar = useAvisar();
   const { entrar } = useSesion();
   const [nombre, setNombre] = useState('');
@@ -297,6 +308,14 @@ function PrimerUsuario({ yaTengo }: { yaTengo: () => void }) {
       }}
     >
       <h1>Creá tu usuario</h1>
+      {sinRed && (
+        <div className="aviso-tarjeta aviso-ambar" role="status">
+          <span>Sin internet no se puede ver si ya tenés usuario. Si ya usás el sistema en otra compu o celular, conectate y tocá Reintentar.</span>
+          <button type="button" className="boton boton-chico" onClick={reintentar}>
+            Reintentar
+          </button>
+        </div>
+      )}
       <p className="texto-suave">Es la primera vez que se usa el sistema. Este usuario es el dueño y sirve en cualquier compu o celular; después puede sumar empleados desde Ajustes.</p>
       <label className="campo">
         <span className="campo-etiqueta">Tu nombre</span>

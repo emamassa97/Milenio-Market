@@ -211,7 +211,7 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
       {estado.clave ? (
         <>
           <p className="texto-suave estado-nube">
-            <span>
+            <span className={estado.error ? 'texto-alerta' : undefined}>
               {estado.error
                 ? `No se pudo sincronizar: ${estado.error}`
                 : estado.pendientes > 0

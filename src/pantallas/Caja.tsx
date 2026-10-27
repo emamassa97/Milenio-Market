@@ -162,7 +162,6 @@ function AbrirCaja() {
         } catch {
           /* sin almacenamiento */
         }
-        avisar({ texto: 'Caja abierta. ¡Buenas ventas!', tipo: 'ok' });
       } catch (err) {
         avisar({ texto: errorATexto(err), tipo: 'error' });
       }

@@ -23,7 +23,7 @@ describe('usuarios', () => {
     expect((await resumenEquipo(db)).clientes).toBe(1);
     await empezarDeCero(db);
     expect(await leerUsuarios(db)).toEqual([]);
-    expect(await resumenEquipo(db)).toEqual({ productos: 0, ventas: 0, clientes: 0 });
+    expect(await resumenEquipo(db)).toEqual({ productos: 0, ventas: 0, clientes: 0, sinSubir: 0 });
     expect(await leerAjuste(db, 'nube.clave', '')).toBe('ABC-123');
     expect(await leerAjuste(db, 'nube.marcas', null)).toBeNull();
   });
