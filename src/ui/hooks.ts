@@ -1,4 +1,5 @@
 import { liveQuery } from 'dexie';
+import { totalCarrito, type Carrito } from '../dominio/carrito';
 import { db } from '../datos/db';
 import { estadoNube, pedirAlta, sincronizarAhora, type EstadoNube } from '../datos/nube';
 import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react';
@@ -106,12 +107,25 @@ export function useEstadoNube(): EstadoNube {
   return useConsulta(() => estadoNube(db), [], NUBE_INICIAL);
 }
 
-// Lo que la caja deja guardado en el navegador (carrito y ventas en espera), para leerlo desde otra pantalla.
+// Lo que la caja deja guardado en el navegador (carrito, ventas en espera, última venta), para leerlo desde otra pantalla.
+export const LLAVE_CARRITO = 'milenio.carrito';
+export const LLAVE_ESPERA = 'milenio.espera';
+export const LLAVE_ULTIMA = 'milenio.ultima';
+
 export function leerGuardado<T>(llave: string, porDefecto: T): T {
   try {
     const crudo = localStorage.getItem(llave) ?? sessionStorage.getItem(llave);
-    return crudo ? (JSON.parse(crudo) as T) : porDefecto;
+    const valor = crudo ? (JSON.parse(crudo) as T | null) : null;
+    return valor ?? porDefecto;
   } catch {
     return porDefecto;
   }
+}
+
+/** Cuántas ventas hay en espera y cuánto suman, con el texto que se muestra. */
+export function resumenEspera(espera: unknown): { cantidad: number; total: number; texto: string } {
+  const lista = Array.isArray(espera) ? (espera as { carrito?: Carrito }[]) : [];
+  const total = lista.reduce((s, e) => s + (e?.carrito ? totalCarrito(e.carrito) : 0), 0);
+  const cantidad = lista.length;
+  return { cantidad, total, texto: cantidad === 1 ? 'Una venta en espera' : `${cantidad} ventas en espera` };
 }

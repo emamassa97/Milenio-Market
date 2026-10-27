@@ -106,7 +106,6 @@ function Sistema() {
   const ir = (id: IdPantalla) => {
     window.location.hash = id;
     setHash(id);
-    window.scrollTo(0, 0);
   };
 
   // Sin enlace, el dueño arranca en el panel cuando la caja está cerrada; con la caja abierta, en la caja.

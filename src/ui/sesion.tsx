@@ -1,30 +1,54 @@
-import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { Usuario } from '../datos/usuarios';
 
-// Quién está usando el sistema. Con "Recordarme" queda guardado en el equipo 30 días
-// (se renueva cada vez que se abre); si no, dura mientras la pestaña esté abierta.
+// Quién está usando el sistema. Con "Recordarme" queda guardado en el equipo: el empleado 30 días
+// (se renuevan cada vez que abre); el dueño sólo 12 horas, porque su sesión abierta deja al que
+// atienda después con permiso para anular, retirar plata o borrar datos. Sin "Recordarme" dura
+// mientras la pestaña esté abierta.
 
 export type Sesion = Pick<Usuario, 'usuario' | 'nombre' | 'admin'>;
 type Guardada = Sesion & { vence?: number };
 
 const LLAVE = 'milenio.sesion';
-const DIA = 86_400_000;
-const DIAS_RECORDADA = 30;
+const HORA = 3_600_000;
+const DURACION_EMPLEADO = 30 * 24 * HORA;
+const DURACION_DUEÑO = 12 * HORA;
+
+function vencimiento(admin: boolean): number {
+  return Date.now() + (admin ? DURACION_DUEÑO : DURACION_EMPLEADO);
+}
+
+function leerLarga(): Guardada | null {
+  const crudo = localStorage.getItem(LLAVE);
+  if (!crudo) return null;
+  const s = JSON.parse(crudo) as Guardada;
+  if (!s.vence || s.vence < Date.now()) {
+    localStorage.removeItem(LLAVE);
+    return null;
+  }
+  return s;
+}
 
 function leer(): Guardada | null {
   try {
     const corta = sessionStorage.getItem(LLAVE);
-    if (corta) return JSON.parse(corta) as Guardada;
-    const larga = localStorage.getItem(LLAVE);
-    if (!larga) return null;
-    const s = JSON.parse(larga) as Guardada;
-    if (!s.vence || s.vence < Date.now()) {
-      localStorage.removeItem(LLAVE);
-      return null;
+    if (corta) {
+      const s = JSON.parse(corta) as Guardada;
+      // Si era recordada y otra pestaña salió (o venció), acá también se corta.
+      if (!s.vence) return s;
+      const larga = leerLarga();
+      if (!larga) {
+        sessionStorage.removeItem(LLAVE);
+        return null;
+      }
+      return larga;
     }
-    // Cada vez que se usa, se renueva el plazo.
-    const renovada = { ...s, vence: Date.now() + DIAS_RECORDADA * DIA };
+    const larga = leerLarga();
+    if (!larga) return null;
+    // El empleado renueva el plazo cada vez que abre; el dueño no.
+    const renovada = larga.admin ? larga : { ...larga, vence: vencimiento(false) };
     localStorage.setItem(LLAVE, JSON.stringify(renovada));
+    sessionStorage.setItem(LLAVE, JSON.stringify(renovada));
     return renovada;
   } catch {
     return null;
@@ -39,12 +63,17 @@ const Contexto = createContext<{ sesion: Sesion | null; entrar: (u: Sesion, reco
 
 export function ProveedorSesion({ children }: { children: ReactNode }) {
   const [sesion, setSesion] = useState<Guardada | null>(leer);
-  const actual = useRef(sesion);
-  actual.current = sesion;
   const entrar = (u: Sesion, recordar?: boolean) => {
-    // Si no se dice, se mantiene lo que eligió al entrar (p. ej. cuando se refresca el nombre).
-    const larga = recordar ?? !!actual.current?.vence;
-    const s: Guardada = { usuario: u.usuario, nombre: u.nombre, admin: u.admin, ...(larga ? { vence: Date.now() + DIAS_RECORDADA * DIA } : {}) };
+    // Si no se dice, se mantiene lo que había (p. ej. cuando se refresca el nombre): recordada sólo si sigue guardada en el equipo.
+    let larga = recordar;
+    if (larga === undefined) {
+      try {
+        larga = localStorage.getItem(LLAVE) !== null;
+      } catch {
+        larga = false;
+      }
+    }
+    const s: Guardada = { usuario: u.usuario, nombre: u.nombre, admin: u.admin, ...(larga ? { vence: vencimiento(u.admin) } : {}) };
     try {
       sessionStorage.setItem(LLAVE, JSON.stringify(s));
       if (larga) localStorage.setItem(LLAVE, JSON.stringify(s));
@@ -64,6 +93,20 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     }
     setSesion(null);
   };
+  // Salir en una pestaña cierra la sesión recordada en todas las demás.
+  useEffect(() => {
+    const cambio = (e: StorageEvent) => {
+      if (e.key !== LLAVE || e.newValue !== null) return;
+      try {
+        sessionStorage.removeItem(LLAVE);
+      } catch {
+        /* nada */
+      }
+      setSesion((s) => (s?.vence ? null : s));
+    };
+    window.addEventListener('storage', cambio);
+    return () => window.removeEventListener('storage', cambio);
+  }, []);
   return <Contexto.Provider value={{ sesion, entrar, salir }}>{children}</Contexto.Provider>;
 }
 

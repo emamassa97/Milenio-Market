@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DENOMINACIONES, resumirTurno, textoCierre, totalConteo, type ResumenTurno } from '../dominio/caja';
-import { pagosDeVenta, totalCarrito, type Carrito } from '../dominio/carrito';
+import { carritoVacio, pagosDeVenta, totalCarrito, type Carrito } from '../dominio/carrito';
 import { describirItems, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { nombreMedio, type Cliente, type MovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
@@ -8,7 +8,7 @@ import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket'
 import { db } from '../datos/db';
 import { anularVenta, cerrarTurno, registrarMovimientoCaja, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
 import { CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
-import { leerGuardado, useConsulta, useUnaVez } from '../ui/hooks';
+import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 import { DevolverVenta } from './Devolver';
@@ -106,14 +106,29 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
 
 // Ventas que quedaron armadas en la caja sin cobrar (el navegador las guarda aunque se cambie de pantalla).
 function ventasSinCobrar(): string | null {
-  const espera = leerGuardado<{ carrito: Carrito }[]>('milenio.espera', []);
-  const carrito = leerGuardado<Carrito>('milenio.carrito', { items: [] });
-  if (espera.length === 0 && carrito.items.length === 0) return null;
-  const partes = [
-    espera.length > 0 && `${espera.length === 1 ? 'una venta en espera' : `${espera.length} ventas en espera`} (${formatPesos(espera.reduce((s, e) => s + totalCarrito(e.carrito), 0))})`,
-    carrito.items.length > 0 && `una venta sin cobrar (${formatPesos(totalCarrito(carrito))})`,
-  ].filter(Boolean);
+  const espera = resumenEspera(leerGuardado<unknown>(LLAVE_ESPERA, []));
+  const guardado = leerGuardado<Partial<Carrito>>(LLAVE_CARRITO, carritoVacio);
+  const carrito: Carrito = Array.isArray(guardado?.items) ? { items: guardado.items } : carritoVacio;
+  if (espera.cantidad === 0 && carrito.items.length === 0) return null;
+  const partes = [espera.cantidad > 0 && `${espera.texto.charAt(0).toLowerCase()}${espera.texto.slice(1)} (${formatPesos(espera.total)})`, carrito.items.length > 0 && `una venta sin cobrar (${formatPesos(totalCarrito(carrito))})`].filter(Boolean);
   return `Hay ${partes.join(' y ')}.`;
+}
+
+// Se vuelve a mirar al volver a la pestaña o cuando otra pestaña cobra o deja algo en espera.
+function useVentasSinCobrar(): string | null {
+  const [texto, setTexto] = useState(ventasSinCobrar);
+  useEffect(() => {
+    const revisar = () => setTexto(ventasSinCobrar());
+    window.addEventListener('focus', revisar);
+    window.addEventListener('storage', revisar);
+    document.addEventListener('visibilitychange', revisar);
+    return () => {
+      window.removeEventListener('focus', revisar);
+      window.removeEventListener('storage', revisar);
+      document.removeEventListener('visibilitychange', revisar);
+    };
+  }, []);
+  return texto;
 }
 
 function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado: (r: Resultado) => void; irACaja: () => void }) {
@@ -131,14 +146,16 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
   const contoAlgo = Object.values(conteo).some((v) => v > 0);
   const diferencia = contado - resumen.efectivoEsperado;
   const fiadoCobrado = Object.values(resumen.cobrosFiado).reduce((a, b) => a + b, 0);
-  const sinCobrar = useMemo(ventasSinCobrar, []);
+  const sinCobrar = useVentasSinCobrar();
   const textoCerrar = !confirmar
     ? 'Cerrar turno'
-    : sinCobrar
-      ? 'Hay ventas sin cobrar. ¿Cerrar igual?'
-      : !contoAlgo
-        ? 'No contaste nada. ¿Cerrar igual?'
-        : `Sí, cerrar · contaste ${formatPesos(contado)}`;
+    : sinCobrar && !contoAlgo
+      ? 'Hay ventas sin cobrar y no contaste nada. ¿Cerrar igual?'
+      : sinCobrar
+        ? 'Hay ventas sin cobrar. ¿Cerrar igual?'
+        : !contoAlgo
+          ? 'No contaste nada. ¿Cerrar igual?'
+          : `Sí, cerrar · contaste ${formatPesos(contado)}`;
 
   const cerrar = () => {
     if (!confirmar) {

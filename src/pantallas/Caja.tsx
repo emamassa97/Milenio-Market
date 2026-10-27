@@ -41,7 +41,7 @@ import {
 } from '../datos/operaciones';
 import { CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
-import { leerGuardado, pitido, useConsulta, useUnaVez } from '../ui/hooks';
+import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, LLAVE_ULTIMA, pitido, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { NuevoMovimiento } from './Cierre';
 import { DevolverVenta } from './Devolver';
@@ -165,9 +165,9 @@ function Caja() {
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
   const pedirDueño = usePedirDueño();
   const { sesion } = useSesion();
-  const [carrito, setCarrito] = useGuardado<Carrito>('milenio.carrito', carritoVacio);
-  const [espera, setEspera] = useGuardado<Espera[]>('milenio.espera', []);
-  const [ultima, setUltima] = useGuardado<UltimaVenta | null>('milenio.ultima', null);
+  const [carrito, setCarrito] = useGuardado<Carrito>(LLAVE_CARRITO, carritoVacio);
+  const [espera, setEspera] = useGuardado<Espera[]>(LLAVE_ESPERA, []);
+  const [ultima, setUltima] = useGuardado<UltimaVenta | null>(LLAVE_ULTIMA, null);
   const ticket = useConsulta(() => leerAjustesTicket(db), [], TICKET_INICIAL);
   const [entrada, setEntrada] = useState('');
   const [resaltado, setResaltado] = useState(0);
@@ -496,8 +496,8 @@ function Caja() {
   acciones.current = { cobrar, ponerEnEspera, elegirMedio };
   useEffect(() => {
     const tecla = (e: KeyboardEvent) => {
-      // Las F que usa la caja no abren la ayuda ni las herramientas del navegador, ni con un modal abierto.
-      if (/^F(2|3|4|8|12)$/.test(e.key)) e.preventDefault();
+      // Las F que usa la caja (incluidas las de los medios, F5 a F10) no recargan ni abren cosas del navegador, ni con un modal abierto.
+      if (/^F(2|3|4|8|12)$/.test(e.key) || TECLA_MEDIO[e.key]) e.preventDefault();
       if (document.querySelector('dialog[open]')) return;
       const medioTecla = TECLA_MEDIO[e.key];
       if (medioTecla) {
@@ -865,8 +865,8 @@ function Caja() {
       ) : espera.length > 0 ? (
         <div className="barra-cobro-movil barra-espera" role="status">
           <div>
-            <small>{espera.length === 1 ? 'Una venta en espera' : `${espera.length} ventas en espera`}</small>
-            <strong className="importe">{formatPesos(espera.reduce((s, e) => s + totalCarrito(e.carrito), 0))}</strong>
+            <small>{resumenEspera(espera).texto}</small>
+            <strong className="importe">{formatPesos(resumenEspera(espera).total)}</strong>
           </div>
           <button type="button" className="boton" onClick={() => retomar(espera[0]!)}>
             <Icono nombre="pausa" tam={16} /> Retomar
