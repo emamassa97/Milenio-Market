@@ -186,3 +186,33 @@ describe('copia de seguridad', () => {
     await expect(restaurarCopia(db, { hola: 1 })).rejects.toThrow(/no es una copia/);
   });
 });
+
+describe('quién hizo qué', () => {
+  it('guarda el usuario al abrir, cobrar, mover plata, anular y cerrar', async () => {
+    const id = await guardarProducto(db, prod());
+    const p = (await db.productos.get(id))!;
+    const turnoId = await abrirTurno(db, 'Ema', 1000, 'ema');
+    const venta = await registrarVenta(db, { items: [itemDeProducto(p, 1)], medio: 'efectivo', pagaCon: null, clienteId: null }, 'ana');
+    const movId = await registrarMovimientoCaja(db, 'retiro', 500, 'banco', 'ema');
+    await anularVenta(db, venta.id!, 'ema');
+    await cerrarTurno(db, { '1000': 1 }, '', 'ana');
+    expect(await db.turnos.get(turnoId)).toMatchObject({ usuario: 'ema', usuarioCierre: 'ana' });
+    expect(await db.ventas.get(venta.id!)).toMatchObject({ usuario: 'ana', anulada: true, anuladaPor: 'ema' });
+    expect(await db.movimientosCaja.get(movId)).toMatchObject({ usuario: 'ema' });
+  });
+
+  it('sin usuario funciona igual que antes y no agrega campos', async () => {
+    const id = await guardarProducto(db, prod());
+    const p = (await db.productos.get(id))!;
+    const turnoId = await abrirTurno(db, 'Ema', 0);
+    const venta = await registrarVenta(db, { items: [itemDeProducto(p, 1)], medio: 'efectivo', pagaCon: null, clienteId: null });
+    const movId = await registrarMovimientoCaja(db, 'gasto', 100, 'hielo');
+    await anularVenta(db, venta.id!);
+    await cerrarTurno(db, {}, '');
+    const turno = (await db.turnos.get(turnoId))!;
+    const guardada = (await db.ventas.get(venta.id!))!;
+    expect('usuario' in turno || 'usuarioCierre' in turno).toBe(false);
+    expect('usuario' in guardada || 'anuladaPor' in guardada).toBe(false);
+    expect('usuario' in (await db.movimientosCaja.get(movId))!).toBe(false);
+  });
+});

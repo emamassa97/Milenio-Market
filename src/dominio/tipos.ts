@@ -57,6 +57,10 @@ export interface Venta {
   clienteId: number | null;
   anulada: boolean;
   anuladaFecha?: number;
+  /** Usuario que cobró (el que inició sesión). */
+  usuario?: string;
+  /** Usuario que anuló la venta. */
+  anuladaPor?: string;
 }
 
 export interface Turno {
@@ -70,6 +74,10 @@ export interface Turno {
   contado: Pesos | null;
   esperado: Pesos | null;
   nota: string;
+  /** Usuario que abrió la caja. */
+  usuario?: string;
+  /** Usuario que cerró la caja. */
+  usuarioCierre?: string;
 }
 
 export type TipoMovimientoCaja = 'retiro' | 'gasto' | 'ingreso';
@@ -81,6 +89,8 @@ export interface MovimientoCaja {
   tipo: TipoMovimientoCaja;
   monto: Pesos;
   motivo: string;
+  /** Usuario que hizo el retiro, gasto o ingreso. */
+  usuario?: string;
 }
 
 export interface Cliente {
