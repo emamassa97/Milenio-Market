@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/csv';
 import { formatPesos } from '../dominio/dinero';
-import { cantidadDeTexto, codigoEscaneado } from '../dominio/entrada';
+import { cantidadDeTexto, codigoEscaneado, normalizarTexto as normalizar } from '../dominio/entrada';
 import { aplicarAumento, margen, precioParaMargen, type Redondeo } from '../dominio/precios';
 import type { Producto } from '../dominio/tipos';
 import { diasParaVencer } from '../dominio/reportes';
@@ -33,10 +33,6 @@ const FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'sinCodigo', nombre: 'Sin código' },
   { id: 'sinCosto', nombre: 'Sin costo' },
 ];
-
-function normalizar(t: string) {
-  return t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-}
 
 const necesitaReponer = (p: Producto) => p.stockMinimo > 0 && p.stock <= p.stockMinimo;
 const vencePronto = (p: Producto) => !!p.vence && diasParaVencer(p.vence) <= 15;

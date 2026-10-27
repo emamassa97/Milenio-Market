@@ -222,6 +222,24 @@ describe('reportes', () => {
       ['P2', 2, 1000, 'Vencido'],
     ]);
     expect(masDevueltos([base])).toEqual([]);
+    // Por fecha de la devolución (no de la venta), y con lo devuelto de verdad repartido: $1.200 por 2 P1 de lista $2.000.
+    const v3: Venta = { ...base, fecha: 0, devoluciones: [{ fecha: 50, turnoId: 1, items: [{ indice: 0, cantidad: 2 }], monto: 1200, medio: 'efectivo', motivo: '' }] };
+    expect(masDevueltos([v1, v3], 10, 100)).toEqual([{ clave: 'p1', nombre: 'P1', unidades: 2, importe: 1200, motivo: '' }]);
+    expect(masDevueltos([v1, v3], 60, 100)).toEqual([]);
+  });
+  it('el descuento sale de la ganancia en proporción a lo que quedó vendido', () => {
+    const v: Venta = {
+      fecha: 0, turnoId: 1, cajero: '', total: 1800, medio: 'efectivo', pagaCon: null, vuelto: 0, clienteId: null, anulada: false, descuento: 200,
+      items: [{ ...item(1, 1000, 2), costoUnitario: 600 }],
+    };
+    // Sin devolver: ganancia 2000 - 1200 - 200.
+    expect(resumirVentas([v]).ganancia).toBe(600);
+    // Devuelta la mitad ($900 de los $1.800): queda la mitad de la ganancia y la mitad del descuento.
+    const mitad: Venta = { ...v, devoluciones: [{ fecha: 1, turnoId: 1, items: [{ indice: 0, cantidad: 1 }], monto: 900, medio: 'efectivo', motivo: '' }] };
+    expect(resumirVentas([mitad]).ganancia).toBe(300);
+    // Devuelta entera: nada de ganancia, nada de descuento.
+    const toda: Venta = { ...v, devoluciones: [{ fecha: 1, turnoId: 1, items: [{ indice: 0, cantidad: 2 }], monto: 1800, medio: 'efectivo', motivo: '' }] };
+    expect(resumirVentas([toda]).ganancia).toBe(0);
   });
   it('reposición y sin movimiento', () => {
     const p = (id: number, stock: number, stockMinimo: number): Producto => ({

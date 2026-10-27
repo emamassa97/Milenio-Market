@@ -110,7 +110,12 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
 // Encontrar una venta de cualquier día por producto o por importe exacto (ticket, devolución).
 function BuscarVentas() {
   const [q, setQ] = useState('');
-  const t = q.trim();
+  // Se busca recién cuando se deja de tipear un momento: recorre las ventas de la más nueva a la más vieja.
+  const [t, setT] = useState('');
+  useEffect(() => {
+    const id = window.setTimeout(() => setT(q.trim()), 300);
+    return () => window.clearTimeout(id);
+  }, [q]);
   const resultados = useConsulta(
     async () => {
       if (t.length < 2) return [] as Venta[];
@@ -147,7 +152,9 @@ function BuscarVentas() {
 function ventasSinCobrar(): string | null {
   const espera = resumenEspera(leerGuardado<unknown>(LLAVE_ESPERA, []));
   const guardado = leerGuardado<Partial<Carrito>>(LLAVE_CARRITO, carritoVacio);
-  const carrito: Carrito = Array.isArray(guardado?.items) ? { items: guardado.items } : carritoVacio;
+  const carrito: Carrito = Array.isArray(guardado?.items)
+    ? { items: guardado.items, ...(typeof guardado.descuento === 'number' ? { descuento: guardado.descuento } : {}) }
+    : carritoVacio;
   if (espera.cantidad === 0 && carrito.items.length === 0) return null;
   const partes = [espera.cantidad > 0 && `${espera.texto.charAt(0).toLowerCase()}${espera.texto.slice(1)} (${formatPesos(espera.total)})`, carrito.items.length > 0 && `una venta sin cobrar (${formatPesos(totalCarrito(carrito))})`].filter(Boolean);
   return `Hay ${partes.join(' y ')}.`;
@@ -170,7 +177,7 @@ function useVentasSinCobrar(): string | null {
   return texto;
 }
 
-function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado: (r: Resultado) => void; irACaja: () => void }) {
+function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado: (r: Resultado | null) => void; irACaja: () => void }) {
   const avisar = useAvisar();
   const { turno, ventas, movimientos, resumen } = datos;
   const [conteo, setConteo] = useState<Record<string, number>>({});
@@ -221,6 +228,8 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
       });
       await cerrarTurno(db, conteo, nota, sesion?.usuario);
     } catch (e) {
+      // El resultado se había mostrado por adelantado para que no parpadee "caja cerrada"; si falló, se saca.
+      onCerrado(null);
       avisar({ texto: errorATexto(e), tipo: 'error' });
     }
     });

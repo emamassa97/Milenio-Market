@@ -69,7 +69,13 @@ export function PantallaReportes() {
   );
 
   const r = useMemo(() => resumirVentas(ventas), [ventas]);
-  const devueltos = useMemo(() => masDevueltos(ventas), [ventas]);
+  // Las devoluciones se cuentan por el día en que se hicieron: se miran también ventas de hasta 60 días antes del período.
+  const ventasParaDevoluciones = useConsulta(
+    () => db.ventas.where('fecha').between(desde - 60 * 86400000, hasta, true, false).filter((v) => !!v.devoluciones?.length).toArray(),
+    [desde, hasta],
+    [] as Venta[],
+  );
+  const devueltos = useMemo(() => masDevueltos(ventasParaDevoluciones, desde, hasta), [ventasParaDevoluciones, desde, hasta]);
   const cobradoBruto = Math.max(1, Object.values(r.porMedio).reduce((a, b) => a + b, 0));
   const reponer = useMemo(() => paraReponer(productos), [productos]);
   const quietos = useMemo(() => sinMovimiento(productos, ventas30).slice(0, 10), [productos, ventas30]);

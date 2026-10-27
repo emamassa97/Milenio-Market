@@ -41,6 +41,8 @@ function leer(): Guardada | null {
         sessionStorage.removeItem(LLAVE);
         return null;
       }
+      // Si en otra pestaña entró otra persona con "Recordarme", esta pestaña sigue siendo de quien era (hasta su vencimiento).
+      if (larga.usuario !== s.usuario) return s.vence > Date.now() ? s : null;
       return larga;
     }
     const larga = leerLarga();
@@ -64,11 +66,11 @@ const Contexto = createContext<{ sesion: Sesion | null; entrar: (u: Sesion, reco
 export function ProveedorSesion({ children }: { children: ReactNode }) {
   const [sesion, setSesion] = useState<Guardada | null>(leer);
   const entrar = (u: Sesion, recordar?: boolean) => {
-    // Si no se dice, se mantiene lo que había (p. ej. cuando se refresca el nombre): recordada sólo si sigue guardada en el equipo.
+    // Si no se dice, se mantiene lo que había (p. ej. cuando se refresca el nombre): recordada sólo si el guardado en el equipo es este mismo usuario.
     let larga = recordar;
     if (larga === undefined) {
       try {
-        larga = localStorage.getItem(LLAVE) !== null;
+        larga = leerLarga()?.usuario === u.usuario;
       } catch {
         larga = false;
       }

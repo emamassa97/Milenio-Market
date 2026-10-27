@@ -23,7 +23,7 @@ import {
   type Carrito,
 } from '../dominio/carrito';
 import { formatPesos } from '../dominio/dinero';
-import { codigoEscaneado, gramosDeTexto } from '../dominio/entrada';
+import { codigoEscaneado, gramosDeTexto, normalizarTexto as normalizar } from '../dominio/entrada';
 import { saldoCliente } from '../dominio/fiado';
 import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type Pago, type Producto, type Venta } from '../dominio/tipos';
 import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
@@ -86,10 +86,6 @@ const TECLA_MEDIO: Record<string, MedioPago> = Object.fromEntries(Object.entries
 
 // Para que entre en un botón del celular: "Marta (la del 3°)" → "Marta".
 const primerNombre = (n: string) => n.replace(/\(.*?\)/g, '').trim().split(/\s+/)[0] || n;
-
-function normalizar(t: string) {
-  return t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-}
 
 export function PantallaCaja() {
   const turno = useConsulta(() => turnoAbierto(db), [], null as Awaited<ReturnType<typeof turnoAbierto>> | null);
@@ -210,6 +206,8 @@ function Caja() {
   modalRef.current = modal;
   const ultimoAgregado = useRef(0);
   const ultimoError = useRef(0);
+  // Si el dueño autorizó un descuento mayor al 10 %, vale aunque después se saquen productos.
+  const descuentoAutorizado = useRef(false);
 
   const total = totalCarrito(carrito);
   const vuelto = pagaCon === null ? 0 : calcularVuelto(total, pagaCon);
@@ -443,7 +441,7 @@ function Caja() {
     (m: MedioPago) => {
       setMedio(m);
       if (m === 'fiado' && !cliente) setModal({ tipo: 'cliente' });
-      if (m === 'efectivo') window.setTimeout(() => document.getElementById('paga-con')?.focus(), 0);
+      if (m === 'efectivo') window.setTimeout(() => document.getElementById(modalRef.current?.tipo === 'cobro' ? 'paga-con-hoja' : 'paga-con')?.focus(), 0);
     },
     [cliente],
   );
@@ -561,8 +559,25 @@ function Caja() {
 
   const sugeridos = pagosSugeridos(total);
 
+  // Si el empleado hizo un descuento de hasta el 10 % y después saca productos, el mismo descuento puede pasar el tope: se saca y se avisa.
+  useEffect(() => {
+    const d = carrito.descuento ?? 0;
+    if (!d) {
+      descuentoAutorizado.current = false;
+      return;
+    }
+    if (dueño || descuentoAutorizado.current) return;
+    if (d > sumaCarrito(carrito) * 0.1) {
+      setCarrito((c) => aplicarDescuento(c, 0));
+      avisar({ texto: `Se sacó el descuento de ${formatPesos(d)}: con menos productos pasa el 10 %, y eso lo autoriza el dueño.`, tipo: 'error' });
+    }
+  }, [carrito, dueño, setCarrito, avisar]);
+
   // El panel de medio de pago y vuelto: en PC va en la columna de la derecha; en el celular, también en la hoja "Cómo paga".
-  const panelCobro = (
+  const panelCobro = (enHoja = false) => {
+    // En la hoja del celular el campo lleva otro id: el panel de la derecha sigue en la página, aunque tapado.
+    const idPagaCon = enHoja ? 'paga-con-hoja' : 'paga-con';
+    return (
         <div className="tarjeta cobro">
           <div className="cobro-cabecera">
             <h2 className="titulo-chico">Medio de pago</h2>
@@ -592,7 +607,7 @@ function Caja() {
           {medio === 'efectivo' && (
             <>
               <div className="paga-con">
-                <label className="titulo-chico" htmlFor="paga-con">
+                <label className="titulo-chico" htmlFor={idPagaCon}>
                   Paga con <kbd>F3</kbd>
                 </label>
                 {/* Los billetes van antes del campo: un toque y listo; el campo es para cuando paga con otra cosa. */}
@@ -614,7 +629,7 @@ function Caja() {
                   </div>
                 )}
                 <CampoPesos
-                  id="paga-con"
+                  id={idPagaCon}
                   valor={pagaCon}
                   onCambio={setPagaCon}
                   grande
@@ -640,7 +655,8 @@ function Caja() {
             </button>
           )}
         </div>
-  );
+    );
+  };
 
   return (
     <div className="caja">
@@ -882,7 +898,7 @@ function Caja() {
           </div>
         )}
 
-        {panelCobro}
+        {panelCobro()}
 
         <button type="button" className="boton boton-primario boton-rojo boton-cobrar" onClick={() => cobrar()} disabled={carrito.items.length === 0 || cobrando}>
           <span>
@@ -961,7 +977,7 @@ function Caja() {
         // La hoja del celular: medio de pago, con cuánto paga y el botón de cobrar, sin bajar hasta el panel.
         <Modal titulo="Cómo paga" onCerrar={() => setModal(null)}>
           <div className="formulario cobro-hoja">
-            {panelCobro}
+            {panelCobro(true)}
             <button type="button" className="boton boton-primario boton-rojo boton-grande" onClick={() => cobrar()} disabled={carrito.items.length === 0 || cobrando}>
               {medio === 'fiado' ? (cliente ? `Anotar ${formatPesos(total)} a ${primerNombre(cliente.nombre)}` : 'Anotar fiado') : `Cobrar ${formatPesos(total)}`}
             </button>
@@ -997,7 +1013,8 @@ function Caja() {
             setModal(null);
             enfocar();
           }}
-          onAplicar={(d) => {
+          onAplicar={(d, autorizado) => {
+            descuentoAutorizado.current = autorizado;
             setCarrito((c) => aplicarDescuento(c, d));
             setPagaCon(null);
             setModal(null);
@@ -1180,7 +1197,18 @@ function Caja() {
 }
 
 /** Redondear o descontar sobre toda la venta: "son 3.150, dejámelo en 3.000". */
-function Descuento({ suma, actual, onCerrar, onAplicar }: { suma: number; actual: number; onCerrar: () => void; onAplicar: (descuento: number) => void }) {
+function Descuento({
+  suma,
+  actual,
+  onCerrar,
+  onAplicar,
+}: {
+  suma: number;
+  actual: number;
+  onCerrar: () => void;
+  // "autorizado": lo aplicó el dueño, o un empleado con la clave del dueño.
+  onAplicar: (descuento: number, autorizado: boolean) => void;
+}) {
   const dueño = useEsDueño();
   const pedirDueño = usePedirDueño();
   const [modo, setModo] = useState<'total' | 'pesos' | 'porcentaje'>('total');
@@ -1196,11 +1224,13 @@ function Descuento({ suma, actual, onCerrar, onAplicar }: { suma: number; actual
     if (!valido) return;
     unaVez(async () => {
       // Hasta un 10 % lo decide el empleado; más, el dueño.
+      let autorizado = dueño;
       if (!dueño && descuento > suma * 0.1) {
         const quien = await pedirDueño(`Hacer un descuento de ${formatPesos(descuento)} (${Math.round((descuento / suma) * 100)} %)`);
         if (!quien) return;
+        autorizado = true;
       }
-      onAplicar(descuento);
+      onAplicar(descuento, autorizado);
     });
   };
   return (
@@ -1253,7 +1283,7 @@ function Descuento({ suma, actual, onCerrar, onAplicar }: { suma: number; actual
             {valido ? `Aplicar descuento de ${formatPesos(descuento)}` : 'Aplicar descuento'}
           </button>
           {actual > 0 && (
-            <button type="button" className="boton boton-texto" onClick={() => onAplicar(0)}>
+            <button type="button" className="boton boton-texto" onClick={() => onAplicar(0, false)}>
               Sacar el descuento de {formatPesos(actual)}
             </button>
           )}

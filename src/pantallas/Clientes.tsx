@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { pagosDeVenta } from '../dominio/carrito';
 import { describirItems, describirPagos, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
-import { telefonoWhatsApp } from '../dominio/entrada';
+import { telefonoWhatsApp, normalizarTexto as normalizar } from '../dominio/entrada';
 import { deudaDesde, saldoCliente } from '../dominio/fiado';
 import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type MovimientoFiado, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
@@ -21,10 +21,6 @@ interface Fila {
 function desdeCuando(desde: number): string {
   const d = Math.floor((Date.now() - desde) / 86400000);
   return d <= 0 ? 'desde hoy' : d === 1 ? 'desde ayer' : `desde hace ${d} días`;
-}
-
-function normalizar(t: string) {
-  return t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
 export function PantallaClientes() {

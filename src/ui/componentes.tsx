@@ -223,10 +223,13 @@ export function CampoPesos({
         onKeyDown={onKeyDown}
         onChange={(e) => {
           const crudo = e.target.value;
+          const conComa = crudo.includes(',');
+          // Al borrar ("15.000" → "15.00") el punto era de miles: se saca y queda 1.500.
+          const borrando = crudo.length < texto.length;
           // Los puntos de miles que puso el campo no cuentan al interpretar: "1.500" + "0" es 15.000.
-          const v = parsePesos(textoTecleado(crudo));
+          const v = parsePesos(borrando && !conComa ? crudo.replace(/\./g, '') : textoTecleado(crudo));
           // Los miles se separan mientras se escribe ("2000" → "2.000"); con coma, o con un punto recién tipeado, se deja tal cual.
-          setTexto(v !== null && !crudo.includes(',') && !/\.\d{0,2}$/.test(crudo) ? formatearEdicion(v) : crudo);
+          setTexto(v !== null && !conComa && (borrando || !/\.\d{0,2}$/.test(crudo)) ? formatearEdicion(v) : crudo);
           ultimo.current = v;
           onCambio(v);
         }}
