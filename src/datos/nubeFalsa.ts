@@ -12,6 +12,7 @@ export function crearNube() {
   const v2 = new Map<string, FilaV2>();
   const equipos = new Map<string, number>();
   let seq = 0;
+  const ops = new Set<string>();
   const ahora = () => Date.now();
   const k = (d: string, t: string, i: string) => `${d}\u0000${t}\u0000${i}`;
   const ultimoDispositivo = () => {
@@ -38,8 +39,17 @@ export function crearNube() {
         const previa = v2.get(k2);
         if (previa && !previa.borrado && previa.datos?._o === r.datos?._o) continue;
         let datos = r.datos;
-        if (previa && !previa.borrado && r.tabla === 'productos' && typeof datos._s === 'number' && typeof datos.stock === 'number' && typeof previa.datos?.stock === 'number') {
-          datos = { ...datos, stock: Math.round((previa.datos.stock + datos.stock - datos._s) * 1000) / 1000 };
+        const opNueva = typeof datos?._ov === 'string' && !ops.has(datos._ov);
+        if (opNueva) ops.add(datos._ov);
+        if (typeof datos?._ov === 'string' && !opNueva) { const { _dv, ...resto } = datos; void _dv; datos = resto; }
+        const viva = previa && !previa.borrado ? previa.datos : null;
+        if (viva && r.tabla === 'productos' && typeof datos._ov === 'string' && typeof viva.stock === 'number') {
+          datos = { ...datos, stock: typeof datos._dv === 'number' ? Math.round((viva.stock + datos._dv) * 1000) / 1000 : viva.stock };
+        } else if (viva && r.tabla === 'turnos' && viva.cierre != null && datos.cierre == null) {
+          datos = viva;
+        } else if (viva && r.tabla === 'turnos' && viva.cierre == null && datos.cierre == null && viva.equipo != null && datos.equipo != null
+          && viva.equipo !== datos.equipo && (datos.reclamo ?? 0) <= (viva.reclamo ?? 0)) {
+          datos = viva;
         }
         v2.set(k2, { tabla: r.tabla, id: r.id, datos, borrado: false, equipo, seq: ++seq });
       }

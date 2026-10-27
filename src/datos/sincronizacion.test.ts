@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { crearNube } from './nubeFalsa';
 import { BaseKiosco, RANGO } from './db';
-import { abrirTurno, borrarProducto, guardarProducto, registrarVenta, turnoAbierto } from './operaciones';
+import { abrirTurno, borrarProducto, guardarProducto, leerAjuste, registrarVenta, traerCajaAEsteEquipo, turnoAbierto } from './operaciones';
 import { pedirAlta, sincronizarAhora } from './nube';
 import { ingresarDondeSea } from './ingreso';
 import { cambiarClave, crearUsuario, empezarDeCero, leerUsuarios } from './usuarios';
@@ -113,7 +113,9 @@ describe('sincronización entre equipos', () => {
       headers: { 'x-clave': clave },
       body: JSON.stringify({ equipo: 9, registros: [{ tabla: 'ajustes', id: 'usuarios', datos: { clave: 'usuarios', valor: falsos, _v: 9e15 } }], borrados: [] }),
     });
-    expect(subida.status).toBe(403);
+    // La fila se ignora sin trabar el resto del lote: juan sigue sin ser dueño.
+    expect(subida.status).toBe(200);
+    expect(nube.v2.get('ajustes\u0000usuarios')!.datos.valor.find((u: { usuario: string }) => u.usuario === 'juan').admin).toBeFalsy();
     // Con la clave vieja de la nube tampoco se puede usar la copia vieja.
     const vieja = await nube.fetchFalso('/api/sincronizar?desde=', { headers: { 'x-clave': clave } });
     expect(vieja.status).toBe(401);
@@ -181,5 +183,72 @@ describe('sincronización entre equipos', () => {
     await sincronizarAhora(pc);
     await expect(ingresarDondeSea(pc, 'ema', '5931')).resolves.toBeTruthy();
     expect((await leerUsuarios(pc)).map((u) => u.usuario).sort()).toEqual(['ema', 'juan']);
+  });
+
+  it('si se corta la respuesta de la nube, el reintento no descuenta el stock dos veces', async () => {
+    const { nube, pc, cel, coca } = await escenario();
+    await vender(pc, coca, 3);
+    let cortar = true;
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const r = await nube.fetchFalso(url, init);
+      if (cortar && init?.method === 'POST' && String(url).includes('v=2') && !String(url).includes('equipo=')) {
+        cortar = false;
+        throw new TypeError('Failed to fetch'); // la nube lo guardó, pero la respuesta no llegó
+      }
+      return r;
+    });
+    await expect(sincronizarAhora(pc)).rejects.toThrow();
+    await vender(pc, coca, 1);
+    await sincronizarAhora(pc);
+    await sincronizarAhora(pc);
+    await sincronizarAhora(cel);
+    // 10 − 1 − 3 − 1 = 5 en la nube, la PC y el celular.
+    expect([...nube.v2.values()].find((f) => f.tabla === 'productos')!.datos.stock).toBe(5);
+    expect((await pc.productos.get(coca))!.stock).toBe(5);
+    expect((await cel.productos.get(coca))!.stock).toBe(5);
+  });
+
+  it('una caja traída al celular deja de estar abierta en la PC, y una cerrada no se reabre', async () => {
+    const { pc, cel } = await escenario();
+    await sincronizarAhora(cel);
+    const caja = (await turnoAbierto(pc))!;
+    await traerCajaAEsteEquipo(cel, caja.id!);
+    await sincronizarAhora(cel);
+    await sincronizarAhora(pc);
+    expect(await turnoAbierto(pc)).toBeUndefined();
+    expect((await turnoAbierto(cel))!.id).toBe(caja.id);
+    // La PC tenía una copia vieja (abierta y suya): aunque la vuelva a mandar, no le gana al celular.
+    await pc.turnos.update(caja.id!, { equipo: 1 });
+    await sincronizarAhora(pc);
+    await sincronizarAhora(cel);
+    expect((await turnoAbierto(cel))!.id).toBe(caja.id);
+  });
+
+  it('dos equipos de antes con ventas del mismo número se juntan sin pisarse', async () => {
+    const { nube, pc } = await escenario();
+    const clave = await leerAjuste<string>(pc, 'nube.clave', '');
+    // Otra compu de antes (sin número de equipo) con su propia caja y venta, que chocan en el id.
+    const vieja = await nueva();
+    await crearUsuario(vieja, { usuario: 'ema', nombre: 'Ema', clave: '4826', admin: true });
+    const pan = await guardarProducto(vieja, prod('Pan', 10));
+    await new Promise((r) => setTimeout(r, 5));
+    await abrirTurno(vieja, 'Ema', 0);
+    await vender(vieja, pan, 2);
+    const [vPc] = await pc.ventas.toArray();
+    expect((await vieja.ventas.toArray())[0]!.id).toBe(vPc!.id);
+    await vieja.ajustes.bulkPut([{ clave: 'nube.clave', valor: clave }, { clave: 'nube.v2', valor: false }]);
+    await sincronizarAhora(vieja);
+    await sincronizarAhora(pc);
+    expect(await vieja.ventas.count()).toBe(2);
+    expect(await pc.ventas.count()).toBe(2);
+    expect([...nube.v2.values()].filter((f) => f.tabla === 'ventas' && !f.borrado)).toHaveLength(2);
+    // La venta mudada sigue apuntando a su caja (también mudada), no a la de la PC.
+    const mia = (await vieja.ventas.toArray()).find((v) => v.items[0]!.cantidad === 2)!;
+    expect(mia.id).toBeGreaterThanOrEqual(RANGO);
+    // El Pan (mismo id que la Coca de la PC) también se mudó, y la venta apunta a él.
+    expect((await pc.productos.toArray()).map((p) => p.nombre).sort()).toEqual(['Coca', 'Pan']);
+    expect((await vieja.productos.get(mia.items[0]!.productoId!))!.nombre).toBe('Pan');
+    void pan;
+    expect((await vieja.turnos.get(mia.turnoId))!.equipo).toBe(await leerAjuste(vieja, 'nube.n', 0));
   });
 });

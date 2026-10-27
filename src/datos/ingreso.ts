@@ -1,4 +1,4 @@
-import { marcarRemota, type Ajuste, type BaseKiosco } from './db';
+import { marcarRemota, olvidarRango, type Ajuste, type BaseKiosco } from './db';
 import { estaVacia } from './copia';
 import { activarNube, recuperarDeLaNube } from './nube';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
@@ -110,6 +110,7 @@ export async function ingresarDondeSea(db: BaseKiosco, usuario: string, clave: s
         // Equipo con datos propios y otra nube (la nube se rehízo o cambió de clave):
         // entra igual, se une a la nueva y sube lo suyo sin pisar nada de acá.
         await activarNube(db, nube.clave, nube.nube);
+        olvidarRango(db);
         await guardarAjuste(db, 'nube.n', null);
         await guardarAjuste(db, 'nube.cursor', 0);
         await guardarAjuste(db, 'nube.v2', false);

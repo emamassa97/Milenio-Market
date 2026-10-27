@@ -62,7 +62,7 @@ export async function traerCajaAEsteEquipo(db: BaseKiosco, turnoId: number): Pro
     if (await turnoAbierto(db)) throw new ErrorKiosco('Este equipo ya tiene una caja abierta.');
     const t = await db.turnos.get(turnoId);
     if (!t || t.cierre !== null) throw new ErrorKiosco('Esa caja ya se cerró.');
-    await db.turnos.update(turnoId, { equipo: n });
+    await db.turnos.update(turnoId, { equipo: n, reclamo: Date.now() });
   });
 }
 

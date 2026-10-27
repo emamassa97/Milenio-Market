@@ -74,7 +74,9 @@ function proximoId(base: string, tabla: string): number | undefined {
   const r = rangos.get(base);
   if (!r) return undefined;
   const llave = `milenio.id.${base}.${tabla}`;
-  const previo = Math.max(r.ultimo.get(tabla) ?? r.base, anotado(llave), r.base);
+  // Lo anotado por otra pestaña vale sólo si es de este mismo rango (el equipo pudo cambiar de número).
+  const otra = anotado(llave);
+  const previo = Math.max(r.ultimo.get(tabla) ?? r.base, otra >= r.base && otra < r.base + RANGO ? otra : 0, r.base);
   const id = previo >= r.base + RANGO - 1 ? undefined : previo + 1;
   if (id === undefined) return undefined;
   r.ultimo.set(tabla, id);
@@ -92,6 +94,11 @@ export async function fijarRango(db: BaseKiosco, n: number): Promise<void> {
     ultimo.set(t, Number(fila?.id) || base);
   }
   rangos.set(db.name, { base, ultimo });
+}
+
+/** El equipo se pasa a otra nube: hasta que le den un número nuevo, las filas nuevas usan ids comunes. */
+export function olvidarRango(db: Dexie): void {
+  rangos.delete(db.name);
 }
 
 /** Número de este equipo en la nube (null: todavía no tiene). */

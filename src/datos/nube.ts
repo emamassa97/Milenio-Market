@@ -1,4 +1,4 @@
-import { fijarRango, marcarRemota, nuevaMarca, TABLAS_NUBE, type Ajuste, type BaseKiosco, type TablaNube } from './db';
+import { fijarRango, marcarRemota, nuevaMarca, RANGO, TABLAS_NUBE, type Ajuste, type BaseKiosco, type TablaNube } from './db';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
 import { combinarUsuarios, type Usuario } from './usuarios';
 
@@ -97,12 +97,13 @@ export async function subirCambios(db: BaseKiosco, enviar: Enviar): Promise<numb
       const filas = (await db.table(t).where('_v').above(desde).limit(LOTE).toArray()) as Record<string, unknown>[];
       if (filas.length === 0) break;
       const hasta = Math.max(...filas.map((f) => Number(f._v) || 0));
-      const registros = filas
+      const listas = t === 'productos' ? await congelarStock(db, filas, dispositivo) : filas;
+      const registros = listas
         .filter((f) => t !== 'ajustes' || !AJUSTES_LOCALES.has(String(f.clave)))
         .map((f) => ({ tabla: t, id: idDe(t, f), datos: { ...f, _o: `${dispositivo}:${String(f._v)}` } }));
       if (registros.length > 0) await enviar({ dispositivo, equipo, registros, borrados: [] });
       subidas += registros.length;
-      if (t === 'productos') await anotarStockSubido(db, filas);
+      if (t === 'productos') await confirmarStock(db, listas);
       const marcas = await leerAjuste<Record<string, number>>(db, 'nube.marcas', {});
       await guardarAjuste(db, 'nube.marcas', { ...marcas, [t]: Math.max(marcas[t] ?? 0, hasta) });
       desde = hasta;
@@ -119,14 +120,56 @@ export async function subirCambios(db: BaseKiosco, enviar: Enviar): Promise<numb
   return subidas;
 }
 
-/** El stock que se acaba de subir pasa a ser la base: lo que se venda después es la diferencia a mandar. */
-async function anotarStockSubido(db: BaseKiosco, filas: Record<string, unknown>[]): Promise<void> {
+/**
+ * Stock: no se manda el número sino la diferencia con lo último que se acordó
+ * con la nube (`_s`). La diferencia se congela con un id de operación (`_dv`,
+ * `_ov`) antes de mandarla: si se corta internet y se reintenta, va la misma y
+ * la nube no la suma dos veces. Lo vendido mientras tanto va en la próxima.
+ */
+async function congelarStock(db: BaseKiosco, filas: Record<string, unknown>[], dispositivo: string): Promise<Record<string, unknown>[]> {
+  const salida: Record<string, unknown>[] = [];
   await db.transaction('rw', db.productos, async (tx) => {
-    marcarRemota(tx); // no cambia la marca: si se vendió algo mientras tanto, igual se sube
+    marcarRemota(tx); // no cambia la marca
     for (const f of filas) {
-      if (typeof f.stock === 'number') await db.productos.update(Number(f.id), { _s: f.stock } as never);
+      const actual = (await db.productos.get(Number(f.id))) as Record<string, unknown> | undefined;
+      if (!actual) continue;
+      if (typeof actual._s !== 'number' || typeof actual.stock !== 'number') {
+        salida.push(actual);
+        continue;
+      }
+      if (typeof actual._ov !== 'string') {
+        const congelado = { _ov: `${dispositivo}:${String(actual.id)}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, _dv: redondearStock(actual.stock - actual._s) };
+        await db.productos.update(Number(f.id), congelado as never);
+        Object.assign(actual, congelado);
+      }
+      salida.push(actual);
     }
   });
+  return salida;
+}
+
+/** La nube ya sumó lo enviado: pasa a la base. Si quedó algo vendido después, el producto queda para la próxima vuelta. */
+async function confirmarStock(db: BaseKiosco, enviadas: Record<string, unknown>[]): Promise<void> {
+  const repetir: number[] = [];
+  await db.transaction('rw', db.productos, async (tx) => {
+    marcarRemota(tx);
+    for (const f of enviadas) {
+      const id = Number(f.id);
+      const actual = (await db.productos.get(id)) as Record<string, unknown> | undefined;
+      if (!actual || typeof actual.stock !== 'number') continue;
+      let base: number;
+      if (typeof f._ov === 'string') {
+        if (actual._ov !== f._ov || typeof actual._s !== 'number') continue;
+        base = redondearStock(actual._s + Number(f._dv ?? 0));
+      } else {
+        base = Number(f.stock);
+      }
+      await db.productos.update(id, { _s: base, _ov: undefined, _dv: undefined } as never);
+      if (redondearStock(actual.stock - base) !== 0) repetir.push(id);
+    }
+  });
+  // Lo que se vendió mientras se subía todavía no viajó: se marca para la próxima vuelta.
+  for (const id of repetir) await db.productos.update(id, { _v: nuevaMarca() } as never);
 }
 
 const redondearStock = (n: number) => Math.round(n * 1000) / 1000;
@@ -157,7 +200,14 @@ export async function aplicarRemotas(db: BaseKiosco, filas: FilaRemota[], migrac
       const tabla = db.table(t);
       const local = (await tabla.get(clave)) as Record<string, unknown> | undefined;
       const pendiente = local !== undefined && Number(local._v) > (marcas[t] ?? 0);
-      const remotaGana = !pendiente || (migracion && Number(f.datos?._v) >= Number(local?._v));
+      // En la primera vez las marcas de antes no cuentan: gana el cambio más nuevo de cada fila.
+      let remotaGana = migracion ? !local || Number(f.datos?._v) > Number(local._v) : !pendiente;
+      if (t === 'turnos' && local && f.datos && !f.borrado) {
+        // Una caja cerrada no se vuelve a abrir: gana el cierre, venga de donde venga.
+        const cerradaAca = local.cierre !== null && local.cierre !== undefined;
+        const cerradaAlla = f.datos.cierre !== null && f.datos.cierre !== undefined;
+        if (cerradaAca !== cerradaAlla) remotaGana = cerradaAlla;
+      }
       if (f.borrado || !f.datos) {
         if (local && remotaGana) {
           await tabla.delete(clave);
@@ -165,8 +215,8 @@ export async function aplicarRemotas(db: BaseKiosco, filas: FilaRemota[], migrac
         }
         continue;
       }
-      const { _o, ...datos } = f.datos;
-      void _o;
+      const { _o, _ov, _dv, ...datos } = f.datos;
+      void _o, _ov, _dv;
       if (migracion && t === 'ajustes' && f.id === 'usuarios' && local && Array.isArray(local.valor) && Array.isArray(datos.valor)) {
         // Un equipo que se une con sus propios usuarios no borra los de la nube (ni al revés):
         // se juntan, y en el mismo usuario gana la lista más nueva. Queda para subir.
@@ -179,8 +229,13 @@ export async function aplicarRemotas(db: BaseKiosco, filas: FilaRemota[], migrac
         await tabla.put({ ...datos, ...(t === 'productos' && typeof datos.stock === 'number' ? { _s: datos.stock } : {}), _v: 0 });
         aplicadas++;
       } else if (t === 'productos' && typeof datos.stock === 'number' && typeof local!.stock === 'number' && typeof local!._s === 'number') {
-        // Lo vendido acá y todavía no subido se suma a lo que dice la nube.
-        await tabla.put({ ...local, stock: redondearStock(datos.stock + (local!.stock as number) - (local!._s as number)), _s: datos.stock });
+        // Lo vendido acá y todavía no subido se suma a lo que dice la nube. Si la diferencia
+        // congelada ya llegó (la nube devuelve su id), ya está adentro del número de la nube.
+        const llego = typeof local!._ov === 'string' && f.datos._ov === local!._ov;
+        const base = llego ? redondearStock((local!._s as number) + Number(local!._dv ?? 0)) : (local!._s as number);
+        const fila: Record<string, unknown> = { ...local, stock: redondearStock(datos.stock + (local!.stock as number) - base), _s: datos.stock };
+        if (llego) delete fila._ov, delete fila._dv;
+        await tabla.put(fila);
         aplicadas++;
       }
     }
@@ -190,9 +245,15 @@ export async function aplicarRemotas(db: BaseKiosco, filas: FilaRemota[], migrac
 
 // ---------- Conexión con el servidor ----------
 
+/** Un pedido a la nube que no contesta en 20 segundos se da por perdido (si no, la vuelta queda colgada). */
+function pedir(url: string, init?: RequestInit): Promise<Response> {
+  const corte = typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal ? AbortSignal.timeout(20_000) : undefined;
+  return fetch(url, corte ? { ...init, signal: corte } : init);
+}
+
 export function enviarAlServidor(clave: string, url = '/api/sincronizar'): Enviar {
   return async (lote) => {
-    const r = await fetch(`${url}?v=2`, {
+    const r = await pedir(`${url}?v=2`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-clave': clave },
       body: JSON.stringify(lote),
@@ -221,7 +282,7 @@ export async function pedirAlta(db: BaseKiosco, url = '/api/sincronizar'): Promi
   if (await leerAjuste<string>(db, 'nube.clave', '')) return true;
   let r: Response;
   try {
-    r = await fetch(url, { method: 'POST', headers: { 'x-alta': '1' } });
+    r = await pedir(url, { method: 'POST', headers: { 'x-alta': '1' } });
   } catch {
     // Sin conexión con el servidor (o se cayó): se avisa en pantalla en vez de callar.
     await guardarAjuste(db, 'nube.estado', 'sin-servidor');
@@ -349,7 +410,7 @@ async function asegurarNumero(db: BaseKiosco, clave: string, url: string): Promi
   const actual = await leerAjuste<number | null>(db, 'nube.n', null);
   if (typeof actual === 'number') return actual;
   const dispositivo = await idDispositivo(db);
-  const r = await fetch(`${url}?v=2&equipo=1`, {
+  const r = await pedir(`${url}?v=2&equipo=1`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-clave': clave },
     body: JSON.stringify({ dispositivo }),
@@ -369,15 +430,76 @@ async function adoptarCajasAbiertas(db: BaseKiosco): Promise<void> {
   await db.turnos.filter((t) => t.cierre === null && t.equipo === undefined).modify({ equipo: n });
 }
 
+/** El dato que dice si dos filas con el mismo id son la misma (en el orden en que se mudan). */
+const IDENTIDAD: Partial<Record<TablaNube, string>> = {
+  productos: 'nombre',
+  clientes: 'nombre',
+  turnos: 'apertura',
+  ventas: 'fecha',
+  movimientosCaja: 'fecha',
+  movimientosFiado: 'fecha',
+  eventos: 'fecha',
+};
+/** Quién apunta a cada una, para mudar las referencias. */
+const REFERENCIAS: Partial<Record<TablaNube, [TablaNube, string][]>> = {
+  clientes: [['ventas', 'clienteId'], ['movimientosFiado', 'clienteId']],
+  turnos: [['ventas', 'turnoId'], ['movimientosCaja', 'turnoId'], ['movimientosFiado', 'turnoId'], ['eventos', 'turnoId']],
+  ventas: [['movimientosCaja', 'ventaId'], ['movimientosFiado', 'ventaId'], ['eventos', 'ventaId']],
+};
+
+/**
+ * Antes de tener número, dos equipos pudieron cargar ventas (o productos,
+ * clientes…) distintos con el mismo id (por ejemplo, el celular recuperado de
+ * la copia y la PC). Al unirse,
+ * la fila propia se muda a un id del rango de este equipo (con sus
+ * referencias) en vez de pisarse con la de la nube.
+ */
+async function apartarChocadas(db: BaseKiosco, filas: FilaRemota[]): Promise<void> {
+  const chocadas = new Map<TablaNube, number[]>();
+  for (const f of filas) {
+    const t = f.tabla as TablaNube;
+    const campo = IDENTIDAD[t];
+    const id = Number(f.id);
+    if (!campo || f.borrado || !f.datos || !Number.isSafeInteger(id) || id >= RANGO) continue;
+    const local = (await db.table(t).get(id)) as Record<string, unknown> | undefined;
+    if (local && local[campo] !== f.datos[campo]) chocadas.set(t, [...(chocadas.get(t) ?? []), id]);
+  }
+  if (chocadas.size === 0) return;
+  // Primero productos, clientes y turnos, así las ventas mudadas ya apuntan a lo nuevo.
+  for (const t of Object.keys(IDENTIDAD) as TablaNube[]) {
+    for (const viejo of chocadas.get(t) ?? []) {
+      await db.transaction('rw', TABLAS_NUBE.map((x) => db.table(x)), async () => {
+        const fila = (await db.table(t).get(viejo)) as Record<string, unknown> | undefined;
+        if (!fila) return;
+        const { id: _id, ...resto } = fila;
+        void _id;
+        const nuevo = Number(await db.table(t).add(resto));
+        await db.table(t).delete(viejo);
+        if (t === 'productos') {
+          await db.ventas
+            .filter((v) => Number(v.id) < RANGO && v.items.some((i) => i.productoId === viejo))
+            .modify((v) => {
+              v.items = v.items.map((i) => (i.productoId === viejo ? { ...i, productoId: nuevo } : i));
+            });
+        }
+        for (const [otra, campo] of REFERENCIAS[t] ?? []) {
+          await db.table(otra).filter((x: Record<string, unknown>) => x[campo] === viejo && Number(x.id) < RANGO).modify({ [campo]: nuevo });
+        }
+      });
+    }
+  }
+}
+
 /** Baja de la nube todo lo que cambió desde la última vez y lo aplica. Devuelve cuántas filas cambiaron acá. */
 export async function bajarCambios(db: BaseKiosco, clave: string, url = '/api/sincronizar', migracion = false): Promise<number> {
   let cursor = await leerAjuste<number>(db, 'nube.cursor', 0);
   let aplicadas = 0;
   for (;;) {
-    const r = await fetch(`${url}?v=2&cambios=${cursor}`, { headers: { 'x-clave': clave } });
+    const r = await pedir(`${url}?v=2&cambios=${cursor}`, { headers: { 'x-clave': clave } });
     if (!r.ok) throw new Error(await mensajeServidor(r));
     const pagina = (await r.json()) as { filas?: FilaRemota[]; hasta?: number; mas?: boolean };
     const filas = Array.isArray(pagina.filas) ? pagina.filas : [];
+    if (migracion && filas.length > 0) await apartarChocadas(db, filas);
     if (filas.length > 0) aplicadas += await aplicarRemotas(db, filas, migracion);
     if (typeof pagina.hasta === 'number' && pagina.hasta > cursor) {
       cursor = pagina.hasta;

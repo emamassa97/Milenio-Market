@@ -54,9 +54,12 @@ const CREAR_FILAS = `create table if not exists filas (
   borrado boolean not null default false,
   equipo integer,
   seq bigint not null default nextval('filas_cambios'),
+  tx xid8 not null default pg_current_xact_id(),
   actualizado timestamptz not null default now(),
   primary key (tabla, id)
 )`;
+// Cambios de stock ya sumados: si se pierde la respuesta y el equipo reintenta, no se suman dos veces.
+const CREAR_OPS = `create table if not exists ops_aplicadas (o text primary key, creado timestamptz not null default now())`;
 const CREAR_INDICE_SEQ = `create index if not exists filas_por_seq on filas (seq)`;
 const CREAR_EQUIPOS = `create table if not exists equipos (
   n serial primary key,
@@ -170,7 +173,8 @@ type Rol = 'dueño' | 'empleado';
 async function rolDelPedido(recibida: string | null, esperada: string, consulta: Consulta): Promise<Rol | null> {
   if (!recibida) return null;
   if (claveCorrecta(recibida, esperada)) return 'dueño';
-  const m = /^e\.([^.]{1,60})\.[A-Za-z0-9_-]+$/.exec(recibida);
+  // El usuario puede tener puntos (ana.p): la firma (base64url, 43 letras) nunca los tiene.
+  const m = /^e\.(.{1,60})\.[A-Za-z0-9_-]{43}$/.exec(recibida);
   if (!m || !claveCorrecta(recibida, claveDeEmpleado(esperada, m[1]!))) return null;
   const u = (await usuariosDeLaNube(consulta)).find((x) => x.usuario === m[1]);
   return u && !u.admin ? 'empleado' : null;
@@ -209,6 +213,7 @@ export async function manejar(pedido: Request, deps: Dependencias): Promise<Resp
       await consulta(CREAR_FILAS, []);
       await consulta(CREAR_INDICE_SEQ, []);
       await consulta(CREAR_EQUIPOS, []);
+      await consulta(CREAR_OPS, []);
       tablasCreadas = true;
     }
   } catch (e) {
@@ -327,6 +332,28 @@ export async function manejar(pedido: Request, deps: Dependencias): Promise<Resp
 
 // ---------- Versión 2: sincronización entre equipos ----------
 
+/**
+ * Para un empleado: saca del lote la lista de usuarios salvo que el único cambio
+ * sea su propia clave (los demás usuarios iguales, y él sigue sin ser dueño).
+ */
+async function sinCambiosAjenos(registros: Record<string, unknown>[], rol: Rol, pedido: Request, consulta: Consulta): Promise<Record<string, unknown>[]> {
+  const fila = registros.find((r) => r.tabla === 'ajustes' && r.id === 'usuarios');
+  if (!fila) return registros;
+  const resto = registros.filter((r) => r !== fila);
+  const yo = /^e\.(.{1,60})\.[A-Za-z0-9_-]{43}$/.exec(pedido.headers.get('x-clave') ?? '')?.[1];
+  const nueva = (fila.datos as { valor?: unknown } | null)?.valor;
+  if (rol !== 'empleado' || !yo || !Array.isArray(nueva)) return resto;
+  const actual = await usuariosDeLaNube(consulta);
+  const igual = (a: UsuarioGuardado, b: UsuarioGuardado) => a.usuario === b.usuario && Boolean(a.admin) === Boolean(b.admin) && a.sal === b.sal && a.hash === b.hash;
+  const lista = nueva as UsuarioGuardado[];
+  const propia = lista.find((u) => u?.usuario === yo);
+  const valida =
+    lista.length === actual.length &&
+    !!propia && !propia.admin &&
+    actual.every((u) => u.usuario === yo || lista.some((x) => x && igual(x, u)));
+  return valida ? registros : resto;
+}
+
 const PAGINA_CAMBIOS = 1000;
 
 /**
@@ -341,7 +368,11 @@ async function sincronizarV2(pedido: Request, consulta: Consulta, rol: Rol, para
     const desde = Number(parametros.get('cambios') ?? '0');
     if (!Number.isSafeInteger(desde) || desde < 0) return json({ error: 'El cursor no es válido.' }, 400);
     const filas = await consulta(
-      `select tabla, id, datos, borrado, seq from filas where seq > $1 order by seq limit ${PAGINA_CAMBIOS}`,
+      // Sólo lo de transacciones ya terminadas antes que cualquiera en curso: si dos equipos suben a la vez,
+      // el número más chico puede confirmarse después que el más grande, y el cursor lo salteaba.
+      `select tabla, id, datos, borrado, seq from filas
+       where seq > $1 and tx < pg_snapshot_xmin(pg_current_snapshot())
+       order by seq limit ${PAGINA_CAMBIOS}`,
       [desde],
     );
     const hasta = filas.reduce((m, f) => Math.max(m, Number(f.seq) || 0), desde);
@@ -375,31 +406,48 @@ async function sincronizarV2(pedido: Request, consulta: Consulta, rol: Rol, para
     if (!r || !esTexto(r.tabla, 40) || !TABLAS.has(r.tabla) || !esTexto(r.id, 200)) {
       return json({ error: 'Hay un registro con tabla o id no válidos.' }, 400);
     }
-    // La lista de usuarios (y sus claves) sólo la cambia el dueño.
-    if (rol !== 'dueño' && r.tabla === 'ajustes' && r.id === 'usuarios') {
-      return json({ error: 'Sólo el dueño puede cambiar los usuarios.' }, 403);
-    }
   }
-  if (registros.length > 0) {
+  // La lista de usuarios la cambia el dueño; un empleado sólo su propia clave. Si no, esa fila
+  // se ignora (sin trabar el resto del lote).
+  const aceptados = rol === 'dueño' ? registros : await sinCambiosAjenos(registros, rol, pedido, consulta);
+  if (aceptados.length > 0) {
     await consulta(
-      `insert into filas (tabla, id, datos, borrado, equipo)
-       select r->>'tabla', r->>'id', r->'datos', false, $1 from jsonb_array_elements($2::jsonb) r
+      `with nuevas as (
+         insert into ops_aplicadas (o)
+         select r->'datos'->>'_ov' from jsonb_array_elements($2::jsonb) r
+         where r->>'tabla' = 'productos' and jsonb_typeof(r->'datos'->'_ov') = 'string'
+         on conflict do nothing returning o
+       )
+       insert into filas (tabla, id, datos, borrado, equipo)
+       select r->>'tabla', r->>'id',
+         case when r->'datos'->>'_ov' is null or r->'datos'->>'_ov' in (select o from nuevas) then r->'datos' else (r->'datos') - '_dv' end,
+         false, $1
+       from jsonb_array_elements($2::jsonb) r
        on conflict (tabla, id) do update set
          datos = case
-           when filas.tabla = 'productos' and not filas.borrado
-             and jsonb_typeof(excluded.datos->'_s') = 'number' and jsonb_typeof(excluded.datos->'stock') = 'number'
+           -- Stock: se suma la diferencia que mandó el equipo (una sola vez por operación), no se pisa.
+           when filas.tabla = 'productos' and not filas.borrado and jsonb_typeof(excluded.datos->'_ov') = 'string'
              and jsonb_typeof(filas.datos->'stock') = 'number'
-           then jsonb_set(excluded.datos, '{stock}', to_jsonb(round(
-             ((filas.datos->>'stock')::numeric + (excluded.datos->>'stock')::numeric - (excluded.datos->>'_s')::numeric) * 1000) / 1000))
+           then jsonb_set(excluded.datos, '{stock}', case when jsonb_typeof(excluded.datos->'_dv') = 'number'
+             then to_jsonb(round(((filas.datos->>'stock')::numeric + (excluded.datos->>'_dv')::numeric) * 1000) / 1000)
+             else filas.datos->'stock' end)
+           -- Una caja cerrada no se reabre con una copia vieja.
+           when filas.tabla = 'turnos' and not filas.borrado and filas.datos->>'cierre' is not null and excluded.datos->>'cierre' is null
+           then filas.datos
+           -- Una caja abierta es del primer equipo que la tomó, salvo que otro la traiga a mano ("Seguir esta caja acá").
+           when filas.tabla = 'turnos' and not filas.borrado and filas.datos->>'cierre' is null and excluded.datos->>'cierre' is null
+             and filas.datos->'equipo' is not null and excluded.datos->'equipo' is not null and filas.datos->'equipo' <> excluded.datos->'equipo'
+             and coalesce((excluded.datos->>'reclamo')::numeric, 0) <= coalesce((filas.datos->>'reclamo')::numeric, 0)
+           then filas.datos
            else excluded.datos end,
-         borrado = false, equipo = excluded.equipo, seq = nextval('filas_cambios'), actualizado = now()
+         borrado = false, equipo = excluded.equipo, seq = nextval('filas_cambios'), tx = pg_current_xact_id(), actualizado = now()
        where filas.borrado or (filas.datos->>'_o') is distinct from (excluded.datos->>'_o')`,
-      [equipo, JSON.stringify(registros.map((r) => ({ tabla: r.tabla, id: r.id, datos: r.datos })))],
+      [equipo, JSON.stringify(aceptados.map((r) => ({ tabla: r.tabla, id: r.id, datos: r.datos })))],
     );
   }
   if (borrados.length > 0) {
     await consulta(
-      `update filas set borrado = true, seq = nextval('filas_cambios'), actualizado = now()
+      `update filas set borrado = true, seq = nextval('filas_cambios'), tx = pg_current_xact_id(), actualizado = now()
        where not borrado and (tabla, id) in (select r->>'tabla', r->>'id' from jsonb_array_elements($1::jsonb) r)`,
       [JSON.stringify(borrados.map((b) => ({ tabla: b.tabla, id: b.id })))],
     );
