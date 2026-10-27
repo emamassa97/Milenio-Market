@@ -367,9 +367,9 @@ function Usuarios() {
               <input type="password" value={nuevo.clave} onChange={(e) => setNuevo({ ...nuevo, clave: e.target.value })} autoComplete="new-password" />
             </label>
           </div>
-          <label className="campo-check">
+          <label className="casilla">
             <input type="checkbox" checked={nuevo.admin} onChange={(e) => setNuevo({ ...nuevo, admin: e.target.checked })} />
-            Es dueño (puede entrar a Ajustes y manejar usuarios)
+            <span>Es dueño (puede entrar a Ajustes y manejar usuarios)</span>
           </label>
           <button
             type="button"
@@ -461,7 +461,18 @@ function AjustesDelTicket() {
             </button>
           </div>
         </div>
-        <iframe className="ticket-vista" sandbox="" title="Vista previa del ticket" srcDoc={htmlTicket(VENTA_DE_MUESTRA, a)} style={{ width: `${a.ancho * 3.78 + 4}px` }} />
+        <iframe
+          className="ticket-vista"
+          // Sin scripts; el mismo origen sólo para medir el alto y que la vista no deje blanco de más.
+          sandbox="allow-same-origin"
+          title="Vista previa del ticket"
+          srcDoc={htmlTicket(VENTA_DE_MUESTRA, a)}
+          style={{ width: `${a.ancho * 3.78 + 4}px` }}
+          onLoad={(e) => {
+            const alto = e.currentTarget.contentDocument?.documentElement.scrollHeight;
+            if (alto) e.currentTarget.style.height = `${alto + 4}px`;
+          }}
+        />
       </div>
     </section>
   );

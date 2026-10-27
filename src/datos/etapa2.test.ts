@@ -1,9 +1,10 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { itemDeProducto, itemPorPeso, subtotal } from '../dominio/carrito';
+import { cantidadDeTexto, codigoEscaneado, gramosDeTexto, telefonoWhatsApp } from '../dominio/entrada';
 import { resumirVentas } from '../dominio/reportes';
 import { BaseKiosco } from './db';
-import { abrirTurno, anularVenta, guardarProducto, registrarVenta, resumenDeTurno, turnoAbierto, type DatosProducto } from './operaciones';
+import { abrirTurno, anularVenta, aumentoMasivo, guardarProducto, ingresarMercaderia, registrarVenta, resumenDeTurno, turnoAbierto, type DatosProducto } from './operaciones';
 
 let db: BaseKiosco;
 let n = 0;
@@ -111,5 +112,53 @@ describe('arreglos del jurado técnico', () => {
     const html = htmlTicket(v, { ancho: 58, encabezado: '<b>x</b>', pie: '"pie"', auto: false });
     expect(html).not.toContain('<img');
     expect(html).not.toContain('<b>x');
+  });
+});
+
+describe('arreglos del jurado de uso real', () => {
+  it('un código de barras en "paga con" o en un monto libre no pasa', async () => {
+    const id = await guardarProducto(db, prod({ nombre: 'Agua', precio: 900 }));
+    const p = (await db.productos.get(id))!;
+    await expect(registrarVenta(db, { items: [itemDeProducto(p, 1)], medio: 'efectivo', pagaCon: 1000000000097, clienteId: null })).rejects.toThrow(/código de barras/);
+    await expect(
+      registrarVenta(db, { items: [{ productoId: null, codigo: '', nombre: 'Varios', precioUnitario: 1000000000035, costoUnitario: 0, cantidad: 1 }], medio: 'efectivo', pagaCon: null, clienteId: null }),
+    ).rejects.toThrow(/demasiado alto/);
+  });
+
+  it('en mercadería, una cantidad que es un código se rechaza y el gasto es lo que se pagó', async () => {
+    const id = await guardarProducto(db, prod({ nombre: 'Coca', precio: 2000, costo: 0, stock: 10 }));
+    await expect(ingresarMercaderia(db, [{ productoId: id, cantidad: 1000000000059, costo: 1100 }], { proveedor: '', pagadoDeCaja: false })).rejects.toThrow(/demasiado grande/);
+    // Sin costo cargado pero pagado de la caja: se anota lo que se pagó, no $0.
+    const gasto = await ingresarMercaderia(db, [{ productoId: id, cantidad: 24, costo: 0 }], { proveedor: 'Arcor', pagadoDeCaja: true, montoPagado: 25000 });
+    expect(gasto).toBe(25000);
+    const movs = await db.movimientosCaja.toArray();
+    expect(movs).toHaveLength(1);
+    expect(movs[0]!.monto).toBe(25000);
+    expect(movs[0]!.mercaderia).toBe(true);
+    expect((await db.productos.get(id))!.stock).toBe(34);
+  });
+
+  it('el aumento de precios también sube la promo', async () => {
+    const id = await guardarProducto(db, prod({ nombre: 'Alfajor', precio: 650, costo: 400, promo: { cantidad: 3, precio: 1700 } }));
+    await aumentoMasivo(db, [id], 10, 10, true);
+    const p = (await db.productos.get(id))!;
+    expect(p.precio).toBe(720);
+    expect(p.promo).toEqual({ cantidad: 3, precio: 1870 });
+  });
+
+  it('lo que se escribe se entiende como en el mostrador', () => {
+    expect(gramosDeTexto('250')).toBe(250);
+    expect(gramosDeTexto('0,5')).toBe(500);
+    expect(gramosDeTexto('1.2')).toBe(1200);
+    expect(gramosDeTexto('')).toBe(0);
+    expect(cantidadDeTexto('1.200', false)).toBe(1200);
+    expect(cantidadDeTexto('2,5', true)).toBe(2.5);
+    expect(codigoEscaneado('1000000000097')).toBe('1000000000097');
+    expect(codigoEscaneado('2000')).toBeNull();
+    expect(codigoEscaneado('1.000.000')).toBeNull();
+    expect(telefonoWhatsApp('341 555-1234')).toBe('5493415551234');
+    expect(telefonoWhatsApp('011 15 5555 1234')).toBe('5491155551234');
+    expect(telefonoWhatsApp('+54 9 11 5555 1234')).toBe('5491155551234');
+    expect(telefonoWhatsApp('')).toBeNull();
   });
 });

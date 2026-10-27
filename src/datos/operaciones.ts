@@ -1,5 +1,5 @@
 import { resumirTurno, totalConteo } from '../dominio/caja';
-import { CANTIDAD_MAXIMA, stockQueUsa, subtotal } from '../dominio/carrito';
+import { CANTIDAD_MAXIMA, COMPRA_MAXIMA, RENGLON_MAXIMO, stockQueUsa, subtotal, VUELTO_MAXIMO } from '../dominio/carrito';
 import { formatPesos } from '../dominio/dinero';
 import type { FilaImportada } from '../dominio/csv';
 import { saldoCliente, superaLimite } from '../dominio/fiado';
@@ -148,6 +148,8 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
       throw new ErrorKiosco(`La cantidad de "${i.nombre}" no es válida (máximo ${CANTIDAD_MAXIMA}).`);
     }
     if (!Number.isFinite(i.precioUnitario) || i.precioUnitario < 0) throw new ErrorKiosco(`El precio de "${i.nombre}" no es válido.`);
+    // Un código de barras que cayó en un campo de plata llegaría acá como un precio de miles de millones.
+    if (i.precioUnitario * i.cantidad > RENGLON_MAXIMO) throw new ErrorKiosco(`El importe de "${i.nombre}" es demasiado alto: revisalo.`);
     if (i.gramos !== undefined && !(Number.isInteger(i.gramos) && i.gramos > 0)) throw new ErrorKiosco(`El peso de "${i.nombre}" no es válido.`);
   }
   const total = items.reduce((s, i) => s + subtotal(i), 0);
@@ -156,6 +158,7 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
   let vuelto = 0;
   if (datos.medio === 'efectivo' && datos.pagaCon !== null) {
     if (datos.pagaCon < total) throw new ErrorKiosco('Con eso no alcanza para pagar.');
+    if (datos.pagaCon > total + VUELTO_MAXIMO) throw new ErrorKiosco('El "paga con" es demasiado alto: parece un código de barras.');
     pagaCon = datos.pagaCon;
     vuelto = datos.pagaCon - total;
   }
@@ -333,6 +336,8 @@ export async function aumentoMasivo(
       .filter((p) => p.id !== undefined && conjunto.has(p.id))
       .modify((p) => {
         p.precio = aplicarAumento(p.precio, porcentaje, redondeo);
+        // La promo sube igual: si no, el descuento crece solo con cada aumento.
+        if (p.promo) p.promo = { ...p.promo, precio: Math.min(aplicarAumento(p.promo.precio, porcentaje, redondeo), p.precio * p.promo.cantidad - 1) };
         if (tocarCosto && p.costo > 0) p.costo = aplicarAumento(p.costo, porcentaje, 1);
         p.actualizado = ahora();
       });
@@ -424,12 +429,16 @@ export interface RenglonCompra {
 export async function ingresarMercaderia(
   db: BaseKiosco,
   renglones: RenglonCompra[],
-  opciones: { proveedor: string; pagadoDeCaja: boolean },
+  opciones: { proveedor: string; pagadoDeCaja: boolean; montoPagado?: Pesos },
   usuario?: string,
 ): Promise<Pesos> {
   const validos = renglones.filter((r) => r.cantidad > 0);
   if (validos.length === 0) throw new ErrorKiosco('Poné al menos una cantidad.');
   if (validos.some((r) => !(r.costo >= 0) || !Number.isInteger(r.costo))) throw new ErrorKiosco('El costo tiene que ser un número entero, sin centavos.');
+  if (validos.some((r) => !(r.cantidad <= COMPRA_MAXIMA))) throw new ErrorKiosco(`Una cantidad es demasiado grande (máximo ${COMPRA_MAXIMA}): ¿se escaneó un código ahí?`);
+  if (opciones.montoPagado !== undefined && (!Number.isInteger(opciones.montoPagado) || opciones.montoPagado < 0 || opciones.montoPagado > RENGLON_MAXIMO)) {
+    throw new ErrorKiosco('El monto pagado de la caja no es válido.');
+  }
   return db.transaction('rw', [db.productos, db.turnos, db.movimientosCaja], async () => {
     let total = 0;
     for (const r of validos) {
@@ -446,20 +455,23 @@ export async function ingresarMercaderia(
         actualizado: ahora(),
       });
     }
-    if (opciones.pagadoDeCaja && total > 0) {
+    // Lo que salió de la caja es lo que se pagó, que puede no ser el costo calculado (sin costo cargado, con descuento).
+    const gasto = opciones.montoPagado ?? total;
+    if (opciones.pagadoDeCaja && gasto > 0) {
       const turno = await turnoAbierto(db);
       if (!turno) throw new ErrorKiosco('Para pagarlo con plata de la caja, primero abrí la caja.');
       await db.movimientosCaja.add({
         turnoId: turno.id!,
         fecha: ahora(),
         tipo: 'gasto',
-        monto: total,
+        monto: gasto,
         motivo: `Mercadería${opciones.proveedor.trim() ? `: ${opciones.proveedor.trim()}` : ''}`,
         mercaderia: true,
         ...quien('usuario', usuario),
       });
+      return gasto;
     }
-    return total;
+    return opciones.pagadoDeCaja ? 0 : total;
   });
 }
 

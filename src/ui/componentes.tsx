@@ -42,6 +42,7 @@ import {
   Scale,
   Truck,
   CalendarClock,
+  ChevronDown,
   Tag,
   TrendingUp,
   TrendingDown,
@@ -131,6 +132,13 @@ export function Modal({
   ancho?: 'normal' | 'ancho';
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  // Al cerrar, el foco vuelve a donde estaba (el buscador de la caja, por ejemplo).
+  const [origen] = useState(() => document.activeElement as HTMLElement | null);
+  useEffect(() => {
+    return () => {
+      if (origen && document.contains(origen) && !origen.closest('dialog')) origen.focus();
+    };
+  }, [origen]);
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) {
@@ -174,6 +182,8 @@ export function CampoPesos({
   grande,
   placeholder,
   id,
+  ariaLabel,
+  onKeyDown,
 }: {
   valor: number | null;
   onCambio: (v: number | null) => void;
@@ -182,6 +192,8 @@ export function CampoPesos({
   grande?: boolean;
   placeholder?: string;
   id?: string;
+  ariaLabel?: string;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }) {
   const [texto, setTexto] = useState(valor === null ? '' : formatearEdicion(valor));
   const ultimo = useRef(valor);
@@ -200,11 +212,15 @@ export function CampoPesos({
         autoComplete="off"
         autoFocus={autoFocus}
         placeholder={placeholder ?? '0'}
+        aria-label={ariaLabel ?? etiqueta}
         value={texto}
         onFocus={(e) => e.currentTarget.select()}
+        onKeyDown={onKeyDown}
         onChange={(e) => {
-          setTexto(e.target.value);
-          const v = parsePesos(e.target.value);
+          const crudo = e.target.value;
+          const v = parsePesos(crudo);
+          // Los miles se separan mientras se escribe ("2000" → "2.000"); con centavos se deja tal cual.
+          setTexto(v !== null && !crudo.includes(',') && !crudo.endsWith('.') ? formatearEdicion(v) : crudo);
           ultimo.current = v;
           onCambio(v);
         }}
@@ -272,6 +288,7 @@ const ICONOS = {
   peso: Scale,
   camion: Truck,
   vence: CalendarClock,
+  abrir: ChevronDown,
   promo: Tag,
   sube: TrendingUp,
   baja: TrendingDown,
@@ -294,6 +311,23 @@ export function Vacio({ titulo, children, icono = 'vacio' }: { titulo: string; c
       <p className="vacio-titulo">{titulo}</p>
       {children}
     </div>
+  );
+}
+
+/** "Coca-Cola 500 ml" no se parte entre el número y la unidad al cortar la línea. */
+export function sinCortes(nombre: string): string {
+  return nombre.replace(/(\d)\s+(ml|cc|g|gr|kg|l|lt|u|un|cm|m)\b/gi, '$1 $2');
+}
+
+/** Desplegable: la flecha gira cuando está abierto. */
+export function Desplegable({ abierto, titulo, texto, onClick }: { abierto: boolean; titulo: string; texto?: string; onClick: () => void }) {
+  return (
+    <button type="button" className="desplegable" aria-expanded={abierto} onClick={onClick}>
+      <span className="titulo-chico">{titulo}</span>
+      <span className="texto-suave desplegable-indicador">
+        {texto ?? (abierto ? 'Ocultar' : 'Mostrar')} <Icono nombre="abrir" tam={18} />
+      </span>
+    </button>
   );
 }
 

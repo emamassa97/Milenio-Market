@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import logo from './assets/logo-rojo.svg';
+import logo from './assets/logo-oscuro.svg';
 import { db } from './datos/db';
 import { estaVacia } from './datos/copia';
 import { cargarEjemplo } from './datos/ejemplo';
@@ -12,7 +12,7 @@ import { PantallaReportes } from './pantallas/Reportes';
 import { PantallaInicio } from './pantallas/Inicio';
 import { Icono, ProveedorAvisos, type NombreIcono } from './ui/componentes';
 import { ProveedorPermisos, useEsDueño } from './ui/permisos';
-import logoIcono from './assets/logo-icono.svg';
+import logoBolsa from './assets/logo-bolsa.svg';
 import { PantallaIngreso } from './pantallas/Ingreso';
 import { ProveedorSesion, useSesion } from './ui/sesion';
 import { useConexion, useCopiaEnLaNube, useEstadoNube } from './ui/hooks';
@@ -160,7 +160,7 @@ function Sistema() {
       </aside>
 
       <header className="cabecera-movil">
-        <img src={logoIcono} alt="Milenio Market" className="cabecera-movil-logo" />
+        <img src={logoBolsa} alt="Milenio Market" className="cabecera-movil-logo" />
         <strong className="cabecera-movil-titulo">{actual.nombre}</strong>
         <span className={`punto-red ${online ? '' : 'punto-red-sin'}`} title={online ? 'Con internet' : 'Sin internet: se sigue cobrando'} />
         {sesion && (

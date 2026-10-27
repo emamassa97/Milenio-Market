@@ -6,7 +6,7 @@ import { paraReponer, porVencer, resumirVentas } from '../dominio/reportes';
 import type { MovimientoCaja, Producto, Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { turnoAbierto } from '../datos/operaciones';
-import { hora, Icono } from '../ui/componentes';
+import { hora, Icono, sinCortes } from '../ui/componentes';
 import { useConsulta } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
 
@@ -133,7 +133,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
         </button>
       </div>
 
-      <div className="indicadores">
+      <div className="indicadores indicadores-4">
         <div className="tarjeta indicador">
           <span>Ventas</span>
           <strong className="importe">{r.cantidad}</strong>
@@ -151,10 +151,8 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
         </div>
         <div className="tarjeta indicador">
           <span>Fiado sin cobrar</span>
-          <strong className={`importe ${fiado.total > 0 ? 'texto-alerta' : ''}`}>{formatPesos(fiado.total)}</strong>
-          <small className="texto-suave">
-            {fiado.deudores} {fiado.deudores === 1 ? 'cliente debe' : 'clientes deben'}
-          </small>
+          <strong className="importe">{formatPesos(fiado.total)}</strong>
+          <small className="texto-suave">{fiado.deudores === 0 ? 'Nadie debe' : fiado.deudores === 1 ? '1 cliente debe' : `${fiado.deudores} clientes deben`}</small>
         </div>
       </div>
 
@@ -212,7 +210,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
             <ol className="top">
               {top.map((p) => (
                 <li key={p.clave}>
-                  <span className="top-nombre">{p.nombre}</span>
+                  <span className="top-nombre">{sinCortes(p.nombre)}</span>
                   <span className="top-barra">
                     <span style={{ width: `${(p.total / maxTop) * 100}%` }} />
                   </span>

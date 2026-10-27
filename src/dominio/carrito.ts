@@ -1,6 +1,11 @@
 import type { ItemVenta, Pago, Pesos, Producto, Venta } from './tipos';
 
 /** Más que esto en un renglón es casi seguro un error (un código en el campo cantidad). */
+/** Más que esto en un renglón o de vuelto no es una venta de kiosco: es un código de barras en el campo equivocado. */
+export const RENGLON_MAXIMO = 5_000_000;
+export const VUELTO_MAXIMO = 500_000;
+/** Unidades que pueden llegar de una vez en una compra. */
+export const COMPRA_MAXIMA = 99_999;
 export const CANTIDAD_MAXIMA = 999;
 
 export interface Carrito {

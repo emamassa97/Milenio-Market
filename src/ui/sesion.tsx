@@ -38,7 +38,10 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     try {
       sessionStorage.removeItem(LLAVE);
       // La venta a medio hacer no pasa al usuario que entre después.
-      for (const k of ['milenio.carrito', 'milenio.espera', 'milenio.ultima']) sessionStorage.removeItem(k);
+      for (const k of ['milenio.carrito', 'milenio.espera', 'milenio.ultima']) {
+        sessionStorage.removeItem(k);
+        localStorage.removeItem(k);
+      }
     } catch {
       /* nada */
     }

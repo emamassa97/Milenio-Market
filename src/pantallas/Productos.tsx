@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/csv';
 import { formatPesos } from '../dominio/dinero';
+import { cantidadDeTexto, codigoEscaneado } from '../dominio/entrada';
 import { aplicarAumento, margen, type Redondeo } from '../dominio/precios';
 import type { Producto } from '../dominio/tipos';
 import { diasParaVencer } from '../dominio/reportes';
@@ -15,9 +16,9 @@ import {
   ingresarMercaderia,
   type DatosProducto,
 } from '../datos/operaciones';
-import { CampoPesos, descargarArchivo, errorATexto, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
+import { CampoPesos, descargarArchivo, Desplegable, errorATexto, Icono, Modal, sinCortes, useAvisar, Vacio } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
-import { useConsulta, useUnaVez } from '../ui/hooks';
+import { pitido, useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
 
 type Filtro = 'todos' | 'reponer' | 'vencen' | 'promos' | 'rapidos' | 'sinCodigo' | 'sinCosto';
@@ -55,6 +56,7 @@ export function PantallaProductos() {
     | { tipo: 'pedido' }
     | { tipo: 'compra' }
   >(null);
+  const [menuAcciones, setMenuAcciones] = useState(false);
 
   const categorias = useMemo(
     () => [...new Set(productos.map((p) => p.categoria).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
@@ -89,6 +91,14 @@ export function PantallaProductos() {
     }
   };
 
+  // Las acciones secundarias: botones en PC, una hoja desde "Más" en el celular.
+  const acciones = [
+    { id: 'compra', texto: 'Llegó mercadería', icono: 'camion', deshabilitado: productos.length === 0 },
+    { id: 'pedido', texto: 'Pedido al proveedor', icono: 'whatsapp', deshabilitado: cuantosReponer === 0 },
+    { id: 'aumento', texto: 'Aumentar precios', icono: 'porcentaje', deshabilitado: productos.length === 0 },
+    { id: 'planilla', texto: 'Planilla Excel', icono: 'subir', deshabilitado: false },
+  ] as const;
+
   return (
     <div className="pagina">
       <div className="pagina-cabecera">
@@ -99,31 +109,51 @@ export function PantallaProductos() {
             {cuantosReponer > 0 && (
               <>
                 {' · '}
-                <button type="button" className="enlace texto-alerta" onClick={() => setFiltro('reponer')}>
+                <button type="button" className="enlace texto-aviso" onClick={() => setFiltro('reponer')}>
                   {cuantosReponer} para reponer
                 </button>
               </>
             )}
           </p>
         </div>
-        <div className="botonera">
-          <button type="button" className="boton" onClick={() => setModal({ tipo: 'compra' })} disabled={productos.length === 0}>
-            <Icono nombre="camion" tam={18} /> Llegó mercadería
-          </button>
-          <button type="button" className="boton" onClick={() => setModal({ tipo: 'pedido' })} disabled={cuantosReponer === 0}>
-            <Icono nombre="whatsapp" tam={18} /> Pedido al proveedor
-          </button>
-          <button type="button" className="boton" onClick={() => setModal({ tipo: 'aumento' })} disabled={productos.length === 0}>
-            <Icono nombre="porcentaje" tam={18} /> Aumentar precios
-          </button>
-          <button type="button" className="boton" onClick={() => setModal({ tipo: 'planilla' })}>
-            <Icono nombre="subir" tam={18} /> Planilla Excel
-          </button>
+        <div className="botonera solo-pc">
+          {acciones.map((a) => (
+            <button key={a.id} type="button" className="boton" onClick={() => setModal({ tipo: a.id })} disabled={a.deshabilitado}>
+              <Icono nombre={a.icono} tam={18} /> {a.texto}
+            </button>
+          ))}
           <button type="button" className="boton boton-primario" onClick={() => setModal({ tipo: 'editar' })}>
             <Icono nombre="mas" tam={18} /> Nuevo producto
           </button>
         </div>
+        <button type="button" className="boton boton-chico solo-movil" aria-expanded={menuAcciones} onClick={() => setMenuAcciones(true)}>
+          <Icono nombre="menu" tam={18} /> Más acciones
+        </button>
       </div>
+      <button type="button" className="fab" onClick={() => setModal({ tipo: 'editar' })} aria-label="Nuevo producto" title="Nuevo producto">
+        <Icono nombre="mas" tam={26} />
+      </button>
+      {menuAcciones && (
+        <>
+          <button type="button" className="hoja-fondo" aria-label="Cerrar" onClick={() => setMenuAcciones(false)} />
+          <div className="hoja" role="menu">
+            {acciones.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                role="menuitem"
+                disabled={a.deshabilitado}
+                onClick={() => {
+                  setMenuAcciones(false);
+                  setModal({ tipo: a.id });
+                }}
+              >
+                <Icono nombre={a.icono} tam={22} /> {a.texto}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="filtros">
         <div className="buscador-campo buscador-chico">
@@ -131,20 +161,20 @@ export function PantallaProductos() {
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre o código" aria-label="Buscar producto" />
         </div>
         <div className="chips" role="group" aria-label="Filtro">
+          {categorias.length > 0 && (
+            <select value={categoria} onChange={(e) => setCategoria(e.target.value)} aria-label="Categoría">
+              <option value="">Todas las categorías</option>
+              {categorias.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          )}
           {FILTROS.map((f) => (
             <button key={f.id} type="button" className={`chip ${filtro === f.id ? 'activo' : ''}`} aria-pressed={filtro === f.id} onClick={() => setFiltro(f.id)}>
               {f.nombre}
             </button>
           ))}
         </div>
-        {categorias.length > 0 && (
-          <select value={categoria} onChange={(e) => setCategoria(e.target.value)} aria-label="Categoría">
-            <option value="">Todas las categorías</option>
-            {categorias.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-        )}
       </div>
 
       {productos.length === 0 ? (
@@ -159,6 +189,7 @@ export function PantallaProductos() {
             <span>Producto</span>
             <span>Precio</span>
             <span>Costo</span>
+            <span>Margen</span>
             <span>Stock</span>
             <span />
           </div>
@@ -168,10 +199,10 @@ export function PantallaProductos() {
               return (
                 <li key={p.id} className="fila-producto">
                   <div className="fila-producto-nombre">
-                    <strong>{p.nombre}</strong>
+                    <strong>{sinCortes(p.nombre)}</strong>
                     <small>
-                      {p.codigo || 'sin código'}
-                      {p.categoria ? ` · ${p.categoria}` : ''}
+                      {p.categoria || 'Sin categoría'}
+                      <span className="codigo"> · {p.codigo || 'sin código'}</span>
                     </small>
                     {(p.porPeso || p.promo || p.vence) && (
                       <span className="insignias">
@@ -186,15 +217,8 @@ export function PantallaProductos() {
                     )}
                   </div>
                   <span className="importe fila-precio">{formatPesos(p.precio)}</span>
-                  <span className="fila-costo texto-suave">
-                    {p.costo > 0 ? (
-                      <>
-                        {formatPesos(p.costo)} <small>({m}%)</small>
-                      </>
-                    ) : (
-                      '—'
-                    )}
-                  </span>
+                  <span className="importe fila-costo texto-suave">{p.costo > 0 ? formatPesos(p.costo) : '—'}</span>
+                  <span className="fila-margen">{m !== null && p.costo > 0 ? `${m}%` : ''}</span>
                   <button type="button" className={`stock ${p.stock <= 0 ? 'stock-cero' : necesitaReponer(p) ? 'stock-bajo' : ''}`} onClick={() => setModal({ tipo: 'stock', producto: p })} aria-label={`Stock de ${p.nombre}: ${p.stock}. Sumar o corregir`}>
                     {textoStock(p)}
                   </button>
@@ -327,10 +351,7 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
           <input type="checkbox" checked={d.rapido} onChange={(e) => setD({ ...d, rapido: e.target.checked })} />
           <span>Botón rápido en la caja (para lo que más sale)</span>
         </label>
-        <button type="button" className="desplegable" aria-expanded={masOpciones} onClick={() => setMasOpciones(!masOpciones)}>
-          <span className="titulo-chico">Venta por peso, promo y vencimiento</span>
-          <span className="texto-suave">{masOpciones ? 'Ocultar' : 'Mostrar'}</span>
-        </button>
+        <Desplegable abierto={masOpciones} titulo="Venta por peso, promo y vencimiento" onClick={() => setMasOpciones(!masOpciones)} />
         {masOpciones && (
           <div className="formulario opciones-producto">
             <label className="casilla">
@@ -356,7 +377,7 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
         <div className="botonera botonera-final">
           {producto && (
             <button type="button" className={`boton ${confirmarBorrar ? 'boton-peligro' : 'boton-texto-peligro'}`} onClick={borrar}>
-              {confirmarBorrar ? '¿Seguro? Tocá de nuevo' : 'Borrar'}
+              {confirmarBorrar ? 'Sí, borrar' : 'Borrar'}
             </button>
           )}
           <button type="submit" className="boton boton-primario" disabled={!d.nombre.trim() || precio === null || enCurso}>
@@ -669,34 +690,62 @@ function IngresoMercaderia({ productos, onCerrar }: { productos: Producto[]; onC
   const [renglones, setRenglones] = useState<{ p: Producto; cantidad: string; costo: number | null }[]>([]);
   const [proveedor, setProveedor] = useState('');
   const [deCaja, setDeCaja] = useState(false);
+  const [pagado, setPagado] = useState<number | null>(null);
   const [enCurso, unaVez] = useUnaVez();
+  const buscador = useRef<HTMLInputElement>(null);
   const encontrados = useMemo(() => {
     const t = normalizar(q.trim());
     if (t.length < 2) return [];
     const ya = new Set(renglones.map((r) => r.p.id));
     return productos.filter((p) => !ya.has(p.id) && (p.codigo === q.trim() || normalizar(p.nombre).includes(t))).slice(0, 6);
   }, [q, productos, renglones]);
+  const porCodigo = useMemo(() => new Map(productos.filter((p) => p.codigo).map((p) => [p.codigo, p])), [productos]);
   const sumar = (p: Producto) => {
-    setRenglones((r) => [...r, { p, cantidad: '', costo: p.costo > 0 ? p.costo : null }]);
+    setRenglones((r) => (r.some((x) => x.p.id === p.id) ? r : [...r, { p, cantidad: '', costo: p.costo > 0 ? p.costo : null }]));
     setQ('');
+    buscador.current?.focus();
   };
-  const cant = (t: string) => Number(t.replace(',', '.')) || 0;
-  const total = renglones.reduce((s, r) => s + Math.round(cant(r.cantidad) * (r.costo ?? 0)), 0);
+  // El lector escribe donde esté el cursor: un código en cualquier campo se toma como escaneo.
+  const escaneo = (texto: string): boolean => {
+    const codigo = codigoEscaneado(texto);
+    if (!codigo) return false;
+    const p = porCodigo.get(codigo);
+    if (p) sumar(p);
+    else {
+      pitido('error');
+      avisar({ texto: 'Ese código no está cargado. Cargalo primero con "Nuevo producto".', tipo: 'error' });
+    }
+    return true;
+  };
+  const cant = (r: { cantidad: string; p: Producto }) => cantidadDeTexto(r.cantidad, !!r.p.porPeso);
+  const total = renglones.reduce((s, r) => s + Math.round(cant(r) * (r.costo ?? 0)), 0);
+  const montoCaja = pagado ?? total;
   return (
     <Modal titulo="Llegó mercadería" onCerrar={onCerrar} ancho="ancho">
       <form
         className="formulario"
+        onKeyDown={(e) => {
+          // Enter en un campo no guarda: vuelve al buscador para seguir escaneando. Guardar es con el botón.
+          if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') {
+            e.preventDefault();
+            buscador.current?.focus();
+          }
+        }}
         onSubmit={(e) => {
           e.preventDefault();
+          if (deCaja && montoCaja <= 0) {
+            avisar({ texto: 'Poné cuánto pagaste de la caja (o cargá el costo de cada producto).', tipo: 'error' });
+            return;
+          }
           unaVez(async () => {
             try {
-              const pagado = await ingresarMercaderia(
+              const gasto = await ingresarMercaderia(
                 db,
-                renglones.map((r) => ({ productoId: r.p.id!, cantidad: cant(r.cantidad), costo: r.costo ?? 0 })),
-                { proveedor, pagadoDeCaja: deCaja },
+                renglones.map((r) => ({ productoId: r.p.id!, cantidad: cant(r), costo: r.costo ?? 0 })),
+                { proveedor, pagadoDeCaja: deCaja, montoPagado: deCaja ? montoCaja : undefined },
                 sesion?.usuario,
               );
-              avisar({ texto: `Stock actualizado${deCaja ? `. Gasto de ${formatPesos(pagado)} anotado en la caja` : ''}.`, tipo: 'ok' });
+              avisar({ texto: `Stock actualizado${deCaja && gasto > 0 ? `. Gasto de ${formatPesos(gasto)} anotado en la caja` : ''}.`, tipo: 'ok' });
               onCerrar();
             } catch (err) {
               avisar({ texto: errorATexto(err), tipo: 'error' });
@@ -708,13 +757,19 @@ function IngresoMercaderia({ productos, onCerrar }: { productos: Producto[]; onC
         <div className="buscador-campo buscador-chico ingreso-buscador">
           <Icono nombre="buscar" tam={18} />
           <input
+            ref={buscador}
             value={q}
             autoFocus
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
+                if (escaneo(q)) return;
                 if (encontrados[0]) sumar(encontrados[0]);
+                else if (q.trim()) {
+                  pitido('error');
+                  avisar({ texto: `No encontré "${q.trim()}".`, tipo: 'error' });
+                }
               }
             }}
             placeholder="Escaneá o escribí el producto"
@@ -748,11 +803,21 @@ function IngresoMercaderia({ productos, onCerrar }: { productos: Producto[]; onC
                   <input
                     inputMode="decimal"
                     value={r.cantidad}
-                    autoFocus
-                    onChange={(e) => setRenglones((x) => x.map((y, j) => (j === i ? { ...y, cantidad: e.target.value.replace(/[^\d,.]/g, '') } : y)))}
+                    onChange={(e) => {
+                      const t = e.target.value;
+                      if (escaneo(t)) return;
+                      setRenglones((x) => x.map((y, j) => (j === i ? { ...y, cantidad: t.replace(r.p.porPeso ? /[^\d,.]/g : /\D/g, '').slice(0, 7) } : y)));
+                    }}
+                    placeholder={r.p.porPeso ? 'Ej.: 2,5' : 'Ej.: 24'}
+                    aria-label={`Cantidad de ${r.p.nombre}`}
                   />
                 </label>
-                <CampoPesos etiqueta={r.p.porPeso ? 'Costo por kilo' : 'Costo c/u'} valor={r.costo} onCambio={(v) => setRenglones((x) => x.map((y, j) => (j === i ? { ...y, costo: v } : y)))} />
+                <CampoPesos
+                  etiqueta={r.p.porPeso ? 'Costo por kilo' : 'Costo c/u'}
+                  valor={r.costo}
+                  ariaLabel={`Costo de ${r.p.nombre}`}
+                  onCambio={(v) => setRenglones((x) => x.map((y, j) => (j === i ? { ...y, costo: v } : y)))}
+                />
                 <button type="button" className="boton-icono" aria-label={`Sacar ${r.p.nombre}`} onClick={() => setRenglones((x) => x.filter((_, j) => j !== i))}>
                   <Icono nombre="basura" tam={18} />
                 </button>
@@ -770,11 +835,16 @@ function IngresoMercaderia({ productos, onCerrar }: { productos: Producto[]; onC
           <input type="checkbox" checked={deCaja} onChange={(e) => setDeCaja(e.target.checked)} />
           <span>Lo pagué con plata de la caja (se anota como gasto del turno)</span>
         </label>
+        {deCaja && (
+          <div className="fila-campos">
+            <CampoPesos etiqueta="Cuánto pagaste de la caja" valor={pagado ?? (total || null)} onCambio={setPagado} placeholder={String(total)} />
+          </div>
+        )}
         <div className="vuelto">
           <span>Total de la compra</span>
           <strong className="importe texto-normal">{formatPesos(total)}</strong>
         </div>
-        <button type="submit" className="boton boton-primario boton-grande" disabled={enCurso || !renglones.some((r) => cant(r.cantidad) > 0)}>
+        <button type="submit" className="boton boton-primario boton-grande" disabled={enCurso || !renglones.some((r) => cant(r) > 0)}>
           Guardar ingreso
         </button>
       </form>

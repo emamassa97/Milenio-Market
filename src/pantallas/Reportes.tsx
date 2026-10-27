@@ -5,7 +5,7 @@ import { saldoCliente } from '../dominio/fiado';
 import { paraReponer, resumirVentas, sinMovimiento } from '../dominio/reportes';
 import { MEDIOS, type Producto, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
-import { Vacio } from '../ui/componentes';
+import { sinCortes, Vacio } from '../ui/componentes';
 import { useConsulta } from '../ui/hooks';
 
 type Periodo = 'hoy' | 'ayer' | '7' | '30' | 'mes';
@@ -81,16 +81,16 @@ export function PantallaReportes() {
     <div className="pagina">
       <div className="pagina-cabecera">
         <h1>Reportes</h1>
-        <div className="chips" role="group" aria-label="Período">
+        <div className="segmentos" role="group" aria-label="Período">
           {PERIODOS.map((p) => (
-            <button key={p.id} type="button" className={`chip ${periodo === p.id ? 'activo' : ''}`} aria-pressed={periodo === p.id} onClick={() => setPeriodo(p.id)}>
+            <button key={p.id} type="button" className={periodo === p.id ? 'activo' : ''} aria-pressed={periodo === p.id} onClick={() => setPeriodo(p.id)}>
               {p.nombre}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="indicadores">
+      <div className="indicadores indicadores-4">
         <div className="tarjeta indicador">
           <span>Vendiste</span>
           <strong className="importe">{formatPesos(r.total)}</strong>
@@ -108,6 +108,8 @@ export function PantallaReportes() {
           <strong className="importe texto-positivo">{formatPesos(r.ganancia)}</strong>
           {r.ventasSinCosto > 0 && <small className="texto-suave">{formatPesos(r.ventasSinCosto)} vendidos sin costo cargado no entran</small>}
         </div>
+      </div>
+      <div className="indicadores indicadores-3">
         <div className="tarjeta indicador">
           <span>Gastos del local</span>
           <strong className="importe">{formatPesos(gastos)}</strong>
@@ -117,6 +119,11 @@ export function PantallaReportes() {
           <span>Queda después de gastos</span>
           <strong className={`importe ${r.ganancia - gastos < 0 ? 'texto-alerta' : ''}`}>{formatPesos(r.ganancia - gastos)}</strong>
           <small className="texto-suave">Ganancia estimada menos gastos</small>
+        </div>
+        <div className="tarjeta indicador">
+          <span>Fiado sin cobrar</span>
+          <strong className="importe">{formatPesos(fiadoPendiente.total)}</strong>
+          <small className="texto-suave">{fiadoPendiente.deudores === 0 ? 'Nadie debe' : fiadoPendiente.deudores === 1 ? '1 cliente debe' : `${fiadoPendiente.deudores} clientes deben`}</small>
         </div>
       </div>
 
@@ -155,7 +162,7 @@ export function PantallaReportes() {
             <ol className="ranking">
               {r.productos.slice(0, 10).map((p) => (
                 <li key={p.clave}>
-                  <span>{p.nombre}</span>
+                  <span>{sinCortes(p.nombre)}</span>
                   <span className="texto-suave">{p.kilos !== undefined ? `${p.kilos.toLocaleString('es-AR')} kg` : `${p.unidades} u.`}</span>
                   <span className="importe">{formatPesos(p.total)}</span>
                 </li>
@@ -174,8 +181,8 @@ export function PantallaReportes() {
             <ul className="ranking">
               {reponer.slice(0, 10).map((p) => (
                 <li key={p.id}>
-                  <span>{p.nombre}</span>
-                  <span className="texto-alerta">quedan {p.stock}</span>
+                  <span>{sinCortes(p.nombre)}</span>
+                  <span className="texto-aviso">{p.stock === 1 ? 'queda 1' : `quedan ${p.stock}`}</span>
                   <span className="texto-suave">mín. {p.stockMinimo}</span>
                 </li>
               ))}
@@ -190,18 +197,13 @@ export function PantallaReportes() {
             <ul className="ranking">
               {quietos.map((p) => (
                 <li key={p.id}>
-                  <span>{p.nombre}</span>
+                  <span>{sinCortes(p.nombre)}</span>
                   <span className="texto-suave">{p.stock} en stock</span>
                   <span className="importe">{formatPesos(p.precio * p.stock)}</span>
                 </li>
               ))}
             </ul>
           )}
-        </section>
-        <section className="tarjeta indicador">
-          <span>Fiado sin cobrar</span>
-          <strong className="importe texto-alerta">{formatPesos(fiadoPendiente.total)}</strong>
-          <small className="texto-suave">{fiadoPendiente.deudores === 1 ? '1 cliente debe' : `${fiadoPendiente.deudores} clientes deben`}</small>
         </section>
       </div>
     </div>
