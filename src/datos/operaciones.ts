@@ -4,6 +4,7 @@ import { formatPesos } from '../dominio/dinero';
 import type { FilaImportada } from '../dominio/csv';
 import { saldoCliente, superaLimite } from '../dominio/fiado';
 import { aplicarAumento, type Redondeo } from '../dominio/precios';
+import { MEDIOS } from '../dominio/tipos';
 import type {
   Cliente,
   ItemVenta,
@@ -103,12 +104,21 @@ export async function registrarMovimientoCaja(
   monto: Pesos,
   motivo: string,
   usuario?: string,
+  mercaderia = false,
 ): Promise<number> {
   if (!(monto > 0)) throw new ErrorKiosco('Poné un monto mayor a cero.');
   return db.transaction('rw', db.turnos, db.movimientosCaja, async () => {
     const turno = await turnoAbierto(db);
     if (!turno) throw new ErrorKiosco('Primero abrí la caja.');
-    const mov: MovimientoCaja = { turnoId: turno.id!, fecha: ahora(), tipo, monto, motivo: motivo.trim(), ...quien('usuario', usuario) };
+    const mov: MovimientoCaja = {
+      turnoId: turno.id!,
+      fecha: ahora(),
+      tipo,
+      monto,
+      motivo: motivo.trim(),
+      ...(tipo === 'gasto' && mercaderia ? { mercaderia: true } : {}),
+      ...quien('usuario', usuario),
+    };
     return db.movimientosCaja.add(mov);
   });
 }
@@ -138,6 +148,7 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
       throw new ErrorKiosco(`La cantidad de "${i.nombre}" no es válida (máximo ${CANTIDAD_MAXIMA}).`);
     }
     if (!Number.isFinite(i.precioUnitario) || i.precioUnitario < 0) throw new ErrorKiosco(`El precio de "${i.nombre}" no es válido.`);
+    if (i.gramos !== undefined && !(Number.isInteger(i.gramos) && i.gramos > 0)) throw new ErrorKiosco(`El peso de "${i.nombre}" no es válido.`);
   }
   const total = items.reduce((s, i) => s + subtotal(i), 0);
   if (total <= 0) throw new ErrorKiosco('El total tiene que ser mayor a cero.');
@@ -154,6 +165,7 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
     pagos = datos.pagos.filter((p) => p.monto > 0);
     if (pagos.some((p) => p.medio === 'fiado')) throw new ErrorKiosco('El fiado no se puede combinar con otro medio.');
     if (pagos.some((p) => !Number.isInteger(p.monto))) throw new ErrorKiosco('Los montos del pago tienen que ser enteros.');
+    if (pagos.some((p) => !MEDIOS.some((m) => m.id === p.medio))) throw new ErrorKiosco('Hay un medio de pago que no existe.');
     const suma = pagos.reduce((s, p) => s + p.monto, 0);
     if (suma !== total) throw new ErrorKiosco(`Los pagos suman ${formatPesos(suma)} y el total es ${formatPesos(total)}.`);
   }
@@ -253,6 +265,11 @@ function validarProducto(p: DatosProducto) {
   if (p.codigo && !/^[0-9A-Za-z-]{1,30}$/.test(p.codigo)) {
     throw new ErrorKiosco('El código sólo puede tener números y letras.');
   }
+  const pr = p.promo;
+  if (pr && (!Number.isInteger(pr.cantidad) || pr.cantidad < 2 || !Number.isInteger(pr.precio) || pr.precio <= 0 || pr.precio >= p.precio * pr.cantidad)) {
+    throw new ErrorKiosco('La promo tiene que ser de 2 o más unidades y más barata que comprarlas sueltas.');
+  }
+  if (p.vence && !/^\d{4}-\d{2}-\d{2}$/.test(p.vence)) throw new ErrorKiosco('La fecha de vencimiento no es válida.');
 }
 
 export async function buscarPorCodigo(db: BaseKiosco, codigo: string): Promise<Producto | undefined> {
@@ -288,7 +305,7 @@ export async function guardarProducto(
     if (id === undefined) return db.productos.add({ ...limpio, creado: ahora(), actualizado: ahora() });
     const existe = await db.productos.get(id);
     if (!existe) throw new ErrorKiosco('Ese producto ya no existe.');
-    const stock = stockOriginal === undefined ? limpio.stock : existe.stock + (limpio.stock - stockOriginal);
+    const stock = stockOriginal === undefined ? limpio.stock : redondearStock(existe.stock + (limpio.stock - stockOriginal));
     await db.productos.update(id, { ...limpio, stock, actualizado: ahora() });
     return id;
   });
@@ -412,16 +429,19 @@ export async function ingresarMercaderia(
 ): Promise<Pesos> {
   const validos = renglones.filter((r) => r.cantidad > 0);
   if (validos.length === 0) throw new ErrorKiosco('Poné al menos una cantidad.');
-  if (validos.some((r) => r.costo < 0)) throw new ErrorKiosco('El costo no puede ser negativo.');
+  if (validos.some((r) => !(r.costo >= 0) || !Number.isInteger(r.costo))) throw new ErrorKiosco('El costo tiene que ser un número entero, sin centavos.');
   return db.transaction('rw', [db.productos, db.turnos, db.movimientosCaja], async () => {
     let total = 0;
     for (const r of validos) {
       const p = await db.productos.get(r.productoId);
       if (!p) throw new ErrorKiosco('Uno de los productos ya no existe.');
       const costo = r.costo > 0 ? r.costo : p.costo;
-      total += Math.round(costo * r.cantidad);
+      // La misma cantidad para el stock y para la plata: kilos con gramos, o unidades enteras.
+      const cant = p.porPeso ? redondearStock(r.cantidad) : Math.floor(r.cantidad);
+      if (!(cant > 0) || !Number.isFinite(cant)) continue;
+      total += Math.round(costo * cant);
       await db.productos.update(r.productoId, {
-        stock: p.porPeso ? redondearStock(p.stock + r.cantidad) : p.stock + Math.floor(r.cantidad),
+        stock: p.porPeso ? redondearStock(p.stock + cant) : p.stock + cant,
         costo,
         actualizado: ahora(),
       });
@@ -435,6 +455,7 @@ export async function ingresarMercaderia(
         tipo: 'gasto',
         monto: total,
         motivo: `Mercadería${opciones.proveedor.trim() ? `: ${opciones.proveedor.trim()}` : ''}`,
+        mercaderia: true,
         ...quien('usuario', usuario),
       });
     }

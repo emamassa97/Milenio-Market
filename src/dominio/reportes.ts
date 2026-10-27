@@ -1,10 +1,12 @@
-import { pagosDeVenta, subtotal } from './carrito';
+import { pagosDeVenta, stockQueUsa, subtotal } from './carrito';
 import type { MedioPago, Pesos, Producto, Venta } from './tipos';
 
 export interface FilaProducto {
   clave: string;
   nombre: string;
   unidades: number;
+  /** Productos por peso: kilos vendidos (en vez de unidades). */
+  kilos?: number;
   total: Pesos;
 }
 
@@ -39,8 +41,11 @@ export function resumirVentas(ventas: Venta[]): ResumenVentas {
       if (it.costoUnitario > 0) ganancia += sub - it.costoUnitario * it.cantidad;
       else ventasSinCosto += sub;
       const clave = it.productoId !== null ? `p${it.productoId}` : `libre:${it.nombre}`;
-      const fila = productos.get(clave) ?? { clave, nombre: it.nombre, unidades: 0, total: 0 };
-      fila.unidades += it.cantidad;
+      // Las ventas por peso viejas guardaban los gramos en el nombre: "Queso (250 g)".
+      const nombre = it.gramos ? it.nombre.replace(/ \([\d.,]+ k?g\)$/, '') : it.nombre;
+      const fila = productos.get(clave) ?? { clave, nombre, unidades: 0, total: 0 };
+      if (it.gramos) fila.kilos = Math.round(((fila.kilos ?? 0) + stockQueUsa(it)) * 1000) / 1000;
+      else fila.unidades += it.cantidad;
       fila.total += sub;
       productos.set(clave, fila);
     }

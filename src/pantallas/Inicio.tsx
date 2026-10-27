@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { resumirTurno } from '../dominio/caja';
+import { esGastoDelLocal, resumirTurno } from '../dominio/caja';
 import { formatPesos } from '../dominio/dinero';
 import { saldoCliente } from '../dominio/fiado';
 import { paraReponer, porVencer, resumirVentas } from '../dominio/reportes';
@@ -45,7 +45,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
   const gastosHoy = useConsulta(
     async () =>
-      (await db.movimientosCaja.filter((m: MovimientoCaja) => m.fecha >= inicioDelDia() && m.tipo === 'gasto' && !m.motivo.startsWith('Mercadería')).toArray())
+      (await db.movimientosCaja.filter((m: MovimientoCaja) => m.fecha >= inicioDelDia() && esGastoDelLocal(m)).toArray())
         .reduce((s, m) => s + m.monto, 0),
     [],
     0,
@@ -68,7 +68,11 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
     async () => {
       const movs = await db.movimientosFiado.toArray();
       const porCliente = new Map<number, typeof movs>();
-      for (const m of movs) porCliente.set(m.clienteId, [...(porCliente.get(m.clienteId) ?? []), m]);
+      for (const m of movs) {
+        let lista = porCliente.get(m.clienteId);
+        if (!lista) porCliente.set(m.clienteId, (lista = []));
+        lista.push(m);
+      }
       let total = 0;
       let deudores = 0;
       for (const lista of porCliente.values()) {

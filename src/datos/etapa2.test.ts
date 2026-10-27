@@ -80,3 +80,36 @@ describe('ingreso de mercadería', () => {
     expect(movs[0]).toMatchObject({ tipo: 'gasto', monto: 15600, motivo: 'Mercadería: Arcor' });
   });
 });
+
+describe('arreglos del jurado técnico', () => {
+  it('rechaza promos sin descuento o inválidas', async () => {
+    await expect(guardarProducto(db, prod({ promo: { cantidad: 2, precio: 3000 } }))).rejects.toThrow(/promo/);
+    await expect(guardarProducto(db, prod({ promo: { cantidad: 2.5, precio: -100 } }))).rejects.toThrow(/promo/);
+  });
+
+  it('mercadería con decimales: misma cantidad para stock y plata', async () => {
+    const { ingresarMercaderia } = await import('./operaciones');
+    const id = await guardarProducto(db, prod({ stock: 0, costo: 1000 }));
+    const total = await ingresarMercaderia(db, [{ productoId: id, cantidad: 1.9, costo: 1000 }], { proveedor: '', pagadoDeCaja: false });
+    expect(total).toBe(1000);
+    expect((await db.productos.get(id))!.stock).toBe(1);
+  });
+
+  it('sumar kilos a un producto por peso respeta los decimales', async () => {
+    const { ajustarStock } = await import('./operaciones');
+    const id = await guardarProducto(db, prod({ porPeso: true, stock: 0.4 }));
+    await ajustarStock(db, id, 1.5);
+    expect((await db.productos.get(id))!.stock).toBe(1.9);
+  });
+
+  it('el ticket escapa textos y valida el ancho', async () => {
+    const { htmlTicket } = await import('../ui/ticket');
+    const v = await registrarVenta(db, {
+      items: [{ productoId: null, codigo: '', nombre: '<img src=x onerror=alert(1)>', precioUnitario: 100, costoUnitario: 0, cantidad: 1 }],
+      medio: 'efectivo', pagaCon: null, clienteId: null,
+    });
+    const html = htmlTicket(v, { ancho: 58, encabezado: '<b>x</b>', pie: '"pie"', auto: false });
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('<b>x');
+  });
+});

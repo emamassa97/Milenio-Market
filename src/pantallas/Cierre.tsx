@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { DENOMINACIONES, resumirTurno, totalConteo, type ResumenTurno } from '../dominio/caja';
+import { pagosDeVenta } from '../dominio/carrito';
 import { formatPesos } from '../dominio/dinero';
 import { nombreMedio, type MovimientoCaja, type TipoMovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
@@ -306,7 +307,7 @@ function VentasDelTurno({ ventas }: { ventas: Venta[] }) {
           {ordenadas.map((v) => (
             <li key={v.id} className={v.anulada ? 'anulada' : ''}>
               <span>
-                <strong>{hora(v.fecha)}</strong> · {nombreMedio(v.medio)}
+                <strong>{hora(v.fecha)}</strong> · {pagosDeVenta(v).map((p) => nombreMedio(p.medio)).join(' + ')}
                 <small className="texto-suave"> · {v.items.map((i) => `${i.cantidad} ${i.nombre}`).join(', ')}</small>
               </span>
               <span className="importe">{formatPesos(v.total)}</span>
@@ -344,7 +345,7 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
   const avisar = useAvisar();
   const pedirDueño = usePedirDueño();
   const { sesion } = useSesion();
-  const [tipo, setTipo] = useState<TipoMovimientoCaja>('gasto');
+  const [tipo, setTipo] = useState<TipoMovimientoCaja | 'mercaderia'>('mercaderia');
   const [monto, setMonto] = useState<number | null>(null);
   const [motivo, setMotivo] = useState('');
   const [enCurso, unaVez] = useUnaVez();
@@ -355,10 +356,12 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
         onSubmit={(e) => {
           e.preventDefault();
           unaVez(async () => {
-            const quien = tipo === 'retiro' ? await pedirDueño('Sacar plata de la caja') : sesion?.usuario;
-            if (tipo === 'retiro' && !quien) return;
+            // Retiros y gastos sacan plata de la caja: para un empleado los autoriza el dueño.
+            const real = tipo === 'mercaderia' ? 'gasto' : tipo;
+            const quien = real !== 'ingreso' ? await pedirDueño(real === 'retiro' ? 'Sacar plata de la caja' : 'Pagar un gasto con plata de la caja') : sesion?.usuario;
+            if (real !== 'ingreso' && !quien) return;
             try {
-              await registrarMovimientoCaja(db, tipo, monto ?? 0, motivo, quien ?? undefined);
+              await registrarMovimientoCaja(db, real, monto ?? 0, motivo, quien ?? undefined, tipo === 'mercaderia');
               avisar({ texto: 'Anotado.', tipo: 'ok' });
               onCerrar();
             } catch (err) {
@@ -370,9 +373,10 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
         <div className="chips" role="group" aria-label="Tipo">
           {(
             [
-              ['gasto', 'Gasto (pago a proveedor, compras)'],
-              ['retiro', 'Retiro (me llevo plata)'],
-              ['ingreso', 'Ingreso (agrego cambio)'],
+              ['mercaderia', 'Pago a proveedor'],
+              ['gasto', 'Gasto del local'],
+              ['retiro', 'Retiro'],
+              ['ingreso', 'Ingreso de cambio'],
             ] as const
           ).map(([id, texto]) => (
             <button key={id} type="button" className={`chip ${tipo === id ? 'activo' : ''}`} aria-pressed={tipo === id} onClick={() => setTipo(id)}>
@@ -383,7 +387,7 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
         <CampoPesos etiqueta="Monto" valor={monto} onCambio={setMonto} autoFocus grande />
         <label className="campo">
           <span className="campo-etiqueta">Motivo</span>
-          <input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej.: Pago a Coca-Cola" />
+          <input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder={tipo === 'mercaderia' ? 'Ej.: Distribuidora Coca-Cola' : tipo === 'gasto' ? 'Ej.: Luz, limpieza, delivery' : tipo === 'retiro' ? 'Ej.: Me llevo para el banco' : 'Ej.: Cambio del banco'} />
         </label>
         <button type="submit" className="boton boton-primario boton-grande" disabled={!monto || monto <= 0 || enCurso}>
           Anotar

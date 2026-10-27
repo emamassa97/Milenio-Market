@@ -94,9 +94,9 @@ export function ProveedorAvisos({ children }: { children: ReactNode }) {
   return (
     <ContextoAvisos.Provider value={avisar}>
       {children}
-      <div className="avisos" role="status" aria-live="polite">
+      <div className="avisos" aria-live="polite">
         {avisos.map((a) => (
-          <div key={a.id} className={`aviso aviso-${a.tipo}`}>
+          <div key={a.id} className={`aviso aviso-${a.tipo}`} role={a.tipo === 'error' ? 'alert' : 'status'}>
             <span>{a.texto}</span>
             {a.accion && (
               <button

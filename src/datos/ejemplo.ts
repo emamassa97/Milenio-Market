@@ -63,6 +63,9 @@ export async function borrarTodo(db: BaseKiosco): Promise<void> {
     const enPrueba = await leerAjuste(db, 'modoPrueba', false);
     const cierres = await db.turnos.filter((t) => t.cierre !== null).count();
     if (!enPrueba || cierres > 0) throw new ErrorKiosco('Ya hay cajas cerradas: no se puede borrar todo.');
+    // Se conservan los usuarios, el id de este equipo y la nube: sólo se borran los datos de prueba.
+    const guardar = (await db.ajustes.toArray()).filter((x) => x.clave === 'usuarios' || x.clave === 'dispositivo' || x.clave.startsWith('nube.'));
     for (const t of db.tables) await t.clear();
+    if (guardar.length) await db.ajustes.bulkPut(guardar);
   });
 }

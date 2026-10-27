@@ -37,6 +37,8 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
   const salir = () => {
     try {
       sessionStorage.removeItem(LLAVE);
+      // La venta a medio hacer no pasa al usuario que entre después.
+      for (const k of ['milenio.carrito', 'milenio.espera', 'milenio.ultima']) sessionStorage.removeItem(k);
     } catch {
       /* nada */
     }

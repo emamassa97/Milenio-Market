@@ -461,7 +461,7 @@ function AjustesDelTicket() {
             </button>
           </div>
         </div>
-        <iframe className="ticket-vista" title="Vista previa del ticket" srcDoc={htmlTicket(VENTA_DE_MUESTRA, a)} style={{ width: `${a.ancho * 3.78 + 4}px` }} />
+        <iframe className="ticket-vista" sandbox="" title="Vista previa del ticket" srcDoc={htmlTicket(VENTA_DE_MUESTRA, a)} style={{ width: `${a.ancho * 3.78 + 4}px` }} />
       </div>
     </section>
   );

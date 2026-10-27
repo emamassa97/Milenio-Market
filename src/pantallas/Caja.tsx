@@ -8,6 +8,7 @@ import {
   esCodigo,
   interpretarEntrada,
   ahorroPromo,
+  stockQueUsa,
   itemDeProducto,
   itemPorPeso,
   formatoPeso,
@@ -163,6 +164,8 @@ function Caja() {
   const [cobrando, setCobrando] = useState(false);
   const [confirmarCancelar, setConfirmarCancelar] = useState(false);
   const buscador = useRef<HTMLInputElement>(null);
+  const cobrandoRef = useRef(false);
+  const ultimoAgregado = useRef(0);
 
   const total = totalCarrito(carrito);
   const vuelto = pagaCon === null ? 0 : calcularVuelto(total, pagaCon);
@@ -192,6 +195,13 @@ function Caja() {
   const agregar = useCallback(
     (p: Producto, cantidad: number) => {
       if (buscador.current) buscador.current.value = '';
+      // Mientras se guarda el cobro, lo escaneado no entra: se borraría con el carrito.
+      if (cobrandoRef.current) {
+        pitido('error');
+        avisar({ texto: 'Esperá un segundo: se está guardando el cobro.', tipo: 'info' });
+        return;
+      }
+      ultimoAgregado.current = Date.now();
       if (p.porPeso) {
         setEntrada('');
         setModal({ tipo: 'peso', producto: p });
@@ -204,7 +214,7 @@ function Caja() {
       pitido('ok');
       enfocar();
     },
-    [enfocar],
+    [enfocar, avisar, setCarrito],
   );
 
   const porCodigo = useMemo(() => new Map(productos.filter((p) => p.codigo).map((p) => [p.codigo, p])), [productos]);
@@ -262,7 +272,7 @@ function Caja() {
   }, [carrito, confirmarCancelar, enfocar, setCarrito]);
 
   const cobrar = useCallback(async (pagos?: Pago[]) => {
-    if (cobrando || carrito.items.length === 0) return;
+    if (cobrandoRef.current || carrito.items.length === 0) return;
     if (medio === 'fiado' && !cliente) {
       setModal({ tipo: 'cliente' });
       return;
@@ -273,6 +283,7 @@ function Caja() {
       return;
     }
     setCobrando(true);
+    cobrandoRef.current = true;
     try {
       if (medio === 'fiado' && cliente?.id !== undefined) {
         const aviso = await controlarLimite(db, cliente.id, total);
@@ -302,6 +313,7 @@ function Caja() {
       pitido('error');
       avisar({ texto: errorATexto(e), tipo: 'error' });
     } finally {
+      cobrandoRef.current = false;
       setCobrando(false);
       enfocar();
     }
@@ -393,7 +405,8 @@ function Caja() {
                   e.preventDefault();
                   // Con el buscador vacío, Enter cobra: todo se hace sin soltar el teclado.
                   if (!e.currentTarget.value.trim()) {
-                    cobrar();
+                    // Algunos lectores mandan dos Enter: el segundo no tiene que cobrar.
+                    if (Date.now() - ultimoAgregado.current > 400) cobrar();
                     return;
                   }
                   procesarEntrada();
@@ -450,7 +463,7 @@ function Caja() {
         </p>
 
         {rapidos.length > 0 && (
-          <div className="rapidos" aria-label="Productos rápidos">
+          <div className="rapidos" role="group" aria-label="Productos rápidos">
             {rapidos.map((p) => (
               <button key={p.id} type="button" className="rapido" onClick={() => agregar(p, 1)}>
                 <span className="rapido-nombre">{p.nombre}</span>
@@ -494,14 +507,14 @@ function Caja() {
             <ul>
               {carrito.items.map((it, i) => {
                 const prod = it.productoId !== null ? productos.find((p) => p.id === it.productoId) : undefined;
-                const quedan = prod ? prod.stock - it.cantidad : null;
+                const quedan = prod ? Math.round((prod.stock - stockQueUsa(it)) * 1000) / 1000 : null;
                 return (
                   <li key={`${it.productoId ?? 'libre'}-${i}`} className="renglon">
                     <div className="renglon-nombre">
                       <strong>{it.nombre}</strong>
                       <small className={quedan !== null && prod && prod.stockMinimo > 0 && quedan <= prod.stockMinimo ? 'texto-alerta' : ''}>
-                        {it.gramos ? 'por peso' : `${formatPesos(it.precioUnitario)} c/u`}
-                        {quedan !== null && prod && prod.stockMinimo > 0 && quedan <= prod.stockMinimo ? ` · quedan ${Math.max(quedan, 0)}: reponer` : ''}
+                        {it.gramos ? `${formatoPeso(it.gramos)} por peso` : `${formatPesos(it.precioUnitario)} c/u`}
+                        {quedan !== null && prod && prod.stockMinimo > 0 && quedan <= prod.stockMinimo ? ` · ${Math.max(quedan, 0) === 1 ? 'queda 1' : `quedan ${Math.max(quedan, 0)}`}: reponer` : ''}
                       </small>
                       {it.promo && ahorroPromo(it) > 0 && (
                         <span className="promo-etiqueta">
@@ -849,8 +862,14 @@ function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir:
   const datos = useConsulta(
     async () => {
       const [clientes, movs] = await Promise.all([db.clientes.toArray(), db.movimientosFiado.toArray()]);
+      const porCliente = new Map<number, typeof movs>();
+      for (const m of movs) {
+        let lista = porCliente.get(m.clienteId);
+        if (!lista) porCliente.set(m.clienteId, (lista = []));
+        lista.push(m);
+      }
       return clientes
-        .map((c) => ({ c, saldo: saldoCliente(movs.filter((m) => m.clienteId === c.id)) }))
+        .map((c) => ({ c, saldo: saldoCliente(porCliente.get(c.id!) ?? []) }))
         .sort((a, b) => a.c.nombre.localeCompare(b.c.nombre));
     },
     [],

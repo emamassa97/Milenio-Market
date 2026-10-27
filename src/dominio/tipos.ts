@@ -112,6 +112,8 @@ export interface MovimientoCaja {
   motivo: string;
   /** Usuario que hizo el retiro, gasto o ingreso. */
   usuario?: string;
+  /** Pago de mercadería: ya está en el costo, no cuenta como gasto del local. */
+  mercaderia?: boolean;
 }
 
 export interface Cliente {

@@ -48,7 +48,7 @@ export function itemPorPeso(producto: Producto, gramos: number): ItemVenta {
   return {
     productoId: producto.id,
     codigo: producto.codigo,
-    nombre: `${producto.nombre} (${formatoPeso(g)})`,
+    nombre: producto.nombre,
     precioUnitario: Math.round((producto.precio * g) / 1000),
     costoUnitario: Math.round((producto.costo * g) / 1000),
     cantidad: 1,
@@ -113,7 +113,9 @@ export function subtotal(item: ItemVenta): Pesos {
   const p = item.promo;
   if (p && p.cantidad > 1 && item.cantidad >= p.cantidad) {
     const grupos = Math.floor(item.cantidad / p.cantidad);
-    return grupos * p.precio + (item.cantidad - grupos * p.cantidad) * item.precioUnitario;
+    const conPromo = grupos * p.precio + (item.cantidad - grupos * p.cantidad) * item.precioUnitario;
+    // Una promo mal cargada nunca puede cobrar más que suelto ni dar negativo.
+    return Math.max(0, Math.min(conPromo, item.precioUnitario * item.cantidad));
   }
   return item.precioUnitario * item.cantidad;
 }

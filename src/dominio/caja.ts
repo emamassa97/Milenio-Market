@@ -60,3 +60,8 @@ export function resumirTurno(
   const efectivoEsperado = fondoInicial + porMedio.efectivo + cobrosFiado.efectivo + ingresos - retiros - gastos;
   return { cantidadVentas, totalVendido, porMedio, cobrosFiado, retiros, gastos, ingresos, efectivoEsperado };
 }
+
+/** Gasto del local (luz, alquiler...). La mercadería no: ya está en el costo de lo vendido. */
+export function esGastoDelLocal(m: MovimientoCaja): boolean {
+  return m.tipo === 'gasto' && !(m.mercaderia ?? m.motivo.startsWith('Mercadería'));
+}

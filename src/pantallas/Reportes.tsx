@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { esGastoDelLocal } from '../dominio/caja';
 import { formatPesos } from '../dominio/dinero';
 import { saldoCliente } from '../dominio/fiado';
 import { paraReponer, resumirVentas, sinMovimiento } from '../dominio/reportes';
@@ -38,7 +39,7 @@ export function PantallaReportes() {
   const ventas = useConsulta(() => db.ventas.where('fecha').between(desde, hasta, true, false).toArray(), [desde, hasta], [] as Venta[]);
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
   const gastos = useConsulta(
-    async () => (await db.movimientosCaja.filter((m) => m.tipo === 'gasto' && !m.motivo.startsWith('Mercadería') && m.fecha >= desde && m.fecha < hasta).toArray()).reduce((s, m) => s + m.monto, 0),
+    async () => (await db.movimientosCaja.filter((m) => esGastoDelLocal(m) && m.fecha >= desde && m.fecha < hasta).toArray()).reduce((s, m) => s + m.monto, 0),
     [desde, hasta],
     0,
   );
@@ -47,7 +48,11 @@ export function PantallaReportes() {
     async () => {
       const movs = await db.movimientosFiado.toArray();
       const porCliente = new Map<number, typeof movs>();
-      for (const m of movs) porCliente.set(m.clienteId, [...(porCliente.get(m.clienteId) ?? []), m]);
+      for (const m of movs) {
+        let lista = porCliente.get(m.clienteId);
+        if (!lista) porCliente.set(m.clienteId, (lista = []));
+        lista.push(m);
+      }
       let total = 0;
       let deudores = 0;
       for (const lista of porCliente.values()) {
@@ -151,7 +156,7 @@ export function PantallaReportes() {
               {r.productos.slice(0, 10).map((p) => (
                 <li key={p.clave}>
                   <span>{p.nombre}</span>
-                  <span className="texto-suave">{p.unidades} u.</span>
+                  <span className="texto-suave">{p.kilos !== undefined ? `${p.kilos.toLocaleString('es-AR')} kg` : `${p.unidades} u.`}</span>
                   <span className="importe">{formatPesos(p.total)}</span>
                 </li>
               ))}

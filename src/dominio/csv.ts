@@ -104,7 +104,14 @@ export function importarCsv(texto: string): ResultadoImportacion {
       return;
     }
     const stockTexto = tomar('stock');
-    const stock = stockTexto === '' ? 0 : parsePesos(stockTexto);
+    // El stock puede tener decimales (kilos, "2,5") o separador de miles ("1.200").
+    const t = stockTexto.replace(/\s/g, '');
+    const stockNum = t.includes(',')
+      ? Number(t.replace(/\./g, '').replace(',', '.'))
+      : /^-?\d{1,3}(\.\d{3})+$/.test(t)
+        ? Number(t.replace(/\./g, ''))
+        : Number(t);
+    const stock = stockTexto === '' ? 0 : Number.isFinite(stockNum) ? stockNum : null;
     if (stock === null) {
       errores.push(`Fila ${fila} (${nombre}): el stock "${stockTexto}" no es un número.`);
       return;

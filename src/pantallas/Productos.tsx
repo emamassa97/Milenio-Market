@@ -382,7 +382,11 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
 function SumarStock({ producto, onCerrar }: { producto: Producto; onCerrar: () => void }) {
   const avisar = useAvisar();
   const [cantidad, setCantidad] = useState('');
-  const n = Number(cantidad.replace(/[^\d-]/g, '')) || 0;
+  const n = producto.porPeso
+    ? Math.round((Number(cantidad.replace(',', '.').replace(/[^\d.-]/g, '')) || 0) * 1000) / 1000
+    : Number(cantidad.replace(/[^\d-]/g, '')) || 0;
+  const quedan = Math.round((producto.stock + n) * 1000) / 1000;
+  const unidad = producto.porPeso ? ' kg' : '';
   const [enCurso, unaVez] = useUnaVez();
   return (
     <Modal titulo={producto.nombre} onCerrar={onCerrar}>
@@ -394,7 +398,7 @@ function SumarStock({ producto, onCerrar }: { producto: Producto; onCerrar: () =
           unaVez(async () => {
             try {
               await ajustarStock(db, producto.id!, n);
-              avisar({ texto: `Stock de ${producto.nombre}: ${producto.stock + n}.`, tipo: 'ok' });
+              avisar({ texto: `Stock de ${producto.nombre}: ${quedan}${unidad}.`, tipo: 'ok' });
               onCerrar();
             } catch (err) {
               avisar({ texto: errorATexto(err), tipo: 'error' });
@@ -403,9 +407,9 @@ function SumarStock({ producto, onCerrar }: { producto: Producto; onCerrar: () =
         }}
       >
         <p>
-          Hay <strong>{producto.stock}</strong>. ¿Cuántos llegaron? (para restar, poné un menos adelante: -2)
+          Hay <strong>{textoStock(producto)}</strong>. ¿{producto.porPeso ? 'Cuántos kilos' : 'Cuántos'} llegaron? (para restar, poné un menos adelante: -2)
         </p>
-        <input inputMode="numeric" autoFocus value={cantidad} onChange={(e) => setCantidad(e.target.value)} aria-label="Cantidad a sumar" placeholder="Ej.: 24" />
+        <input inputMode={producto.porPeso ? 'decimal' : 'numeric'} autoFocus value={cantidad} onChange={(e) => setCantidad(e.target.value)} aria-label="Cantidad a sumar" placeholder={producto.porPeso ? 'Ej.: 2,5' : 'Ej.: 24'} />
         <div className="sugeridos">
           {[6, 12, 24, 48].map((x) => (
             <button key={x} type="button" className="chip" onClick={() => setCantidad(String(x))}>
@@ -414,7 +418,7 @@ function SumarStock({ producto, onCerrar }: { producto: Producto; onCerrar: () =
           ))}
         </div>
         <button className="boton boton-primario boton-grande" type="submit" disabled={!n || enCurso || Math.abs(n) > 99999}>
-          {n >= 0 ? `Sumar ${n}` : `Restar ${-n}`} · quedan {producto.stock + n}
+          {n >= 0 ? `Sumar ${n}${unidad}` : `Restar ${-n}${unidad}`}: quedan {quedan}{unidad}
         </button>
       </form>
     </Modal>
