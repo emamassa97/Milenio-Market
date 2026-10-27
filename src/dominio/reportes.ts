@@ -88,6 +88,30 @@ export interface FilaDevuelto {
 }
 
 /** Qué productos vuelven más (por lo que se devolvió en el período), para detectar lo que viene fallado o vencido. */
+export interface FilaCajero {
+  /** El usuario que cobró; si la venta no lo tiene, quien abrió la caja. */
+  clave: string;
+  cantidad: number;
+  total: Pesos;
+  devuelto: Pesos;
+}
+
+/** Ventas por quien cobró, de mayor a menor. Las anuladas no cuentan; lo devuelto va aparte y ya está fuera de `total`. */
+export function porCajero(ventas: Venta[]): FilaCajero[] {
+  const filas = new Map<string, FilaCajero>();
+  for (const v of ventas) {
+    if (v.anulada) continue;
+    const clave = v.usuario?.trim() || v.cajero.trim() || 'Sin nombre';
+    const fila = filas.get(clave) ?? { clave, cantidad: 0, total: 0, devuelto: 0 };
+    const neto = totalNeto(v);
+    fila.cantidad++;
+    fila.total += neto;
+    fila.devuelto += v.total - neto;
+    filas.set(clave, fila);
+  }
+  return [...filas.values()].sort((a, b) => b.total - a.total);
+}
+
 export function masDevueltos(ventas: Venta[], desde = -Infinity, hasta = Infinity): FilaDevuelto[] {
   const filas = new Map<string, FilaDevuelto & { motivos: Map<string, number> }>();
   for (const v of ventas) {

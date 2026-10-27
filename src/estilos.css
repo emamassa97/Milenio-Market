@@ -174,6 +174,12 @@ a.estado-chip:hover { background: var(--grafito-claro); color: #fff; }
 @media (hover: hover) { .segmentos button:hover { background: var(--gris); color: var(--texto); } }
 .segmentos button.activo { background: var(--grafito); color: #fff; font-weight: 600; }
 .segmentos button:focus-visible { outline-offset: -3px; }
+/* Período de los reportes: los botones y, al lado, un día puntual del calendario. */
+.filtros-periodo { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+.filtro-dia { display: flex; }
+.filtro-dia input[type='date'] { min-height: 44px; width: auto; padding: 0 10px; font-size: 0.92rem; color: var(--suave); border-color: var(--borde-fuerte); font-family: inherit; }
+.filtro-dia.activo input[type='date'] { background: var(--grafito); color: #fff; border-color: var(--grafito); font-weight: 600; color-scheme: dark; }
+.periodo-elegido { margin: -6px 0 0; font-weight: 500; }
 
 input, select {
   min-height: 46px; border: 1px solid var(--borde-campo); border-radius: var(--radio); padding: 0 14px; background: #fff; width: 100%;
@@ -743,6 +749,9 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
   .indicadores-3 > :last-child { grid-column: 1 / -1; }
   .segmentos { display: flex; overflow-x: auto; scrollbar-width: none; }
   .segmentos button { flex: 1 0 auto; padding: 0 12px; }
+  .filtros-periodo { flex-basis: 100%; }
+  .filtros-periodo .segmentos { flex: 1 1 auto; min-width: 0; }
+  .filtro-dia input[type='date'] { min-height: 44px; }
   /* Los avisos van debajo de la cabecera: abajo caían sobre los botones rápidos justo cuando se los toca. */
   .avisos { top: calc(60px + env(safe-area-inset-top)); bottom: auto; right: 8px; left: 8px; width: auto; }
   .barra-cobro-movil.barra-cobrado { background: var(--verde); }

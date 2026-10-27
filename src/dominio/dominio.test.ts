@@ -273,3 +273,24 @@ describe('planillas', () => {
     expect(importarCsv(exportarCsv(filas)).filas).toEqual(filas);
   });
 });
+
+describe('quién cobró', () => {
+  it('agrupa por el usuario de la venta (o quien abrió la caja), sin anuladas y con lo devuelto aparte', async () => {
+    const { porCajero } = await import('./reportes');
+    const base: Venta = {
+      fecha: 0, turnoId: 1, cajero: 'Emanuel', total: 1000, medio: 'efectivo', pagaCon: null, vuelto: 0, clienteId: null, anulada: false,
+      items: [{ productoId: 1, codigo: '1', nombre: 'P1', precioUnitario: 1000, costoUnitario: 0, cantidad: 1 }],
+    };
+    const filas = porCajero([
+      { ...base, usuario: 'caro' },
+      { ...base, usuario: 'caro', devoluciones: [{ fecha: 1, turnoId: 1, items: [{ indice: 0, cantidad: 1 }], monto: 1000, medio: 'efectivo', motivo: '' }] },
+      { ...base },
+      { ...base, total: 3000 },
+      { ...base, anulada: true },
+    ]);
+    expect(filas).toEqual([
+      { clave: 'Emanuel', cantidad: 2, total: 4000, devuelto: 0 },
+      { clave: 'caro', cantidad: 2, total: 1000, devuelto: 1000 },
+    ]);
+  });
+});

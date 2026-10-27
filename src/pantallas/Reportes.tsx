@@ -2,13 +2,14 @@ import { useMemo, useState } from 'react';
 import { esGastoDelLocal } from '../dominio/caja';
 import { formatPesos } from '../dominio/dinero';
 import { saldoCliente } from '../dominio/fiado';
-import { masDevueltos, paraReponer, resumirVentas, sinMovimiento } from '../dominio/reportes';
+import { masDevueltos, paraReponer, porCajero, resumirVentas, sinMovimiento } from '../dominio/reportes';
 import { MEDIOS, type Producto, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
+import { leerUsuarios } from '../datos/usuarios';
 import { sinCortes, Vacio } from '../ui/componentes';
 import { useConsulta } from '../ui/hooks';
 
-type Periodo = 'hoy' | 'ayer' | '7' | '30' | 'mes';
+type Periodo = 'hoy' | 'ayer' | '7' | '30' | 'mes' | 'dia';
 
 const PERIODOS: { id: Periodo; nombre: string }[] = [
   { id: 'hoy', nombre: 'Hoy' },
@@ -18,13 +19,32 @@ const PERIODOS: { id: Periodo; nombre: string }[] = [
   { id: 'mes', nombre: 'Este mes' },
 ];
 
-function rango(p: Periodo): [number, number] {
+/** "2026-10-27" del día de hoy, en la hora local. */
+function diaISO(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** "martes 27 de octubre" (o con el año, si no es el de hoy). */
+function diaLargo(iso: string): string {
+  const [a, m, d] = iso.split('-').map(Number);
+  const fecha = new Date(a!, m! - 1, d!);
+  const texto = fecha.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', ...(a !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+  // "martes, 27 de octubre" → "Martes 27 de octubre".
+  return (texto.charAt(0).toUpperCase() + texto.slice(1)).replace(',', '');
+}
+
+function rango(p: Periodo, dia: string): [number, number] {
   const hoy = new Date();
   hoy.setHours(0, 0, 0, 0);
   const inicio = new Date(hoy);
   const fin = new Date(hoy);
   fin.setDate(fin.getDate() + 1);
-  if (p === 'ayer') {
+  if (p === 'dia') {
+    // Un día puntual del calendario ("¿cuánto vendí el 12?").
+    const [a, m, d] = dia.split('-').map(Number);
+    inicio.setFullYear(a!, m! - 1, d!);
+    fin.setFullYear(a!, m! - 1, d! + 1);
+  } else if (p === 'ayer') {
     inicio.setDate(inicio.getDate() - 1);
     fin.setDate(fin.getDate() - 1);
   } else if (p === '7') inicio.setDate(inicio.getDate() - 6);
@@ -35,7 +55,8 @@ function rango(p: Periodo): [number, number] {
 
 export function PantallaReportes() {
   const [periodo, setPeriodo] = useState<Periodo>('hoy');
-  const [desde, hasta] = rango(periodo);
+  const [dia, setDia] = useState(diaISO);
+  const [desde, hasta] = rango(periodo, dia);
   const ventas = useConsulta(() => db.ventas.where('fecha').between(desde, hasta, true, false).toArray(), [desde, hasta], [] as Venta[]);
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
   const gastos = useConsulta(
@@ -69,6 +90,12 @@ export function PantallaReportes() {
   );
 
   const r = useMemo(() => resumirVentas(ventas), [ventas]);
+  // Quién cobró: sólo vale la pena cuando en el período cobró más de una persona.
+  const usuarios = useConsulta(() => leerUsuarios(db), [], [] as { usuario: string; nombre: string }[]);
+  const cajeros = useMemo(() => {
+    const nombres = new Map(usuarios.map((u) => [u.usuario, u.nombre]));
+    return porCajero(ventas).map((c) => ({ ...c, nombre: nombres.get(c.clave) ?? c.clave }));
+  }, [ventas, usuarios]);
   // Las devoluciones se cuentan por el día en que se hicieron: se miran también ventas de hasta 60 días antes del período.
   const ventasParaDevoluciones = useConsulta(
     () => db.ventas.where('fecha').between(desde - 60 * 86400000, hasta, true, false).filter((v) => !!v.devoluciones?.length).toArray(),
@@ -89,14 +116,30 @@ export function PantallaReportes() {
     <div className="pagina">
       <div className="pagina-cabecera">
         <h1>Reportes</h1>
-        <div className="segmentos" role="group" aria-label="Período">
-          {PERIODOS.map((p) => (
-            <button key={p.id} type="button" className={periodo === p.id ? 'activo' : ''} aria-pressed={periodo === p.id} onClick={() => setPeriodo(p.id)}>
-              {p.nombre}
-            </button>
-          ))}
+        <div className="filtros-periodo">
+          <div className="segmentos" role="group" aria-label="Período">
+            {PERIODOS.map((p) => (
+              <button key={p.id} type="button" className={periodo === p.id ? 'activo' : ''} aria-pressed={periodo === p.id} onClick={() => setPeriodo(p.id)}>
+                {p.nombre}
+              </button>
+            ))}
+          </div>
+          <label className={`filtro-dia ${periodo === 'dia' ? 'activo' : ''}`} title="Un día puntual">
+            <input
+              type="date"
+              value={dia}
+              max={diaISO()}
+              aria-label="Un día puntual"
+              onChange={(e) => {
+                if (!e.target.value) return;
+                setDia(e.target.value);
+                setPeriodo('dia');
+              }}
+            />
+          </label>
         </div>
       </div>
+      {periodo === 'dia' && <p className="texto-suave periodo-elegido">{diaLargo(dia)}</p>}
 
       <div className="indicadores indicadores-4">
         <div className="tarjeta indicador">
@@ -137,7 +180,7 @@ export function PantallaReportes() {
       </div>
 
       {r.cantidad === 0 ? (
-        <Vacio titulo="No hay ventas en este período" icono="reportes" />
+        <Vacio titulo={periodo === 'dia' ? `No hubo ventas el ${diaLargo(dia).toLowerCase()}` : 'No hay ventas en este período'} icono="reportes" />
       ) : (
         <div className="reportes reportes-ventas">
           <section className="tarjeta">
@@ -178,6 +221,20 @@ export function PantallaReportes() {
               ))}
             </ol>
           </section>
+          {cajeros.length > 1 && (
+            <section className="tarjeta">
+              <h2 className="titulo-chico">Quién cobró</h2>
+              <ol className="ranking">
+                {cajeros.map((c) => (
+                  <li key={c.clave}>
+                    <span>{sinCortes(c.nombre)}</span>
+                    <span className="texto-suave">{c.cantidad === 1 ? '1 venta' : `${c.cantidad} ventas`}</span>
+                    <span className="importe">{formatPesos(c.total)}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
           {devueltos.length > 0 && (
             <section className="tarjeta">
               <h2 className="titulo-chico">Lo que más se devolvió</h2>
