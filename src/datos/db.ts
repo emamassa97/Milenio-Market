@@ -20,10 +20,29 @@ export type TablaNube = (typeof TABLAS_NUBE)[number];
 
 let ultimaMarca = 0;
 
-/** Un número que siempre crece, aunque se guarden muchas filas en el mismo milisegundo. */
+/**
+ * Un número que siempre crece, aunque se guarden muchas filas en el mismo
+ * milisegundo o el reloj de la PC esté atrasado: nunca es menor que la última
+ * marca usada (ni que las guardadas en la base, ver `marcaMasAlta`).
+ */
 export function nuevaMarca(): number {
   ultimaMarca = Math.max(Date.now(), ultimaMarca + 1);
   return ultimaMarca;
+}
+
+/** La marca más alta ya usada en la base: filas guardadas y marcas de lo subido. */
+async function marcaMasAlta(db: Dexie): Promise<number> {
+  let max = 0;
+  for (const t of TABLAS_NUBE) {
+    const ultima = (await db.table(t).orderBy('_v').last()) as { _v?: unknown } | undefined;
+    max = Math.max(max, Number(ultima?._v) || 0);
+  }
+  // Lo subido puede haberse borrado después: su marca igual cuenta.
+  const marcas = (await db.table('ajustes').get('nube.marcas')) as Ajuste | undefined;
+  if (marcas && typeof marcas.valor === 'object' && marcas.valor !== null) {
+    for (const v of Object.values(marcas.valor as Record<string, unknown>)) max = Math.max(max, Number(v) || 0);
+  }
+  return max;
 }
 
 /**
@@ -83,6 +102,13 @@ export class BaseKiosco extends Dexie {
       });
       tabla.hook('updating', () => ({ _v: nuevaMarca() }));
     }
+    // Al abrir, el contador arranca desde la marca más alta guardada. Sin esto,
+    // con el reloj atrasado (o al recargar la página) los cambios nuevos
+    // quedarían con marcas más viejas que lo ya subido y no se subirían nunca.
+    // (Los borrados no usan marca: su `n` lo numera IndexedDB y siempre crece.)
+    this.on('ready', async (base) => {
+      ultimaMarca = Math.max(ultimaMarca, await marcaMasAlta(base as Dexie));
+    });
   }
 }
 
