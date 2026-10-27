@@ -44,7 +44,7 @@ import {
 } from '../datos/operaciones';
 import { CampoCantidad, CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
-import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, LLAVE_ULTIMA, pitido, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
+import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, LLAVE_PAGA_CON, LLAVE_ULTIMA, pitido, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { NuevoMovimiento } from './Cierre';
 import { RegistrarPago } from './Clientes';
@@ -59,7 +59,10 @@ function useGuardado<T>(llave: string, inicial: T, alCambiarAfuera?: (antes: T, 
   valorRef.current = valor;
   const avisoRef = useRef(alCambiarAfuera);
   avisoRef.current = alCambiarAfuera;
+  // Lo que llegó de la otra pestaña no se vuelve a escribir: pisaría lo que esa pestaña haya guardado después.
+  const deAfuera = useRef<T | null>(null);
   useEffect(() => {
+    if (valor === deAfuera.current) return;
     try {
       localStorage.setItem(llave, JSON.stringify(valor));
     } catch {
@@ -71,6 +74,7 @@ function useGuardado<T>(llave: string, inicial: T, alCambiarAfuera?: (antes: T, 
       if (e.storageArea !== localStorage || e.key !== llave) return;
       const ahora = leerGuardado(llave, inicial);
       avisoRef.current?.(valorRef.current, ahora);
+      deAfuera.current = ahora;
       setValor(ahora);
     };
     window.addEventListener('storage', otraPestaña);
@@ -245,6 +249,15 @@ function Caja() {
     if (carrito === carritoDeAfuera.current) return;
     if (carrito.items.length > 0 && !carrito.id) setCarrito((c) => (c.items.length > 0 && !c.id ? { ...c, id: nuevoIdCarrito() } : c));
   }, [carrito, setCarrito]);
+
+  // La pantalla del cliente muestra con cuánto paga y el vuelto antes de cobrar.
+  useEffect(() => {
+    try {
+      localStorage.setItem(LLAVE_PAGA_CON, JSON.stringify(pagaCon));
+    } catch {
+      /* sin almacenamiento */
+    }
+  }, [pagaCon]);
 
   const total = totalCarrito(carrito);
   const vuelto = pagaCon === null ? 0 : calcularVuelto(total, pagaCon);
@@ -803,7 +816,7 @@ function Caja() {
                   setEntrada('');
                 }
               }}
-              placeholder="Escaneá o escribí el producto"
+              placeholder="Escaneá o buscá un producto"
               aria-label="Escaneá el código o escribí el nombre del producto"
               autoComplete="off"
               enterKeyHint="enter"
@@ -1049,7 +1062,7 @@ function Caja() {
             <Icono nombre={ICONO_MEDIO[medio]} tam={20} />
           </button>
           <button type="button" className="boton boton-primario boton-rojo" onClick={() => cobrar()} disabled={cobrando}>
-            {medio === 'fiado' ? (cliente ? `Anotar a ${primerNombre(cliente.nombre)}` : 'Anotar fiado') : 'Cobrar'}
+            {medio === 'fiado' ? 'Anotar' : 'Cobrar'}
           </button>
         </div>
       ) : cobrado ? (

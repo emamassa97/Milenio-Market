@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import logo from '../assets/logo-rojo.svg';
 import { db } from '../datos/db';
 import { recuperarDeLaNube } from '../datos/nube';
@@ -22,11 +22,10 @@ export function PantallaIngreso() {
 }
 
 /** Si se le pasó la caja a alguien, el ingreso ya tiene su usuario escrito: sólo falta la clave. */
+// Se lee al armar la pantalla y se borra después (en un efecto): leer y borrar juntos fallaba con el modo estricto de React.
 function usuarioSiguiente(): string {
   try {
-    const u = sessionStorage.getItem(LLAVE_SIGUIENTE) ?? '';
-    sessionStorage.removeItem(LLAVE_SIGUIENTE);
-    return u;
+    return sessionStorage.getItem(LLAVE_SIGUIENTE) ?? '';
   } catch {
     return '';
   }
@@ -36,6 +35,13 @@ function Entrar() {
   const { entrar } = useSesion();
   const [usuario, setUsuario] = useState(usuarioSiguiente);
   const [sugerido] = useState(() => usuario !== '');
+  useEffect(() => {
+    try {
+      sessionStorage.removeItem(LLAVE_SIGUIENTE);
+    } catch {
+      /* nada */
+    }
+  }, []);
   const [clave, setClave] = useState('');
   const [recordar, setRecordar] = useState(true);
   const [error, setError] = useState('');
