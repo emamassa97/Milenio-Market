@@ -15,7 +15,13 @@ export interface Dependencias {
   clave: string | undefined;
 }
 
-const TABLAS = new Set(['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes']);
+/**
+ * Tablas que acepta la nube. Es la misma lista que TABLAS_NUBE de
+ * src/datos/db.ts (acá no se puede importar Dexie); un test controla que
+ * coincidan.
+ */
+export const TABLAS_SERVIDOR = ['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes'] as const;
+const TABLAS = new Set<string>(TABLAS_SERVIDOR);
 const MAX_REGISTROS = 1000;
 const PAGINA = 1000;
 
@@ -46,6 +52,12 @@ function claveCorrecta(recibida: string | null, esperada: string): boolean {
 }
 
 const esTexto = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
+
+/** Fecha de Postgres (Date o texto) a milisegundos; null si no se entiende. */
+function aMilisegundos(v: unknown): number | null {
+  const ms = v instanceof Date ? v.getTime() : typeof v === 'string' || typeof v === 'number' ? new Date(v).getTime() : NaN;
+  return Number.isFinite(ms) ? ms : null;
+}
 
 let tablasCreadas = false;
 
@@ -114,13 +126,37 @@ export async function manejar(pedido: Request, deps: Dependencias): Promise<Resp
   }
 
   if (pedido.method === 'GET') {
-    const ultimo = await consulta(
-      `select dispositivo from registros group by dispositivo order by max(actualizado) desc limit 1`,
-      [],
-    );
-    const dispositivo = ultimo[0]?.dispositivo as string | undefined;
+    const parametros = new URL(pedido.url).searchParams;
+    // ?equipos=1: qué equipos subieron datos, para elegir cuál recuperar.
+    if (parametros.get('equipos') === '1') {
+      const filas = await consulta(
+        `select dispositivo, count(*) filter (where not borrado) as registros, max(actualizado) as ultima
+         from registros group by dispositivo order by max(actualizado) desc`,
+        [],
+      );
+      return json({
+        equipos: filas.map((f) => ({
+          dispositivo: String(f.dispositivo),
+          registros: Number(f.registros) || 0,
+          ultima: aMilisegundos(f.ultima),
+        })),
+      });
+    }
+    // ?dispositivo=X elige el equipo; sin él, el que subió datos más recientemente.
+    let dispositivo: string | undefined;
+    const elegido = parametros.get('dispositivo');
+    if (elegido !== null) {
+      if (!esTexto(elegido, 100)) return json({ error: 'El equipo no es válido.' }, 400);
+      dispositivo = elegido;
+    } else {
+      const ultimo = await consulta(
+        `select dispositivo from registros group by dispositivo order by max(actualizado) desc limit 1`,
+        [],
+      );
+      dispositivo = ultimo[0]?.dispositivo as string | undefined;
+    }
     if (!dispositivo) return json({ dispositivo: '', registros: [], siguiente: null });
-    const desde = new URL(pedido.url).searchParams.get('desde') ?? '';
+    const desde = parametros.get('desde') ?? '';
     const [tabla = '', id = ''] = desde ? desde.split('|') : [];
     const filas = await consulta(
       `select tabla, id, datos from registros

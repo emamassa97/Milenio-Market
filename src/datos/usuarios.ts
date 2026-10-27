@@ -30,18 +30,36 @@ export async function leerUsuarios(db: BaseKiosco): Promise<Usuario[]> {
   return leerAjuste<Usuario[]>(db, 'usuarios', []);
 }
 
+/** Claves que se adivinan al toque: todos iguales (0000, aaaa) o seguidas (1234, 4321, 2345). */
+function esClaveObvia(clave: string): boolean {
+  if (/^(.)\1+$/.test(clave)) return true;
+  if (!/^\d+$/.test(clave)) return false;
+  const pasos = new Set([...clave].slice(1).map((c, i) => Number(c) - Number(clave[i])));
+  return pasos.size === 1 && (pasos.has(1) || pasos.has(-1));
+}
+
+function validarClave(clave: string) {
+  if (clave.length < CLAVE_MINIMA) throw new ErrorKiosco(`La clave tiene que tener al menos ${CLAVE_MINIMA} caracteres.`);
+  if (esClaveObvia(clave)) {
+    throw new ErrorKiosco('Esa clave es muy fácil de adivinar (como 1234, 4321 o 1111). Elegí otra.');
+  }
+}
+
 export async function crearUsuario(
   db: BaseKiosco,
   datos: { usuario: string; nombre: string; clave: string; admin: boolean },
 ): Promise<Usuario> {
   const usuario = normalizar(datos.usuario);
   if (!/^[a-z0-9._-]{2,30}$/.test(usuario)) throw new ErrorKiosco('El usuario va sin espacios: letras, números, punto o guion (2 a 30).');
-  if (datos.clave.length < CLAVE_MINIMA) throw new ErrorKiosco(`La clave tiene que tener al menos ${CLAVE_MINIMA} caracteres.`);
-  const usuarios = await leerUsuarios(db);
-  if (usuarios.some((u) => u.usuario === usuario)) throw new ErrorKiosco('Ya existe un usuario con ese nombre.');
+  validarClave(datos.clave);
+  // El hash se calcula antes: IndexedDB cierra la transacción si se espera algo que no es de la base.
   const sal = aHex(crypto.getRandomValues(new Uint8Array(16)));
   const nuevo: Usuario = { usuario, nombre: datos.nombre.trim() || usuario, admin: datos.admin, sal, hash: await derivar(datos.clave, sal) };
-  await guardarAjuste(db, 'usuarios', [...usuarios, nuevo]);
+  await db.transaction('rw', db.ajustes, async () => {
+    const usuarios = await leerUsuarios(db);
+    if (usuarios.some((u) => u.usuario === usuario)) throw new ErrorKiosco('Ya existe un usuario con ese nombre.');
+    await guardarAjuste(db, 'usuarios', [...usuarios, nuevo]);
+  });
   return nuevo;
 }
 
@@ -53,16 +71,36 @@ export async function ingresar(db: BaseKiosco, usuario: string, clave: string): 
 }
 
 export async function cambiarClave(db: BaseKiosco, usuario: string, nueva: string): Promise<void> {
-  if (nueva.length < CLAVE_MINIMA) throw new ErrorKiosco(`La clave tiene que tener al menos ${CLAVE_MINIMA} caracteres.`);
-  const usuarios = await leerUsuarios(db);
+  validarClave(nueva);
+  const quien = normalizar(usuario);
   const sal = aHex(crypto.getRandomValues(new Uint8Array(16)));
   const hash = await derivar(nueva, sal);
-  await guardarAjuste(db, 'usuarios', usuarios.map((u) => (u.usuario === usuario ? { ...u, sal, hash } : u)));
+  await db.transaction('rw', db.ajustes, async () => {
+    const usuarios = await leerUsuarios(db);
+    if (!usuarios.some((u) => u.usuario === quien)) throw new ErrorKiosco('Ese usuario ya no existe.');
+    await guardarAjuste(db, 'usuarios', usuarios.map((u) => (u.usuario === quien ? { ...u, sal, hash } : u)));
+  });
 }
 
 export async function borrarUsuario(db: BaseKiosco, usuario: string): Promise<void> {
-  const usuarios = await leerUsuarios(db);
-  const quedan = usuarios.filter((u) => u.usuario !== usuario);
-  if (!quedan.some((u) => u.admin)) throw new ErrorKiosco('Tiene que quedar al menos un usuario administrador.');
-  await guardarAjuste(db, 'usuarios', quedan);
+  const quien = normalizar(usuario);
+  await db.transaction('rw', db.ajustes, async () => {
+    const usuarios = await leerUsuarios(db);
+    const quedan = usuarios.filter((u) => u.usuario !== quien);
+    if (!quedan.some((u) => u.admin)) throw new ErrorKiosco('Tiene que quedar al menos un usuario administrador.');
+    await guardarAjuste(db, 'usuarios', quedan);
+  });
+}
+
+export type UsuarioSesion = Pick<Usuario, 'usuario' | 'nombre' | 'admin'>;
+
+/**
+ * Vuelve a leer al usuario de la sesión: si lo borraron devuelve null (hay que
+ * pedir ingresar de nuevo); si no, sus datos al día (por ejemplo, si le
+ * sacaron el permiso de administrador).
+ */
+export async function revalidarSesion(db: BaseKiosco, usuario: string | Pick<Usuario, 'usuario'>): Promise<UsuarioSesion | null> {
+  const nombre = normalizar(typeof usuario === 'string' ? usuario : usuario.usuario);
+  const u = (await leerUsuarios(db)).find((x) => x.usuario === nombre);
+  return u ? { usuario: u.usuario, nombre: u.nombre, admin: u.admin } : null;
 }

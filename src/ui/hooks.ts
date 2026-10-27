@@ -1,6 +1,6 @@
 import { liveQuery } from 'dexie';
 import { db } from '../datos/db';
-import { pedirAlta, sincronizarAhora } from '../datos/nube';
+import { estadoNube, pedirAlta, sincronizarAhora, type EstadoNube } from '../datos/nube';
 import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react';
 
 /** Lee de la base y se actualiza sola cuando los datos cambian. */
@@ -94,4 +94,14 @@ export function useCopiaEnLaNube(activa: boolean) {
       window.removeEventListener('online', subir);
     };
   }, [activa]);
+}
+
+const NUBE_INICIAL: EstadoNube = { activa: false, sinActivar: false, error: null, pendientes: 0, ultima: null, aviso: null };
+
+/**
+ * Estado de la copia en la nube, al día. `aviso` trae el texto para mostrar
+ * (por ejemplo "Nube sin activar: escribí la clave en Ajustes.") o null.
+ */
+export function useEstadoNube(): EstadoNube {
+  return useConsulta(() => estadoNube(db), [], NUBE_INICIAL);
 }
