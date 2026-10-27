@@ -159,7 +159,7 @@ function AbrirCaja() {
         } catch {
           /* sin almacenamiento */
         }
-        // Sin aviso: la caja abierta ya se ve, y el aviso tapaba el buscador en el celular.
+        avisar({ texto: 'Caja abierta. ¡Buenas ventas!', tipo: 'ok' });
       } catch (err) {
         avisar({ texto: errorATexto(err), tipo: 'error' });
       }
