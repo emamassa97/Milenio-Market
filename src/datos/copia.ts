@@ -1,8 +1,9 @@
-import type { BaseKiosco } from './db';
+import { TABLAS_NUBE as TABLAS, type Ajuste, type BaseKiosco, type TablaNube as NombreTabla } from './db';
+import { AJUSTES_LOCALES } from './nube';
 import { ErrorKiosco } from './operaciones';
 
-const TABLAS = ['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes'] as const;
-type NombreTabla = (typeof TABLAS)[number];
+/** Saca los ajustes propios del equipo (clave de la nube, marcas, id del equipo). */
+const sinAjustesLocales = (filas: unknown[]) => filas.filter((f) => !AJUSTES_LOCALES.has(String((f as Partial<Ajuste> | null)?.clave)));
 
 export interface CopiaDeSeguridad {
   app: 'milenio-market';
@@ -11,12 +12,17 @@ export interface CopiaDeSeguridad {
   tablas: Record<NombreTabla, unknown[]>;
 }
 
-/** Todo lo guardado, tal cual, incluidos campos que esta versión no conozca. */
+/**
+ * Todo lo guardado, tal cual, incluidos campos que esta versión no conozca.
+ * No incluye los ajustes propios del equipo: la copia se puede mandar o
+ * guardar en cualquier lado sin llevarse la clave de la nube.
+ */
 export async function exportarTodo(db: BaseKiosco): Promise<CopiaDeSeguridad> {
   const tablas = {} as Record<NombreTabla, unknown[]>;
   await db.transaction('r', TABLAS.map((t) => db.table(t)), async () => {
     for (const t of TABLAS) tablas[t] = await db.table(t).toArray();
   });
+  tablas.ajustes = sinAjustesLocales(tablas.ajustes);
   return { app: 'milenio-market', formato: 1, fecha: new Date().toISOString(), tablas };
 }
 
@@ -43,8 +49,11 @@ export async function restaurarCopia(db: BaseKiosco, copia: unknown): Promise<vo
       throw new ErrorKiosco('Este equipo ya tiene datos. La copia sólo se puede restaurar en un equipo vacío.');
     }
     for (const t of TABLAS) {
-      const filas = tablas[t];
-      if (Array.isArray(filas) && filas.length > 0) await db.table(t).bulkPut(filas);
+      const crudas = tablas[t];
+      if (!Array.isArray(crudas)) continue;
+      // Una copia vieja puede traer la clave y las marcas de otro equipo: no se pisan las de éste.
+      const filas = t === 'ajustes' ? sinAjustesLocales(crudas) : crudas;
+      if (filas.length > 0) await db.table(t).bulkPut(filas);
     }
   });
 }
