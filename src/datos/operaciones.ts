@@ -103,6 +103,25 @@ export async function cerrarTurno(
   return cerrado;
 }
 
+/**
+ * Cambio de turno en un paso: se cierra la caja abierta y se abre la siguiente en la misma transacción,
+ * así nunca queda cerrada sin la apertura que le sigue (si algo falla, no pasa nada).
+ */
+export async function pasarTurno(
+  db: BaseKiosco,
+  conteo: Record<string, number>,
+  nota: string,
+  usuarioCierra: string | undefined,
+  siguiente: { nombre: string; usuario?: string },
+  fondo: Pesos,
+): Promise<Turno> {
+  return db.transaction('rw', [db.turnos, db.ventas, db.movimientosCaja, db.movimientosFiado, db.ajustes], async () => {
+    const cerrado = await cerrarTurno(db, conteo, nota, usuarioCierra);
+    await abrirTurno(db, siguiente.nombre, fondo, siguiente.usuario);
+    return cerrado;
+  });
+}
+
 /** Lo que se anota a mano desde el cierre; las devoluciones las anota `devolverProductos`. */
 export type MovimientoManual = Exclude<TipoMovimientoCaja, 'devolucion'>;
 

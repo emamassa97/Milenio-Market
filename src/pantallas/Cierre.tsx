@@ -7,7 +7,7 @@ import { normalizarTexto } from '../dominio/entrada';
 import { nombreMedio, type Cliente, type MovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
 import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
 import { db } from '../datos/db';
-import { abrirTurno, anularVenta, cerrarTurno, registrarMovimientoCaja, resumenDeTurno, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
+import { anularVenta, cerrarTurno, pasarTurno, registrarMovimientoCaja, resumenDeTurno, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
 import { leerUsuarios, type Usuario } from '../datos/usuarios';
 import { CampoCantidad, CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
@@ -424,6 +424,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
           nota={nota}
           contado={contoAlgo ? contado : null}
           esperado={resumen.efectivoEsperado}
+          sinCobrar={sinCobrar}
           onCerrar={() => setPasar(false)}
           onHecho={irACaja}
         />
@@ -443,6 +444,7 @@ function PasarCaja({
   nota,
   contado,
   esperado,
+  sinCobrar,
   onCerrar,
   onHecho,
 }: {
@@ -452,16 +454,21 @@ function PasarCaja({
   nota: string;
   contado: number | null;
   esperado: number;
+  sinCobrar: string | null;
   onCerrar: () => void;
   onHecho: () => void;
 }) {
   const avisar = useAvisar();
-  const { sesion } = useSesion();
+  const { sesion, cambiar } = useSesion();
   const dueño = useEsDueño();
   const otros = usuarios.filter((u) => u.usuario !== sesion?.usuario);
   const [quien, setQuien] = useState(otros[0]?.usuario ?? '');
+  // El empleado cuenta a ciegas: si no contó, el cambio de la caja nueva es lo que debería haber, pero no se le muestra.
+  const aCiegas = !dueño && contado === null;
   // Arranca con lo que quedó en la caja: lo contado o, sin conteo, lo que debería haber.
   const [fondo, setFondo] = useState<number | null>(Math.max(0, contado ?? esperado));
+  // Con ventas sin cobrar se pide un segundo toque, igual que al cerrar.
+  const [confirmar, setConfirmar] = useState(false);
   const [enCurso, unaVez] = useUnaVez();
   const elegido = usuarios.find((u) => u.usuario === quien);
   return (
@@ -471,16 +478,31 @@ function PasarCaja({
         onSubmit={(e) => {
           e.preventDefault();
           if (!elegido) return;
+          if (sinCobrar && !confirmar) {
+            setConfirmar(true);
+            return;
+          }
           unaVez(async () => {
             try {
-              const cerrado = await cerrarTurno(db, conteo, nota, sesion?.usuario);
-              await abrirTurno(db, elegido.nombre, fondo ?? 0, elegido.usuario);
+              const arranca = aCiegas ? Math.max(0, esperado) : (fondo ?? 0);
+              const cerrado = await pasarTurno(db, conteo, nota, sesion?.usuario, elegido, arranca);
               const dif = cerrado.contado !== null && cerrado.esperado !== null ? cerrado.contado - cerrado.esperado : null;
               // La diferencia sólo se le dice al dueño: el empleado cuenta a ciegas.
               const comoCerro = dif === null ? ' sin contar' : !dueño ? '' : dif === 0 ? ' (dio justo)' : dif > 0 ? ` (sobraron ${formatPesos(dif)})` : ` (faltaron ${formatPesos(-dif)})`;
-              avisar({ texto: `Caja de ${turno.cajero} cerrada${comoCerro}. Abierta para ${elegido.nombre} con ${formatPesos(fondo ?? 0)}.`, tipo: 'ok' });
+              avisar({
+                texto: `Caja de ${turno.cajero} cerrada${comoCerro}. Abierta para ${elegido.nombre}${aCiegas ? '' : ` con ${formatPesos(arranca)}`}: que entre con su clave.`,
+                tipo: 'ok',
+              });
+              // La última venta era del turno que se cerró: no es de quien sigue.
+              try {
+                localStorage.removeItem('milenio.ultima');
+              } catch {
+                /* nada */
+              }
               onCerrar();
               onHecho();
+              // La caja nueva es de quien sigue: entra con su usuario (ya escrito) para que las ventas queden a su nombre.
+              cambiar(elegido.usuario);
             } catch (err) {
               avisar({ texto: errorATexto(err), tipo: 'error' });
             }
@@ -488,8 +510,14 @@ function PasarCaja({
         }}
       >
         <p className="texto-suave">
-          Se cierra la caja de {turno.cajero} {contado === null ? 'sin contar' : `con los ${formatPesos(contado)} contados`} y se abre una nueva enseguida, sin volver a tipear el cambio.
+          Se cierra la caja de {turno.cajero} {contado === null ? 'sin contar' : `con los ${formatPesos(contado)} contados`} y se abre una nueva enseguida
+          {aCiegas ? ', con el cambio que tendría que haber quedado' : ', sin volver a tipear el cambio'}. Después entra {elegido ? elegido.nombre : 'quien sigue'} con su clave.
         </p>
+        {sinCobrar && (
+          <p className="texto-alerta" role="alert">
+            <strong>{sinCobrar}</strong> Si pasás la caja igual, se cobran en la caja de {elegido?.nombre ?? 'quien sigue'}.
+          </p>
+        )}
         <label className="campo">
           <span className="campo-etiqueta">¿Quién sigue?</span>
           <select value={quien} onChange={(e) => setQuien(e.target.value)}>
@@ -500,9 +528,13 @@ function PasarCaja({
             ))}
           </select>
         </label>
-        <CampoPesos etiqueta="Cambio con el que arranca" valor={fondo} onCambio={setFondo} grande />
-        <button type="submit" className="boton boton-primario boton-grande" disabled={!elegido || enCurso || fondo === null || fondo < 0}>
-          {elegido ? `Cerrar y abrir para ${elegido.nombre}` : 'Cerrar y abrir'}
+        {!aCiegas && <CampoPesos etiqueta="Cambio con el que arranca" valor={fondo} onCambio={setFondo} grande />}
+        <button
+          type="submit"
+          className={`boton boton-grande ${confirmar ? 'boton-peligro' : 'boton-primario'}`}
+          disabled={!elegido || enCurso || (!aCiegas && (fondo === null || fondo < 0))}
+        >
+          {confirmar ? `Sí, cerrar igual y abrir para ${elegido?.nombre ?? ''}` : elegido ? `Cerrar y abrir para ${elegido.nombre}` : 'Cerrar y abrir'}
         </button>
       </form>
     </Modal>

@@ -15,6 +15,7 @@ import {
   totalCarrito,
 } from './carrito';
 import { exportarCsv, importarCsv } from './csv';
+import { montoDevolucion } from './devoluciones';
 import { formatPesos, parsePesos, textoTecleado } from './dinero';
 import { deudaDesde, saldoCliente, superaLimite } from './fiado';
 import { aplicarAumento, margen } from './precios';
@@ -299,5 +300,22 @@ describe('quién cobró', () => {
       { nombre: 'Emanuel', cantidad: 2, total: 4000, devuelto: 0 },
       { nombre: 'Caro', cantidad: 3, total: 2000, devuelto: 1000 },
     ]);
+  });
+});
+
+describe('devoluciones sucesivas', () => {
+  it('varias devoluciones parciales de una venta con descuento suman exacto lo cobrado', () => {
+    // 3 × $100 dejados en $250: de a una, la última no puede quedar en $249 ni en $251.
+    const base = { items: [item(1, 100, 3)], total: 250, descuento: 50 };
+    const devoluciones: NonNullable<Venta['devoluciones']> = [];
+    let devuelto = 0;
+    for (let k = 0; k < 3; k++) {
+      const monto = montoDevolucion({ ...base, devoluciones }, [{ indice: 0, cantidad: 1 }]);
+      devuelto += monto;
+      devoluciones.push({ fecha: k, monto, items: [{ indice: 0, cantidad: 1 }] } as NonNullable<Venta['devoluciones']>[number]);
+    }
+    expect(devuelto).toBe(250);
+    // Ya no queda nada: devolver de más no paga nada.
+    expect(montoDevolucion({ ...base, devoluciones }, [{ indice: 0, cantidad: 1 }])).toBe(0);
   });
 });

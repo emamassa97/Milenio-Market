@@ -172,8 +172,10 @@ export function calcularVuelto(total: Pesos, pagaCon: Pesos): Pesos | null {
 
 /**
  * Billetes con los que la gente suele pagar: el monto justo, los redondeos
- * al próximo $1.000 y $2.000, y siempre el de $10.000 y el de $20.000 (los
- * que más vuelto generan). Hasta cinco opciones.
+ * al próximo $1.000 y $2.000, siempre el de $10.000 y el de $20.000 (los que
+ * más vuelto generan) y, si el total no es redondo, el billete grande más el
+ * resto chico ("$10.150" para $6.150: el cliente pone el cambio y recibe
+ * billetes enteros). Hasta seis opciones.
  */
 export function pagosSugeridos(total: Pesos): Pesos[] {
   if (total <= 0) return [];
@@ -187,4 +189,9 @@ export function pagosSugeridos(total: Pesos): Pesos[] {
   const grande = [10000, 20000].find((b) => b > total);
   if (resto > 0 && grande) opciones.add(grande + resto);
   return [...opciones].sort((a, b) => a - b).slice(0, 6);
+}
+
+/** Esa opción es "billete grande más el resto chico": el vuelto queda redondo. */
+export function esPagoRedondo(opcion: Pesos, total: Pesos): boolean {
+  return opcion !== total && opcion % 1000 !== 0;
 }

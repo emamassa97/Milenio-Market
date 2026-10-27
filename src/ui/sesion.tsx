@@ -12,6 +12,8 @@ type Guardada = Sesion & { vence?: number };
 const LLAVE = 'milenio.sesion';
 // Marca de "en esta pestaña entra otra persona": no se toma la sesión recordada del equipo hasta que alguien entre.
 const LLAVE_OTRA = 'milenio.sesion.otra';
+/** Quién tendría que entrar ahora (p. ej. a quien se le pasó la caja): el ingreso lo deja escrito. */
+export const LLAVE_SIGUIENTE = 'milenio.sesion.siguiente';
 const HORA = 3_600_000;
 const DURACION_EMPLEADO = 30 * 24 * HORA;
 const DURACION_DUEÑO = 12 * HORA;
@@ -60,7 +62,7 @@ function leer(): Guardada | null {
   }
 }
 
-const Contexto = createContext<{ sesion: Sesion | null; entrar: (u: Sesion, recordar?: boolean) => void; salir: () => void; cambiar: () => void }>({
+const Contexto = createContext<{ sesion: Sesion | null; entrar: (u: Sesion, recordar?: boolean) => void; salir: () => void; cambiar: (siguiente?: string) => void }>({
   sesion: null,
   entrar: () => {},
   salir: () => {},
@@ -107,10 +109,11 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     setSesion(null);
   };
   // "Cambiar de usuario": esta pestaña pasa a la pantalla de ingreso sin tocar la sesión recordada del equipo (la otra persona sigue en su pestaña).
-  const cambiar = () => {
+  const cambiar = (siguiente?: string) => {
     try {
       sessionStorage.removeItem(LLAVE);
       sessionStorage.setItem(LLAVE_OTRA, '1');
+      if (siguiente) sessionStorage.setItem(LLAVE_SIGUIENTE, siguiente);
     } catch {
       /* nada */
     }

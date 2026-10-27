@@ -164,7 +164,7 @@ function Sistema() {
                 <strong>{sesion.nombre}</strong>
                 <small>{sesion.admin ? 'Dueño' : 'Empleado'}</small>
               </span>
-              <button type="button" className="boton-icono" onClick={cambiar} aria-label="Cambiar de usuario" title="Cambiar de usuario (la sesión recordada queda)">
+              <button type="button" className="boton-icono" onClick={() => cambiar()} aria-label="Cambiar de usuario" title="Cambiar de usuario (la sesión recordada queda)">
                 <Icono nombre="usuario" tam={20} />
               </button>
               <button type="button" className="boton-icono" onClick={salir} aria-label="Salir" title="Salir (cierra la sesión recordada)">
