@@ -380,9 +380,11 @@ function VentasDelTurno({ ventas, soloDevolver = false }: { ventas: Venta[]; sol
                     <button type="button" className="boton boton-chico" onClick={() => imprimirTicket(v, ticket)} aria-label="Reimprimir el ticket" title="Reimprimir el ticket">
                       <Icono nombre="ticket" tam={16} />
                     </button>
-                    <button type="button" className="boton boton-chico" onClick={() => setDevolviendo(v)}>
-                      Devolver
-                    </button>
+                    {devuelto < v.total && (
+                      <button type="button" className="boton boton-chico" onClick={() => setDevolviendo(v)}>
+                        Devolver
+                      </button>
+                    )}
                     {devuelto === 0 && !soloDevolver && (
                       <button
                         type="button"

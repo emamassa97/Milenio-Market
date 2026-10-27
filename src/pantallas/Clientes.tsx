@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { pagosDeVenta } from '../dominio/carrito';
-import { describirItems, totalDevuelto } from '../dominio/devoluciones';
+import { describirItems, describirPagos, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { telefonoWhatsApp } from '../dominio/entrada';
 import { deudaDesde, saldoCliente } from '../dominio/fiado';
@@ -165,7 +165,7 @@ export function PantallaClientes() {
                     // Si pagó una parte con otro medio, lo decimos: anular la venta también deshace esa parte.
                     const pagos = venta ? pagosDeVenta(venta) : [];
                     const pagoOtro = pagos.filter((p) => p.medio !== 'fiado').reduce((s, p) => s + p.monto, 0);
-                    const comoPago = pagos.length > 1 ? pagos.map((p) => `${formatPesos(p.monto)} ${p.medio === 'fiado' ? 'fiado' : nombreMedio(p.medio).toLowerCase()}`).join(' + ') : '';
+                    const comoPago = pagos.length > 1 ? describirPagos(pagos) : '';
                     const anular = async () => {
                       if (anulando !== m.id) return setAnulando(m.id!);
                       const quien = await pedirDueño(m.tipo === 'pago' ? 'Anular un pago de fiado' : 'Anular una venta');

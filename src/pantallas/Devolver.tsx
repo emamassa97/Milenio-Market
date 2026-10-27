@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { formatoPeso, pagosDeVenta } from '../dominio/carrito';
-import { cantidadDevuelta, fiadoDisponible, montoDevolucion, type RenglonDevuelto } from '../dominio/devoluciones';
+import { cantidadDevuelta, describirPagos, fiadoDisponible, montoDevolucion, type RenglonDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { MEDIOS, nombreMedio, type MedioPago, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
@@ -21,19 +21,24 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
   const avisar = useAvisar();
   const pedirDueño = usePedirDueño();
   const { sesion } = useSesion();
-  const turno = useConsulta(() => turnoAbierto(db), [], undefined as Awaited<ReturnType<typeof turnoAbierto>>);
+  // 'cargando' hasta saber si hay caja abierta: mientras tanto no se puede confirmar.
+  const turno = useConsulta(async () => (await turnoAbierto(db)) ?? null, [], 'cargando' as Awaited<ReturnType<typeof turnoAbierto>> | null | 'cargando');
+  const cargando = turno === 'cargando';
   const pagos = pagosDeVenta(venta);
   const [cantidades, setCantidades] = useState<Record<number, number>>({});
-  // La plata vuelve por donde entró: si pagó con un solo medio, ese queda elegido.
-  const [medio, setMedio] = useState<MedioPago>(pagos.length === 1 ? pagos[0]!.medio : venta.medio === 'fiado' ? 'fiado' : 'efectivo');
+  // "Descontar de su cuenta" sólo hasta lo que se fió en esta venta; lo pagado con otro medio vuelve por ese medio.
+  const enCuenta = fiadoDisponible(venta);
+  // La plata vuelve por donde entró: el primer medio que no sea fiado; si fue todo fiado, de la cuenta.
+  const [medio, setMedio] = useState<MedioPago>(() => {
+    const entrada = pagos.find((p) => p.medio !== 'fiado')?.medio ?? 'fiado';
+    return entrada === 'fiado' && enCuenta <= 0 ? 'efectivo' : entrada;
+  });
   const [motivo, setMotivo] = useState('');
   const [enCurso, unaVez] = useUnaVez();
   const renglones: RenglonDevuelto[] = Object.entries(cantidades).map(([i, c]) => ({ indice: Number(i), cantidad: c })).filter((r) => r.cantidad > 0);
   const monto = montoDevolucion(venta, renglones);
   const quedan = (i: number) => venta.items[i]!.cantidad - cantidadDevuelta(venta, i);
   const poner = (i: number, c: number) => setCantidades((x) => ({ ...x, [i]: Math.max(0, Math.min(quedan(i), c)) }));
-  // "Descontar de su cuenta" sólo hasta lo que se fió en esta venta; lo pagado con otro medio vuelve por ese medio.
-  const enCuenta = fiadoDisponible(venta);
   const medios = MEDIOS.filter((m) => m.id !== 'fiado' || enCuenta > 0);
   const pasaDeCuenta = medio === 'fiado' && monto > enCuenta;
   // Con una promo, devolver una parte no devuelve el precio suelto: las que quedan pasan a precio sin promo.
@@ -42,8 +47,8 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
     return it?.promo && r.cantidad < quedan(r.indice);
   });
   // Una venta del turno abierto la devuelve quien está cobrando; las de otro turno piden al dueño.
-  const delTurno = !!turno && venta.turnoId === turno.id;
-  const comoPago = pagos.map((p) => `${formatPesos(p.monto)} ${p.medio === 'fiado' ? 'fiado' : nombreMedio(p.medio).toLowerCase()}`).join(' + ');
+  const delTurno = !cargando && !!turno && venta.turnoId === turno.id;
+  const comoPago = describirPagos(pagos);
 
   return (
     <Modal titulo="Devolver o cambiar" onCerrar={onCerrar}>
@@ -150,10 +155,10 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
           <strong className="importe">{formatPesos(monto)}</strong>
         </div>
         <div className="modal-pie">
-          <button type="submit" className="boton boton-primario boton-grande" disabled={renglones.length === 0 || enCurso || pasaDeCuenta}>
+          <button type="submit" className="boton boton-primario boton-grande" disabled={renglones.length === 0 || enCurso || pasaDeCuenta || cargando}>
             {medio === 'efectivo' ? `Devolver ${formatPesos(monto)} en efectivo` : medio === 'fiado' ? `Descontar ${formatPesos(monto)} de la cuenta` : `Anotar devolución de ${formatPesos(monto)}`}
           </button>
-          {!delTurno && <p className="texto-suave texto-centrado">Es una venta de otro turno: pide la clave del dueño.</p>}
+          {!cargando && !delTurno && <p className="texto-suave texto-centrado">Es una venta de otro turno: pide la clave del dueño.</p>}
         </div>
       </form>
     </Modal>

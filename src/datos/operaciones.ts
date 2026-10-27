@@ -286,7 +286,7 @@ export async function devolverProductos(
   if (pedidos.some((r) => !Number.isInteger(r.cantidad) || !Number.isInteger(r.indice))) throw new ErrorKiosco('La cantidad a devolver no es válida.');
   if (new Set(pedidos.map((r) => r.indice)).size !== pedidos.length) throw new ErrorKiosco('Hay un renglón repetido.');
   if (!MEDIOS.some((m) => m.id === medio)) throw new ErrorKiosco('Ese medio de pago no existe.');
-  return db.transaction('rw', [db.turnos, db.ventas, db.productos, db.clientes, db.movimientosCaja, db.movimientosFiado], async () => {
+  return db.transaction('rw', [db.turnos, db.ventas, db.productos, db.clientes, db.movimientosCaja, db.movimientosFiado, db.eventos], async () => {
     const venta = await db.ventas.get(ventaId);
     if (!venta) throw new ErrorKiosco('No se encontró la venta.');
     if (venta.anulada) throw new ErrorKiosco('Esa venta está anulada: no hay nada para devolver.');
@@ -323,6 +323,8 @@ export async function devolverProductos(
       ...quien('usuario', usuario),
     };
     await db.ventas.update(ventaId, { devoluciones: [...(venta.devoluciones ?? []), devolucion] });
+    // Para el panel del día: las devoluciones se cuentan por el día en que se hicieron, aunque la venta sea vieja.
+    await db.eventos.add({ fecha: devolucion.fecha, tipo: 'devolucion', turnoId: turno.id!, monto, detalle, ...quien('usuario', usuario) });
     for (const s of stockQueVuelve(venta, pedidos)) {
       await db.productos
         .where('id')

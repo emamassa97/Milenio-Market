@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { resumirTurno } from '../dominio/caja';
+import { resumirTurno, textoCierre } from '../dominio/caja';
 import { itemDeProducto, itemPorPeso } from '../dominio/carrito';
-import { fiadoDisponible, itemsNetos, montoDevolucion, totalNeto } from '../dominio/devoluciones';
+import { describirPagos, fiadoDisponible, itemsNetos, montoDevolucion, totalNeto } from '../dominio/devoluciones';
 import { saldoCliente } from '../dominio/fiado';
 import { precioParaMargen } from '../dominio/precios';
 import { resumirVentas } from '../dominio/reportes';
@@ -221,6 +221,28 @@ describe('caja', () => {
     expect(eventos[0]!.turnoId).toBe((await turnoAbierto(db))!.id);
     // El stock no se toca: nunca se cobró.
     expect((await db.productos.get(id))!.stock).toBe(20);
+  });
+
+  it('la devolución queda como evento del día, aunque la venta sea vieja', async () => {
+    const id = await guardarProducto(db, prod());
+    const v = await registrarVenta(db, { items: [itemDeProducto((await db.productos.get(id))!, 2)], medio: 'mercadopago', pagaCon: null, clienteId: null });
+    await devolverProductos(db, v.id!, [{ indice: 0, cantidad: 1 }], 'mercadopago', '', 'ema');
+    const eventos = await db.eventos.toArray();
+    expect(eventos).toHaveLength(1);
+    expect(eventos[0]).toMatchObject({ tipo: 'devolucion', monto: 1000, detalle: '1 Alfajor', usuario: 'ema' });
+    // Por Mercado Pago no sale plata de la caja.
+    expect(await db.movimientosCaja.count()).toBe(0);
+  });
+
+  it('el resumen por WhatsApp explica el efectivo: cambio inicial y devoluciones', () => {
+    const turno = { id: 1, apertura: Date.UTC(2026, 9, 27, 10), cierre: null, cajero: 'Ema', fondoInicial: 1000, conteo: null, contado: null, esperado: null, nota: '' };
+    const r = resumirTurno(1000, [], [{ turnoId: 1, fecha: 1, tipo: 'devolucion', monto: 2000, motivo: '' }], []);
+    const texto = textoCierre(turno, { ...r, totalVendido: 3000, vendidoNeto: 1000, devuelto: 2000, cantidadVentas: 1, porMedio: { ...r.porMedio, efectivo: 3000 } }, null);
+    expect(texto).toContain('Cambio inicial: $ 1.000');
+    expect(texto).toContain('Devoluciones en efectivo: $ 2.000');
+    expect(texto).toContain('• Efectivo: $ 3.000 (cobrado, antes de devoluciones)');
+    expect(texto).toContain('Efectivo que debía haber: -$ 1.000');
+    expect(describirPagos([{ medio: 'efectivo', monto: 1900 }, { medio: 'fiado', monto: 2000 }])).toBe('$ 1.900 efectivo + $ 2.000 fiado');
   });
 
   it('el resumen del turno separa las devoluciones de los retiros', () => {

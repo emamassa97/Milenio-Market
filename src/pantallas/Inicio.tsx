@@ -77,16 +77,10 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
     }
     ir('productos');
   };
-  // Plata devuelta hoy, aunque la venta sea de otro día.
+  // Plata devuelta hoy, aunque la venta sea de otro día (se descuenta del día de esa venta).
   const devueltoHoy = useConsulta(
-    async () => {
-      const hoy = inicioDelDia();
-      let total = 0;
-      for (const v of await db.ventas.filter((v: Venta) => !!v.devoluciones?.length).toArray()) {
-        for (const d of v.devoluciones ?? []) if (d.fecha >= hoy) total += d.monto;
-      }
-      return total;
-    },
+    async () =>
+      (await db.eventos.where('fecha').aboveOrEqual(inicioDelDia()).toArray()).filter((e: Evento) => e.tipo === 'devolucion').reduce((s, e) => s + e.monto, 0),
     [],
     0,
   );
@@ -355,7 +349,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
                   </span>
                   <span>
                     <strong>Devoluciones de hoy: {formatPesos(devueltoHoy)}</strong>
-                    <small>Ya descontadas de lo vendido. El detalle está en el cierre</small>
+                    <small>Se descuentan del día en que se hizo cada venta. El detalle está en el cierre</small>
                   </span>
                 </button>
               </li>

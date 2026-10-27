@@ -83,12 +83,14 @@ export function textoCierre(turno: Turno, r: ResumenTurno, contado: Pesos | null
   const lineas = [
     `Cierre de caja · ${f(turno.apertura)} a ${turno.cierre ? h(turno.cierre) : 'ahora'} · ${turno.cajero}`,
     `Vendido: ${formatPesos(r.vendidoNeto)} (${r.cantidadVentas} ${r.cantidadVentas === 1 ? 'venta' : 'ventas'}${r.devuelto > 0 ? `, ${formatPesos(r.devuelto)} devueltos` : ''})`,
-    ...MEDIOS.filter((m) => r.porMedio[m.id] > 0).map((m) => `• ${m.nombre}: ${formatPesos(r.porMedio[m.id])}`),
+    ...MEDIOS.filter((m) => r.porMedio[m.id] > 0).map((m) => `• ${m.nombre}: ${formatPesos(r.porMedio[m.id])}${r.devuelto > 0 ? ' (cobrado, antes de devoluciones)' : ''}`),
   ];
   if (fiadoCobrado > 0) lineas.push(`Fiado cobrado: ${formatPesos(fiadoCobrado)}`);
+  if (turno.fondoInicial > 0) lineas.push(`Cambio inicial: ${formatPesos(turno.fondoInicial)}`);
   if (r.gastos > 0) lineas.push(`Gastos: ${formatPesos(r.gastos)}`);
   if (r.retiros > 0) lineas.push(`Retiros: ${formatPesos(r.retiros)}`);
   if (r.ingresos > 0) lineas.push(`Ingresos: ${formatPesos(r.ingresos)}`);
+  if (r.devoluciones > 0) lineas.push(`Devoluciones en efectivo: ${formatPesos(r.devoluciones)}`);
   lineas.push(`Efectivo que debía haber: ${formatPesos(r.efectivoEsperado)}`);
   if (contado !== null) {
     const dif = contado - r.efectivoEsperado;
