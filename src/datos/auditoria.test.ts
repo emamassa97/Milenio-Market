@@ -30,7 +30,8 @@ describe('auditoría de datos', () => {
     expect(await leerAjuste(db, 'modoPrueba', false)).toBe(true);
     await cerrarTurno(db, { monedas: -500 }, '');
     expect(await leerAjuste(db, 'modoPrueba', false)).toBe(false);
-    expect((await db.turnos.toArray())[0]!.contado).toBe(0);
+    // Un conteo negativo vale como "no contó": queda sin contar, no "faltó todo".
+    expect((await db.turnos.toArray())[0]!.contado).toBeNull();
   });
 
   it('A3 export CSV then re-import duplicates products without code (and their stock)', async () => {

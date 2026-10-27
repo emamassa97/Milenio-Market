@@ -79,14 +79,16 @@ export async function cerrarTurno(
   usuario?: string,
 ): Promise<Turno> {
   const limpio = Object.fromEntries(Object.entries(conteo).map(([k, v]) => [k, Math.max(0, Math.floor(v) || 0)]));
+  // Si no se contó nada, queda "sin contar": no es lo mismo que contar y que falte todo.
+  const contoAlgo = Object.values(limpio).some((v) => v > 0);
   const cerrado = await db.transaction('rw', [db.turnos, db.ventas, db.movimientosCaja, db.movimientosFiado], async () => {
     const turno = await turnoAbierto(db);
     if (!turno) throw new ErrorKiosco('No hay ninguna caja abierta.');
     const { resumen } = await resumenDeTurno(db, turno);
     const cambios = {
       cierre: ahora(),
-      conteo: limpio,
-      contado: totalConteo(limpio),
+      conteo: contoAlgo ? limpio : null,
+      contado: contoAlgo ? totalConteo(limpio) : null,
       esperado: resumen.efectivoEsperado,
       nota: nota.trim(),
       ...quien('usuarioCierre', usuario),
@@ -139,6 +141,8 @@ export interface DatosVenta {
   clienteId: number | null;
   /** Pago dividido: la suma tiene que dar el total. Puede incluir una parte fiada. */
   pagos?: Pago[];
+  /** Descuento sobre toda la venta: se resta de la suma de los renglones. */
+  descuento?: Pesos;
 }
 
 /**
@@ -158,7 +162,11 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
     if (i.precioUnitario * i.cantidad > RENGLON_MAXIMO) throw new ErrorKiosco(`El importe de "${i.nombre}" es demasiado alto: revisalo.`);
     if (i.gramos !== undefined && !(Number.isInteger(i.gramos) && i.gramos > 0)) throw new ErrorKiosco(`El peso de "${i.nombre}" no es válido.`);
   }
-  const total = items.reduce((s, i) => s + subtotal(i), 0);
+  const suma = items.reduce((s, i) => s + subtotal(i), 0);
+  const descuento = datos.descuento ?? 0;
+  if (!Number.isInteger(descuento) || descuento < 0) throw new ErrorKiosco('El descuento no es válido.');
+  if (descuento > 0 && descuento >= suma) throw new ErrorKiosco('El descuento no puede ser igual o mayor que la venta.');
+  const total = suma - descuento;
   if (total <= 0) throw new ErrorKiosco('El total tiene que ser mayor a cero.');
   let pagos: Pago[] | undefined;
   if (datos.pagos && datos.pagos.filter((p) => p.monto > 0).length > 1) {
@@ -198,6 +206,7 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
         cajero: turno.cajero,
         items,
         total,
+        ...(descuento > 0 ? { descuento } : {}),
         medio: datos.medio,
         pagaCon,
         vuelto,

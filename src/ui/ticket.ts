@@ -50,6 +50,9 @@ export function htmlTicket(venta: Venta, a: AjustesTicket): string {
   const pagos = pagosDeVenta(venta)
     .map((p) => `<tr><td>${escapar(nombreMedio(p.medio))}</td><td class="der">${formatPesos(p.monto)}</td></tr>`)
     .join('');
+  const descuento = venta.descuento
+    ? `<tr><td>Subtotal</td><td class="der">${formatPesos(venta.total + venta.descuento)}</td></tr><tr><td>Descuento</td><td class="der">-${formatPesos(venta.descuento)}</td></tr>`
+    : '';
   const vuelto =
     venta.pagaCon !== null && venta.vuelto > 0
       ? `<tr><td>Pagó con</td><td class="der">${formatPesos(venta.pagaCon)}</td></tr><tr><td>Vuelto</td><td class="der">${formatPesos(venta.vuelto)}</td></tr>`
@@ -74,7 +77,7 @@ td { vertical-align: top; padding: 1px 0; }
 </style></head><body>
 <div class="centro">${encabezado}<div>${fecha}</div><div>Venta N° ${venta.id ?? ''}</div></div>
 <hr><table>${renglones}</table><hr>
-<table><tr class="total"><td>TOTAL</td><td class="der">${formatPesos(venta.total - devuelto)}</td></tr>${devuelto > 0 ? `<tr><td>Cobrado</td><td class="der">${formatPesos(venta.total)}</td></tr><tr><td>Devuelto</td><td class="der">-${formatPesos(devuelto)}</td></tr>` : ''}${pagos}${vuelto}</table>
+<table>${descuento}<tr class="total"><td>TOTAL</td><td class="der">${formatPesos(venta.total - devuelto)}</td></tr>${devuelto > 0 ? `<tr><td>Cobrado</td><td class="der">${formatPesos(venta.total)}</td></tr><tr><td>Devuelto</td><td class="der">-${formatPesos(devuelto)}</td></tr>` : ''}${pagos}${vuelto}</table>
 <hr><div class="centro">${escapar(a.pie)}</div><div class="centro sub">Comprobante no válido como factura</div>
 </body></html>`;
 }

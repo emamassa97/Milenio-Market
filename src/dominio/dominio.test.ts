@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { DENOMINACIONES, resumirTurno, totalConteo } from './caja';
 import {
   agregarItem,
+  aplicarDescuento,
   calcularVuelto,
   cambiarCantidad,
   quitarItem,
+  sumaCarrito,
   carritoVacio,
   esCodigo,
   interpretarEntrada,
@@ -13,7 +15,7 @@ import {
   totalCarrito,
 } from './carrito';
 import { exportarCsv, importarCsv } from './csv';
-import { formatPesos, parsePesos } from './dinero';
+import { formatPesos, parsePesos, textoTecleado } from './dinero';
 import { deudaDesde, saldoCliente, superaLimite } from './fiado';
 import { aplicarAumento, margen } from './precios';
 import { masDevueltos, paraReponer, resumirVentas, sinMovimiento } from './reportes';
@@ -52,10 +54,13 @@ describe('dinero', () => {
 
 describe('carrito', () => {
   it('interpreta el multiplicador', () => {
-    expect(interpretarEntrada('3*7790895000997')).toEqual({ cantidad: 3, busqueda: '7790895000997' });
-    expect(interpretarEntrada('2x coca')).toEqual({ cantidad: 2, busqueda: 'coca' });
-    expect(interpretarEntrada('7790895000997')).toEqual({ cantidad: 1, busqueda: '7790895000997' });
-    expect(interpretarEntrada('0*123')).toEqual({ cantidad: 1, busqueda: '0*123' });
+    expect(interpretarEntrada('3*7790895000997')).toEqual({ cantidad: 3, busqueda: '7790895000997', consulta: false });
+    expect(interpretarEntrada('2x coca')).toEqual({ cantidad: 2, busqueda: 'coca', consulta: false });
+    expect(interpretarEntrada('7790895000997')).toEqual({ cantidad: 1, busqueda: '7790895000997', consulta: false });
+    expect(interpretarEntrada('0*123')).toEqual({ cantidad: 1, busqueda: '0*123', consulta: false });
+    // "?" adelante pregunta el precio sin cargar el producto.
+    expect(interpretarEntrada('? coca')).toEqual({ cantidad: 1, busqueda: 'coca', consulta: true });
+    expect(interpretarEntrada('?7790895000997')).toEqual({ cantidad: 1, busqueda: '7790895000997', consulta: true });
     expect(esCodigo('7790895000997')).toBe(true);
     expect(esCodigo('coca')).toBe(false);
   });
@@ -91,9 +96,38 @@ describe('carrito', () => {
   it('vuelto y billetes sugeridos', () => {
     expect(calcularVuelto(6150, 10000)).toBe(3850);
     expect(calcularVuelto(6150, 5000)).toBeNull();
-    expect(pagosSugeridos(6150)).toEqual([6150, 7000, 8000, 10000]);
-    expect(pagosSugeridos(1000)).toEqual([1000, 2000, 5000, 10000]);
+    // Siempre están el de $10.000 y el de $20.000: son los billetes que más vuelto generan.
+    expect(pagosSugeridos(6150)).toEqual([6150, 7000, 8000, 10000, 20000]);
+    expect(pagosSugeridos(1000)).toEqual([1000, 2000, 10000, 20000]);
+    expect(pagosSugeridos(3450)).toEqual([3450, 4000, 10000, 20000]);
     expect(pagosSugeridos(0)).toEqual([]);
+  });
+
+  it('el descuento baja el total, se saca si ya no entra y nunca deja la venta en cero', () => {
+    let c = agregarItem(agregarItem(carritoVacio, item(1, 2000)), item(2, 1150));
+    c = aplicarDescuento(c, 150);
+    expect(sumaCarrito(c)).toBe(3150);
+    expect(totalCarrito(c)).toBe(3000);
+    expect(aplicarDescuento(c, 3150).descuento).toBeUndefined();
+    expect(aplicarDescuento(c, 0).descuento).toBeUndefined();
+    // Queda sólo el renglón de 1.150 (el último agregado va primero): el descuento de 150 entra; con 1.200 no.
+    expect(totalCarrito(quitarItem(c, 1))).toBe(1000);
+    expect(quitarItem(aplicarDescuento(c, 1200), 1).descuento).toBeUndefined();
+  });
+
+  it('un campo de plata acepta cinco cifras aunque ya haya puesto el punto de miles', () => {
+    // Lo que hace CampoPesos tecla por tecla: "1500" se muestra "1.500" y el "0" siguiente tiene que dar 15.000.
+    let texto = '';
+    for (const tecla of '150000') {
+      const crudo = texto + tecla;
+      const v = parsePesos(textoTecleado(crudo));
+      texto = v !== null && !crudo.includes(',') && !/\.\d{0,2}$/.test(crudo) ? formatPesos(v).replace('$ ', '') : crudo;
+    }
+    expect(texto).toBe('150.000');
+    expect(parsePesos(textoTecleado('1.0005'))).toBe(10005);
+    expect(parsePesos(textoTecleado('12.345.678'))).toBe(12345678);
+    expect(textoTecleado('1.400,50')).toBe('1.400,50');
+    expect(textoTecleado('1400.5')).toBe('1400.5');
   });
 });
 

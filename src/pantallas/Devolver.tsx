@@ -7,7 +7,7 @@ import { db } from '../datos/db';
 import { devolverProductos, turnoAbierto } from '../datos/operaciones';
 import { errorATexto, fechaCorta, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
-import { usePedirDueño } from '../ui/permisos';
+import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 
 const MOTIVOS = ['Vencido', 'Cambio', 'Se arrepintió', 'Vino fallado'];
@@ -20,6 +20,7 @@ const MOTIVOS = ['Vencido', 'Cambio', 'Se arrepintió', 'Vino fallado'];
 export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCerrar: () => void; onHecho?: (monto: number) => void }) {
   const avisar = useAvisar();
   const pedirDueño = usePedirDueño();
+  const dueño = useEsDueño();
   const { sesion } = useSesion();
   // 'cargando' hasta saber si hay caja abierta: mientras tanto no se puede confirmar.
   const turno = useConsulta(async () => (await turnoAbierto(db)) ?? null, [], 'cargando' as Awaited<ReturnType<typeof turnoAbierto>> | null | 'cargando');
@@ -158,7 +159,7 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
           <button type="submit" className="boton boton-primario boton-grande" disabled={renglones.length === 0 || enCurso || pasaDeCuenta || cargando}>
             {medio === 'efectivo' ? `Devolver ${formatPesos(monto)} en efectivo` : medio === 'fiado' ? `Descontar ${formatPesos(monto)} de la cuenta` : `Anotar devolución de ${formatPesos(monto)}`}
           </button>
-          {!cargando && !delTurno && <p className="texto-suave texto-centrado">Es una venta de otro turno: pide la clave del dueño.</p>}
+          {!cargando && !delTurno && !dueño && <p className="texto-suave texto-centrado">Es una venta de otro turno: pide la clave del dueño.</p>}
         </div>
       </form>
     </Modal>

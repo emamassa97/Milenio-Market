@@ -44,6 +44,11 @@ export function resumirVentas(ventas: Venta[]): ResumenVentas {
     devuelto += v.total - neto;
     for (const p of pagosDeVenta(v)) porMedio[p.medio] += p.monto;
     porHora[new Date(v.fecha).getHours()]! += neto;
+    // El descuento de la venta sale de la ganancia (los renglones siguen a precio de lista).
+    if (v.descuento) {
+      if (v.items.some((it) => it.costoUnitario > 0)) ganancia -= v.descuento;
+      else ventasSinCosto -= v.descuento;
+    }
     for (const it of itemsNetos(v)) {
       const sub = subtotal(it);
       if (it.costoUnitario > 0) ganancia += sub - it.costoUnitario * it.cantidad;

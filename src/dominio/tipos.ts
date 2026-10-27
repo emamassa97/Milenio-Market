@@ -10,7 +10,7 @@ export type MedioPago = 'efectivo' | 'mercadopago' | 'tarjeta' | 'transferencia'
 export const MEDIOS: { id: MedioPago; nombre: string }[] = [
   { id: 'efectivo', nombre: 'Efectivo' },
   { id: 'mercadopago', nombre: 'Mercado Pago' },
-  { id: 'tarjeta', nombre: 'Débito / crédito' },
+  { id: 'tarjeta', nombre: 'Tarjeta' },
   { id: 'transferencia', nombre: 'Transferencia' },
   { id: 'fiado', nombre: 'Fiado' },
 ];
@@ -85,7 +85,10 @@ export interface Venta {
   turnoId: number;
   cajero: string;
   items: ItemVenta[];
+  /** Lo cobrado: los renglones menos el descuento. */
   total: Pesos;
+  /** Descuento sobre toda la venta ("dejámelo en 3.000"). Si no está, no hubo. */
+  descuento?: Pesos;
   medio: MedioPago;
   pagaCon: Pesos | null;
   vuelto: Pesos;

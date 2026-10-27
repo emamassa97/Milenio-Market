@@ -10,22 +10,27 @@ export const CANTIDAD_MAXIMA = 999;
 
 export interface Carrito {
   items: ItemVenta[];
+  /** Descuento sobre toda la venta ("dejámelo en 3.000"). Siempre menor que la suma de los renglones. */
+  descuento?: Pesos;
 }
 
 export const carritoVacio: Carrito = { items: [] };
 
 /**
  * Lo que se escribe o escanea en la caja. "3*7790895000997" o "3x coca"
- * agrega 3 unidades. Sin multiplicador, 1.
+ * agrega 3 unidades. Sin multiplicador, 1. Con "?" adelante ("?coca") se
+ * consulta el precio sin cargarlo en la venta.
  */
-export function interpretarEntrada(texto: string): { cantidad: number; busqueda: string } {
-  const limpio = texto.trim();
+export function interpretarEntrada(texto: string): { cantidad: number; busqueda: string; consulta: boolean } {
+  let limpio = texto.trim();
+  const consulta = limpio.startsWith('?');
+  if (consulta) limpio = limpio.slice(1).trim();
   const m = /^(\d{1,3})\s*[*xX]\s*(.+)$/.exec(limpio);
   if (m) {
     const cantidad = Number(m[1]);
-    if (cantidad > 0) return { cantidad, busqueda: m[2]!.trim() };
+    if (cantidad > 0) return { cantidad, busqueda: m[2]!.trim(), consulta };
   }
-  return { cantidad: 1, busqueda: limpio };
+  return { cantidad: 1, busqueda: limpio, consulta };
 }
 
 /** Un código de barras: sólo cifras, de 4 a 14. */
@@ -94,23 +99,36 @@ export function agregarItem(carrito: Carrito, item: ItemVenta): Carrito {
       const existente = carrito.items[i]!;
       const actualizado = { ...existente, cantidad: Math.min(existente.cantidad + item.cantidad, CANTIDAD_MAXIMA) };
       const resto = carrito.items.filter((_, j) => j !== i);
-      return { items: [actualizado, ...resto] };
+      return { ...carrito, items: [actualizado, ...resto] };
     }
   }
-  return { items: [item, ...carrito.items] };
+  return { ...carrito, items: [item, ...carrito.items] };
 }
 
 /** Cambia la cantidad del renglón; 0 o menos lo saca. */
 export function cambiarCantidad(carrito: Carrito, indice: number, cantidad: number): Carrito {
   if (cantidad <= 0) return quitarItem(carrito, indice);
   const n = Math.min(Math.floor(cantidad), CANTIDAD_MAXIMA);
-  return {
+  return conDescuentoValido({
+    ...carrito,
     items: carrito.items.map((x, i) => (i === indice ? { ...x, cantidad: n } : x)),
-  };
+  });
 }
 
 export function quitarItem(carrito: Carrito, indice: number): Carrito {
-  return { items: carrito.items.filter((_, i) => i !== indice) };
+  return conDescuentoValido({ ...carrito, items: carrito.items.filter((_, i) => i !== indice) });
+}
+
+/** Pone (o saca, con 0) el descuento de toda la venta; nunca puede llegar a la suma de los renglones. */
+export function aplicarDescuento(carrito: Carrito, descuento: Pesos): Carrito {
+  const d = Math.floor(descuento);
+  const { descuento: _anterior, ...sinDescuento } = carrito;
+  return d > 0 && d < sumaCarrito(carrito) ? { ...sinDescuento, descuento: d } : sinDescuento;
+}
+
+/** Si la venta se achicó y el descuento ya no entra, se saca: nunca se cobra cero o negativo. */
+function conDescuentoValido(carrito: Carrito): Carrito {
+  return carrito.descuento !== undefined ? aplicarDescuento(carrito, carrito.descuento) : carrito;
 }
 
 /** Con promo "N por $X" se cobran los grupos completos a precio de promo y el resto suelto. */
@@ -130,8 +148,14 @@ export function ahorroPromo(item: ItemVenta): Pesos {
   return item.precioUnitario * item.cantidad - subtotal(item);
 }
 
-export function totalCarrito(carrito: Carrito): Pesos {
+/** La suma de los renglones, antes del descuento. */
+export function sumaCarrito(carrito: Carrito): Pesos {
   return carrito.items.reduce((suma, item) => suma + subtotal(item), 0);
+}
+
+/** Lo que se cobra: los renglones menos el descuento. */
+export function totalCarrito(carrito: Carrito): Pesos {
+  return Math.max(0, sumaCarrito(carrito) - (carrito.descuento ?? 0));
 }
 
 export function unidades(carrito: Carrito): number {
@@ -145,16 +169,16 @@ export function calcularVuelto(total: Pesos, pagaCon: Pesos): Pesos | null {
 }
 
 /**
- * Billetes con los que la gente suele pagar: el monto justo y los
- * redondeos siguientes (al próximo $1.000, $2.000, $10.000, $20.000...).
+ * Billetes con los que la gente suele pagar: el monto justo, los redondeos
+ * al próximo $1.000 y $2.000, y siempre el de $10.000 y el de $20.000 (los
+ * que más vuelto generan). Hasta cinco opciones.
  */
 export function pagosSugeridos(total: Pesos): Pesos[] {
   if (total <= 0) return [];
   const opciones = new Set<Pesos>([total]);
-  for (const paso of [1000, 2000, 5000, 10000, 20000]) {
+  for (const paso of [1000, 2000, 10000, 20000]) {
     const arriba = Math.ceil(total / paso) * paso;
     if (arriba > total) opciones.add(arriba);
-    if (opciones.size >= 4) break;
   }
-  return [...opciones].sort((a, b) => a - b).slice(0, 4);
+  return [...opciones].sort((a, b) => a - b).slice(0, 5);
 }

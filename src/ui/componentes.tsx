@@ -62,7 +62,9 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { formatPesos, parsePesos } from '../dominio/dinero';
+import { CANTIDAD_MAXIMA } from '../dominio/carrito';
+import { formatPesos, parsePesos, textoTecleado } from '../dominio/dinero';
+import { codigoEscaneado } from '../dominio/entrada';
 import { ErrorKiosco } from '../datos/operaciones';
 
 // ---------- Avisos ----------
@@ -91,7 +93,8 @@ export function ProveedorAvisos({ children }: { children: ReactNode }) {
   const siguiente = useRef(1);
   const avisar = useCallback((a: Omit<Aviso, 'id'>) => {
     const id = siguiente.current++;
-    setAvisos((lista) => [...lista.slice(-1), { ...a, id }]);
+    // De a dos como mucho, y un "listo" nuevo reemplaza al anterior: no se apilan sobre lo que ya se ve.
+    setAvisos((lista) => [...lista.filter((x) => !(a.tipo === 'ok' && x.tipo === 'ok')).slice(-1), { ...a, id }]);
     window.setTimeout(() => setAvisos((lista) => lista.filter((x) => x.id !== id)), a.accion ? 6000 : 3000);
   }, []);
   return (
@@ -220,9 +223,10 @@ export function CampoPesos({
         onKeyDown={onKeyDown}
         onChange={(e) => {
           const crudo = e.target.value;
-          const v = parsePesos(crudo);
-          // Los miles se separan mientras se escribe ("2000" → "2.000"); con centavos se deja tal cual.
-          setTexto(v !== null && !crudo.includes(',') && !crudo.endsWith('.') ? formatearEdicion(v) : crudo);
+          // Los puntos de miles que puso el campo no cuentan al interpretar: "1.500" + "0" es 15.000.
+          const v = parsePesos(textoTecleado(crudo));
+          // Los miles se separan mientras se escribe ("2000" → "2.000"); con coma, o con un punto recién tipeado, se deja tal cual.
+          setTexto(v !== null && !crudo.includes(',') && !/\.\d{0,2}$/.test(crudo) ? formatearEdicion(v) : crudo);
           ultimo.current = v;
           onCambio(v);
         }}
@@ -240,6 +244,92 @@ export function CampoPesos({
 
 function formatearEdicion(v: number): string {
   return formatPesos(v).replace('$ ', '');
+}
+
+// ---------- Campo de cantidad ----------
+
+/**
+ * Cantidad entera: unidades de un renglón, billetes del cierre. Si el lector de códigos escanea con el
+ * cursor acá, el código no queda como cantidad: se vuelve a la de antes y, si hay `onEscaneo`, se suma
+ * como producto. Hasta el largo del máximo se aplica al toque; más largo se espera al Enter o al salir.
+ */
+export function CampoCantidad({
+  valor,
+  onCambio,
+  ariaLabel,
+  max = CANTIDAD_MAXIMA,
+  minimo = 0,
+  vacioEnCero = false,
+  onEscaneo,
+}: {
+  valor: number;
+  onCambio: (n: number) => void;
+  ariaLabel: string;
+  max?: number;
+  /** Por debajo no se aplica (1 en un renglón: borrar el campo no saca el producto). */
+  minimo?: number;
+  /** Con 0 se muestra vacío, con el placeholder. */
+  vacioEnCero?: boolean;
+  /** Qué hacer con un código del lector; devuelve true si se hizo cargo. */
+  onEscaneo?: (texto: string) => boolean;
+}) {
+  const avisar = useAvisar();
+  const mostrar = (n: number) => (n === 0 && vacioEnCero ? '' : String(n));
+  const [texto, setTexto] = useState(() => mostrar(valor));
+  const [conFoco, setConFoco] = useState(false);
+  const antes = useRef(valor);
+  useEffect(() => {
+    if (!conFoco) setTexto(valor === 0 && vacioEnCero ? '' : String(valor));
+  }, [valor, conFoco, vacioEnCero]);
+  const largo = String(max).length;
+  const terminar = (crudo: string) => {
+    setConFoco(false);
+    if (crudo.length > largo) {
+      onCambio(antes.current);
+      setTexto(mostrar(antes.current));
+      if (onEscaneo && onEscaneo(crudo)) return;
+      avisar({
+        texto: codigoEscaneado(crudo) ? 'Eso fue el lector, no una cantidad: acá va cuántos hay.' : `Como mucho ${max}.`,
+        tipo: 'error',
+      });
+      return;
+    }
+    const n = crudo === '' ? (minimo > 0 ? antes.current : 0) : Math.min(Number(crudo), max);
+    const final = n < minimo ? antes.current : n;
+    if (final !== valor) onCambio(final);
+    setTexto(mostrar(final));
+  };
+  return (
+    <input
+      inputMode="numeric"
+      autoComplete="off"
+      aria-label={ariaLabel}
+      placeholder="0"
+      value={texto}
+      onFocus={(e) => {
+        antes.current = valor;
+        setConFoco(true);
+        e.currentTarget.select();
+      }}
+      onChange={(e) => {
+        const t = e.target.value.replace(/\D/g, '');
+        setTexto(t);
+        const n = Number(t);
+        if (t.length <= largo && n >= minimo) onCambio(Math.min(n, max));
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.currentTarget.blur();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.currentTarget.value = mostrar(antes.current);
+          e.currentTarget.blur();
+        }
+      }}
+      onBlur={(e) => terminar(e.currentTarget.value)}
+    />
+  );
 }
 
 // ---------- Íconos (Lucide, heredan el color del texto) ----------

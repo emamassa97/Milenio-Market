@@ -75,6 +75,7 @@ function PrimerUsuario() {
   const [usuario, setUsuario] = useState('');
   const [clave, setClave] = useState('');
   const [repetida, setRepetida] = useState('');
+  const [errorAlta, setErrorAlta] = useState('');
   const [claveNube, setClaveNube] = useState('');
   const [recuperar, setRecuperar] = useState(false);
   const [enCurso, unaVez] = useUnaVez();
@@ -116,8 +117,9 @@ function PrimerUsuario() {
       className="tarjeta formulario ingreso-tarjeta"
       onSubmit={(e) => {
         e.preventDefault();
+        // El error va debajo del botón, donde se está mirando (un aviso flotante caería sobre el panel rojo).
         if (clave !== repetida) {
-          avisar({ texto: 'Las dos claves no coinciden.', tipo: 'error' });
+          setErrorAlta('Las dos claves no coinciden.');
           return;
         }
         unaVez(async () => {
@@ -125,7 +127,7 @@ function PrimerUsuario() {
             entrar(await crearUsuario(db, { usuario, nombre, clave, admin: true }));
             avisar({ texto: '¡Listo! Ya creaste tu usuario.', tipo: 'ok' });
           } catch (err) {
-            avisar({ texto: errorATexto(err), tipo: 'error' });
+            setErrorAlta(errorATexto(err));
           }
         });
       }}
@@ -148,6 +150,11 @@ function PrimerUsuario() {
         <span className="campo-etiqueta">Repetí la clave</span>
         <input type="password" value={repetida} onChange={(e) => setRepetida(e.target.value)} autoComplete="new-password" required />
       </label>
+      {errorAlta && (
+        <p className="texto-alerta" role="alert">
+          {errorAlta}
+        </p>
+      )}
       <button className="boton boton-primario boton-grande" type="submit" disabled={enCurso}>
         Crear usuario y entrar
       </button>
