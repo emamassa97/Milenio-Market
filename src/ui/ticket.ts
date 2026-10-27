@@ -1,4 +1,5 @@
 import { formatoPeso, pagosDeVenta, subtotal } from '../dominio/carrito';
+import { itemsNetos, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { nombreMedio, type Venta } from '../dominio/tipos';
 import type { BaseKiosco } from '../datos/db';
@@ -36,8 +37,10 @@ export async function leerAjustesTicket(db: BaseKiosco): Promise<AjustesTicket> 
 const escapar = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 export function htmlTicket(venta: Venta, a: AjustesTicket): string {
-  const fecha = new Date(venta.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const renglones = venta.items
+  const fecha = new Date(venta.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  // Reimpreso después de una devolución, el ticket muestra lo que quedó.
+  const devuelto = totalDevuelto(venta);
+  const renglones = itemsNetos(venta)
     .map((it) => {
       const detalle = it.gramos ? `<div class="sub">${formatoPeso(it.gramos)}${it.cantidad > 1 ? ` x ${Number(it.cantidad)}` : ''}</div>` : it.cantidad > 1 ? `<div class="sub">${Number(it.cantidad)} x ${formatPesos(it.precioUnitario)}</div>` : '';
       const promo = subtotal(it) < it.precioUnitario * it.cantidad ? `<div class="sub">Promo ${Number(it.promo!.cantidad)} x ${formatPesos(it.promo!.precio)}</div>` : '';
@@ -71,7 +74,7 @@ td { vertical-align: top; padding: 1px 0; }
 </style></head><body>
 <div class="centro">${encabezado}<div>${fecha}</div><div>Venta N° ${venta.id ?? ''}</div></div>
 <hr><table>${renglones}</table><hr>
-<table><tr class="total"><td>TOTAL</td><td class="der">${formatPesos(venta.total)}</td></tr>${pagos}${vuelto}</table>
+<table><tr class="total"><td>TOTAL</td><td class="der">${formatPesos(venta.total - devuelto)}</td></tr>${devuelto > 0 ? `<tr><td>Cobrado</td><td class="der">${formatPesos(venta.total)}</td></tr><tr><td>Devuelto</td><td class="der">-${formatPesos(devuelto)}</td></tr>` : ''}${pagos}${vuelto}</table>
 <hr><div class="centro">${escapar(a.pie)}</div><div class="centro sub">Comprobante no válido como factura</div>
 </body></html>`;
 }

@@ -1,4 +1,5 @@
 import { pagosDeVenta, stockQueUsa, subtotal } from './carrito';
+import { itemsNetos, totalNeto } from './devoluciones';
 import type { MedioPago, Pesos, Producto, Venta } from './tipos';
 
 export interface FilaProducto {
@@ -17,6 +18,9 @@ export interface ResumenVentas {
   /** Sólo de los productos con costo cargado. */
   ganancia: Pesos;
   ventasSinCosto: Pesos;
+  /** Lo que volvió por devoluciones; `total` ya lo tiene descontado. */
+  devuelto: Pesos;
+  /** Cómo pagaron, bruto: las devoluciones van aparte en `devuelto`. */
   porMedio: Record<MedioPago, Pesos>;
   porHora: number[];
   productos: FilaProducto[];
@@ -30,13 +34,17 @@ export function resumirVentas(ventas: Venta[]): ResumenVentas {
   let total = 0;
   let ganancia = 0;
   let ventasSinCosto = 0;
+  let devuelto = 0;
   for (const v of ventas) {
     if (v.anulada) continue;
     cantidad++;
-    total += v.total;
+    // Lo devuelto se descuenta: queda lo que de verdad se vendió.
+    const neto = totalNeto(v);
+    total += neto;
+    devuelto += v.total - neto;
     for (const p of pagosDeVenta(v)) porMedio[p.medio] += p.monto;
-    porHora[new Date(v.fecha).getHours()]! += v.total;
-    for (const it of v.items) {
+    porHora[new Date(v.fecha).getHours()]! += neto;
+    for (const it of itemsNetos(v)) {
       const sub = subtotal(it);
       if (it.costoUnitario > 0) ganancia += sub - it.costoUnitario * it.cantidad;
       else ventasSinCosto += sub;
@@ -56,6 +64,7 @@ export function resumirVentas(ventas: Venta[]): ResumenVentas {
     promedio: cantidad > 0 ? Math.round(total / cantidad) : 0,
     ganancia,
     ventasSinCosto,
+    devuelto,
     porMedio,
     porHora,
     productos: [...productos.values()].sort((a, b) => b.total - a.total),

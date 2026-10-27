@@ -7,6 +7,7 @@ export interface FilaImportada {
   costo: number;
   stock: number;
   categoria: string;
+  proveedor?: string;
 }
 
 export interface ResultadoImportacion {
@@ -55,6 +56,7 @@ const COLUMNAS: Record<keyof FilaImportada, string[]> = {
   costo: ['costo', 'preciocosto', 'preciodecosto', 'compra', 'pcosto'],
   stock: ['stock', 'cantidad', 'existencia'],
   categoria: ['categoria', 'rubro', 'familia'],
+  proveedor: ['proveedor', 'distribuidor', 'mayorista'],
 };
 
 /**
@@ -116,7 +118,9 @@ export function importarCsv(texto: string): ResultadoImportacion {
       errores.push(`Fila ${fila} (${nombre}): el stock "${stockTexto}" no es un número.`);
       return;
     }
-    filas.push({ codigo, nombre, precio, costo, stock, categoria: tomar('categoria') });
+    const proveedor = tomar('proveedor').trim();
+    // Sin columna de proveedor (o vacía) no se toca el que ya tiene el producto.
+    filas.push({ codigo, nombre, precio, costo, stock, categoria: tomar('categoria'), ...(proveedor ? { proveedor } : {}) });
   });
   return { filas, errores };
 }
@@ -127,9 +131,9 @@ function campoCsv(valor: string | number): string {
 }
 
 export function exportarCsv(filas: FilaImportada[]): string {
-  const titulos = 'codigo;nombre;precio;costo;stock;categoria';
+  const titulos = 'codigo;nombre;precio;costo;stock;categoria;proveedor';
   const cuerpo = filas.map((f) =>
-    [f.codigo, f.nombre, f.precio, f.costo, f.stock, f.categoria].map(campoCsv).join(';'),
+    [f.codigo, f.nombre, f.precio, f.costo, f.stock, f.categoria, f.proveedor ?? ''].map(campoCsv).join(';'),
   );
   return '﻿' + [titulos, ...cuerpo].join('\r\n');
 }
