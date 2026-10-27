@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { esGastoDelLocal, resumirTurno } from '../dominio/caja';
 import { totalNeto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
@@ -57,11 +57,26 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
       const evs = (await db.eventos.where('fecha').aboveOrEqual(inicioDelDia()).toArray()).filter((e: Evento) => e.tipo === 'cancelacion');
       const porUsuario = new Map<string, number>();
       for (const e of evs) porUsuario.set(e.usuario ?? 'sin usuario', (porUsuario.get(e.usuario ?? 'sin usuario') ?? 0) + 1);
-      return { cantidad: evs.length, monto: evs.reduce((s, e) => s + e.monto, 0), porUsuario: [...porUsuario.entries()].sort((a, b) => b[1] - a[1]) };
+      return {
+        cantidad: evs.length,
+        monto: evs.reduce((s, e) => s + e.monto, 0),
+        porUsuario: [...porUsuario.entries()].sort((a, b) => b[1] - a[1]),
+        lista: evs.sort((a, b) => b.fecha - a.fecha),
+      };
     },
     [],
-    { cantidad: 0, monto: 0, porUsuario: [] as [string, number][] },
+    { cantidad: 0, monto: 0, porUsuario: [] as [string, number][], lista: [] as Evento[] },
   );
+  const [verCanceladas, setVerCanceladas] = useState(false);
+  // Productos abre ya filtrado con lo que se tocó acá.
+  const irAProductos = (filtro: 'reponer' | 'vencen') => {
+    try {
+      sessionStorage.setItem('milenio.filtroProductos', filtro);
+    } catch {
+      /* sin sessionStorage igual abre Productos */
+    }
+    ir('productos');
+  };
   // Plata devuelta hoy, aunque la venta sea de otro día.
   const devueltoHoy = useConsulta(
     async () => {
@@ -153,7 +168,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
             </p>
           )}
         </div>
-        <button type="button" className="boton boton-primario" onClick={() => ir('caja')}>
+        <button type="button" className="boton boton-primario solo-pc" onClick={() => ir('caja')}>
           <Icono nombre="caja" tam={18} /> Ir a la caja
         </button>
       </div>
@@ -185,7 +200,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
         <section className="tarjeta">
           <div className="seccion-cabecera">
             <h2 className="titulo-chico">Últimos 7 días</h2>
-            <button type="button" className="enlace texto-suave" onClick={() => ir('reportes')}>
+            <button type="button" className="boton boton-chico" onClick={() => ir('reportes')}>
               Ver reportes
             </button>
           </div>
@@ -212,12 +227,12 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
               </div>
               <div>
                 <dt>Ventas del turno</dt>
-                <dd className="importe">{formatPesos(caja.resumen.totalVendido)}</dd>
+                <dd className="importe">{formatPesos(caja.resumen.vendidoNeto)}</dd>
               </div>
               {caja.resumen.devuelto > 0 && (
                 <div>
-                  <dt>Devuelto</dt>
-                  <dd className="importe">− {formatPesos(caja.resumen.devuelto)}</dd>
+                  <dt className="texto-suave">Ya descontados {formatPesos(caja.resumen.devuelto)} devueltos</dt>
+                  <dd />
                 </div>
               )}
               <div className="cuentas-total">
@@ -256,7 +271,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
           <h2 className="titulo-chico">Para atender</h2>
           <ul className="alertas">
             <li>
-              <button type="button" onClick={() => ir('productos')} disabled={reponer.length === 0}>
+              <button type="button" onClick={() => irAProductos('reponer')} disabled={reponer.length === 0}>
                 <span className={`alerta-icono ${reponer.length ? 'alerta-aviso' : 'alerta-ok'}`}>
                   <Icono nombre={reponer.length ? 'alerta' : 'check'} tam={18} />
                 </span>
@@ -267,7 +282,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
               </button>
             </li>
             <li>
-              <button type="button" onClick={() => ir('productos')} disabled={vencen.length === 0}>
+              <button type="button" onClick={() => irAProductos('vencen')} disabled={vencen.length === 0}>
                 <span className={`alerta-icono ${vencen.length ? 'alerta-peligro' : 'alerta-ok'}`}>
                   <Icono nombre={vencen.length ? 'vence' : 'check'} tam={18} />
                 </span>
@@ -295,27 +310,52 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
                 </span>
               </button>
             </li>
-            {(canceladas.cantidad > 0 || devueltoHoy > 0) && (
+            {canceladas.cantidad > 0 && (
               <li>
-                <button type="button" onClick={() => ir('cierre')}>
-                  <span className={`alerta-icono ${canceladas.cantidad >= 3 ? 'alerta-aviso' : 'alerta-ok'}`}>
+                <button type="button" onClick={() => setVerCanceladas((v) => !v)} aria-expanded={verCanceladas}>
+                  <span className={`alerta-icono ${canceladas.cantidad >= 3 ? 'alerta-aviso' : 'alerta-neutra'}`}>
                     <Icono nombre="deshacer" tam={18} />
                   </span>
                   <span>
                     <strong>
-                      {canceladas.cantidad > 0
-                        ? `${canceladas.cantidad} ${canceladas.cantidad === 1 ? 'venta cancelada' : 'ventas canceladas'} antes de cobrar`
-                        : `Devoluciones de hoy: ${formatPesos(devueltoHoy)}`}
+                      {canceladas.cantidad} {canceladas.cantidad === 1 ? 'venta cancelada' : 'ventas canceladas'} antes de cobrar
                     </strong>
                     <small>
                       {[
-                        canceladas.cantidad > 0 && `${formatPesos(canceladas.monto)} sin cobrar`,
+                        `${formatPesos(canceladas.monto)} sin cobrar`,
                         canceladas.porUsuario.length > 1 && canceladas.porUsuario.map(([u, c]) => `${u}: ${c}`).join(', '),
-                        canceladas.cantidad > 0 && devueltoHoy > 0 && `devoluciones de hoy: ${formatPesos(devueltoHoy)}`,
+                        verCanceladas ? 'Ocultar' : 'Ver cuáles',
                       ]
                         .filter(Boolean)
                         .join(' · ')}
                     </small>
+                  </span>
+                </button>
+                {verCanceladas && (
+                  <ul className="canceladas-detalle">
+                    {canceladas.lista.map((e) => (
+                      <li key={e.id}>
+                        <span>
+                          {hora(e.fecha)}
+                          {e.usuario && ` · ${e.usuario}`}
+                        </span>
+                        <span className="canceladas-detalle-items">{e.detalle || 'sin detalle'}</span>
+                        <span className="importe">{formatPesos(e.monto)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            )}
+            {devueltoHoy > 0 && (
+              <li>
+                <button type="button" onClick={() => ir('cierre')}>
+                  <span className="alerta-icono alerta-neutra">
+                    <Icono nombre="devolver" tam={18} />
+                  </span>
+                  <span>
+                    <strong>Devoluciones de hoy: {formatPesos(devueltoHoy)}</strong>
+                    <small>Ya descontadas de lo vendido. El detalle está en el cierre</small>
                   </span>
                 </button>
               </li>

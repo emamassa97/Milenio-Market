@@ -193,6 +193,7 @@ export function PantallaReportes() {
         </section>
         <section className="tarjeta">
           <h2 className="titulo-chico">Sin ventas en 30 días</h2>
+          {quietos.length > 0 && <p className="texto-suave">Plata parada, a precio de venta.</p>}
           {quietos.length === 0 ? (
             <p className="texto-suave">Todo lo que tiene stock se vendió.</p>
           ) : (

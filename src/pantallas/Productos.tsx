@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/csv';
 import { formatPesos } from '../dominio/dinero';
 import { cantidadDeTexto, codigoEscaneado } from '../dominio/entrada';
@@ -19,6 +19,7 @@ import {
 import { CampoPesos, copiarTexto, descargarArchivo, Desplegable, errorATexto, Icono, Modal, sinCortes, useAvisar, Vacio } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
 import { pitido, useConsulta, useUnaVez } from '../ui/hooks';
+import { useEsDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 
 type Filtro = 'todos' | 'reponer' | 'vencen' | 'promos' | 'rapidos' | 'sinCodigo' | 'sinCosto';
@@ -45,7 +46,23 @@ export function PantallaProductos() {
   const avisar = useAvisar();
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
   const [q, setQ] = useState('');
-  const [filtro, setFiltro] = useState<Filtro>('todos');
+  // El panel de inicio puede mandar acá con un filtro puesto ("para reponer", "por vencer").
+  const [filtro, setFiltro] = useState<Filtro>(() => {
+    try {
+      const f = sessionStorage.getItem('milenio.filtroProductos');
+      return f === 'reponer' || f === 'vencen' ? f : 'todos';
+    } catch {
+      return 'todos';
+    }
+  });
+  useEffect(() => {
+    // Se usa una sola vez: la próxima entrada a Productos arranca en "Todos".
+    try {
+      sessionStorage.removeItem('milenio.filtroProductos');
+    } catch {
+      /* sin sessionStorage no hay nada que borrar */
+    }
+  }, []);
   const [categoria, setCategoria] = useState('');
   const [modal, setModal] = useState<
     | null
@@ -98,7 +115,7 @@ export function PantallaProductos() {
   // Las acciones secundarias: botones en PC, una hoja desde "Más" en el celular.
   const acciones = [
     { id: 'compra', texto: 'Llegó mercadería', icono: 'camion', deshabilitado: productos.length === 0 },
-    { id: 'pedido', texto: 'Pedido al proveedor', icono: 'whatsapp', deshabilitado: cuantosReponer === 0 },
+    { id: 'pedido', texto: 'Pedido al proveedor', icono: 'whatsapp', deshabilitado: productos.length === 0 },
     { id: 'aumento', texto: 'Aumentar precios', icono: 'porcentaje', deshabilitado: productos.length === 0 },
     { id: 'planilla', texto: 'Planilla Excel', icono: 'subir', deshabilitado: false },
   ] as const;
@@ -246,7 +263,7 @@ export function PantallaProductos() {
       {modal?.tipo === 'planilla' && <Planilla productos={productos} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'stock' && <SumarStock producto={modal.producto} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'compra' && <IngresoMercaderia productos={productos} proveedores={proveedores} onCerrar={() => setModal(null)} />}
-      {modal?.tipo === 'pedido' && <PedidoProveedor productos={productos.filter(necesitaReponer)} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'pedido' && <PedidoProveedor productos={productos} onCerrar={() => setModal(null)} />}
     </div>
   );
 }
@@ -570,7 +587,7 @@ function Planilla({ productos, onCerrar }: { productos: Producto[]; onCerrar: ()
   const descargar = () => {
     const filas = [...productos]
       .sort((a, b) => a.nombre.localeCompare(b.nombre))
-      .map((p) => ({ codigo: p.codigo, nombre: p.nombre, precio: p.precio, costo: p.costo, stock: p.stock, categoria: p.categoria }));
+      .map((p) => ({ codigo: p.codigo, nombre: p.nombre, precio: p.precio, costo: p.costo, stock: p.stock, categoria: p.categoria, proveedor: p.proveedor ?? '' }));
     descargarArchivo(`productos-milenio-${new Date().toISOString().slice(0, 10)}.csv`, exportarCsv(filas), 'text/csv;charset=utf-8');
   };
 
@@ -588,7 +605,7 @@ function Planilla({ productos, onCerrar }: { productos: Producto[]; onCerrar: ()
           <div>
             <h3>Cargar una lista</h3>
             <p className="texto-suave">
-              En Excel, <em>Guardar como → CSV</em>. Columnas: <strong>nombre</strong> y <strong>precio</strong> (obligatorias), y si querés código, costo, stock y categoría. Si el código ya existe, se actualiza el precio y no se toca el stock.
+              En Excel, <em>Guardar como → CSV</em>. Columnas: <strong>nombre</strong> y <strong>precio</strong> (obligatorias), y si querés código, costo, stock, categoría y proveedor. Si el código ya existe, se actualiza el precio y no se toca el stock.
             </p>
             <input
               type="file"
@@ -644,66 +661,155 @@ function Planilla({ productos, onCerrar }: { productos: Producto[]; onCerrar: ()
 
 const SIN_PROVEEDOR = 'Sin proveedor';
 
+/** Cuánto pedir: lo que falta para tener el doble del mínimo, en cajas de 6 (los kilos, enteros). */
+function cantidadSugerida(p: Producto): number {
+  const falta = Math.max(1, p.stockMinimo * 2 - p.stock);
+  return p.porPeso ? Math.ceil(falta) : Math.ceil(falta / 6) * 6;
+}
+
 function PedidoProveedor({ productos, onCerrar }: { productos: Producto[]; onCerrar: () => void }) {
   const avisar = useAvisar();
+  const { sesion } = useSesion();
+  // Arranca con lo que está por debajo del mínimo; se puede agregar cualquier otro producto.
+  const [ids, setIds] = useState<number[]>(() => productos.filter(necesitaReponer).map((p) => p.id!));
   const [cantidades, setCantidades] = useState<Record<number, number>>(() =>
-    Object.fromEntries(productos.map((p) => [p.id!, Math.max(1, p.stockMinimo * 2 - p.stock)])),
+    Object.fromEntries(productos.filter(necesitaReponer).map((p) => [p.id!, cantidadSugerida(p)])),
   );
+  const [q, setQ] = useState('');
+  const buscador = useRef<HTMLInputElement>(null);
+  const elegidos = useMemo(() => ids.map((id) => productos.find((p) => p.id === id)).filter((p): p is Producto => !!p), [ids, productos]);
   // Un pedido por proveedor: cada uno recibe sólo lo suyo.
   const grupos = useMemo(() => {
     const m = new Map<string, Producto[]>();
-    for (const p of productos) {
+    for (const p of elegidos) {
       const k = p.proveedor?.trim() || SIN_PROVEEDOR;
       m.set(k, [...(m.get(k) ?? []), p]);
     }
     return [...m.entries()].sort(([a], [b]) => (a === SIN_PROVEEDOR ? 1 : b === SIN_PROVEEDOR ? -1 : a.localeCompare(b)));
-  }, [productos]);
+  }, [elegidos]);
   const [elegido, setGrupo] = useState<string | null>(null);
   // Si el grupo elegido desapareció (se repuso desde otro equipo), se pasa al primero.
   const grupo = elegido !== null && grupos.some(([k]) => k === elegido) ? elegido : (grupos[0]?.[0] ?? SIN_PROVEEDOR);
   const lista = grupos.find(([k]) => k === grupo)?.[1] ?? [];
+  const proveedorDe = (p: Producto) => p.proveedor?.trim() || SIN_PROVEEDOR;
+  // Primero los del mismo proveedor; los demás, con su proveedor al lado.
+  const encontrados = useMemo(() => {
+    const t = normalizar(q.trim());
+    if (t.length < 2) return [];
+    return productos
+      .filter((p) => !ids.includes(p.id!) && (p.codigo === q.trim() || normalizar(p.nombre).includes(t)))
+      .sort((a, b) => Number(proveedorDe(b) === grupo) - Number(proveedorDe(a) === grupo) || a.nombre.localeCompare(b.nombre))
+      .slice(0, 6);
+  }, [q, productos, ids, grupo]);
+  const agregar = (p: Producto) => {
+    setIds((x) => [...x, p.id!]);
+    setCantidades((c) => ({ ...c, [p.id!]: cantidadSugerida(p) }));
+    setGrupo(proveedorDe(p));
+    setQ('');
+    buscador.current?.focus();
+  };
+  const sacar = (p: Producto) => setIds((x) => x.filter((id) => id !== p.id));
+  const fecha = new Date().toLocaleDateString('es-AR', { day: 'numeric', month: 'numeric' });
   const texto = [
-    'Hola, te paso el pedido de Milenio Market:',
-    ...lista.filter((p) => (cantidades[p.id!] ?? 0) > 0).map((p) => `• ${cantidades[p.id!]} x ${p.nombre}`),
-    'Gracias!',
+    `Hola${grupo === SIN_PROVEEDOR ? '' : ` ${grupo}`}, te paso el pedido de Milenio Market (${fecha}):`,
+    ...lista.filter((p) => (cantidades[p.id!] ?? 0) > 0).map((p) => `• ${cantidades[p.id!]}${p.porPeso ? ' kg de' : ' x'} ${p.nombre}`),
+    `Gracias!${sesion ? ` — ${sesion.nombre.split(' ')[0]}` : ''}`,
   ].join('\n');
+  const hayQuePedir = lista.some((p) => (cantidades[p.id!] ?? 0) > 0);
   return (
     <Modal titulo="Pedido al proveedor" onCerrar={onCerrar} ancho="ancho">
       <div className="formulario">
-        <p className="texto-suave">Lo que está por debajo del mínimo. Ajustá las cantidades y mandalo por WhatsApp.</p>
+        <p className="texto-suave">
+          {elegidos.length === 0 ? 'Nada está por debajo del mínimo. Buscá lo que quieras pedir.' : 'Ya está lo que bajó del mínimo. Ajustá las cantidades, agregá lo que falte y mandalo por WhatsApp.'}
+        </p>
         {grupos.length > 1 && (
-          <div className="segmentos segmentos-scroll" role="group" aria-label="Proveedor">
+          <div className="chips" role="group" aria-label="Proveedor">
             {grupos.map(([k, ps]) => (
-              <button key={k} type="button" className={grupo === k ? 'activo' : ''} aria-pressed={grupo === k} onClick={() => setGrupo(k)}>
+              <button key={k} type="button" className={`chip ${grupo === k ? 'activo' : ''}`} aria-pressed={grupo === k} onClick={() => setGrupo(k)}>
                 {k} ({ps.length})
               </button>
             ))}
           </div>
         )}
-        <ul className="lista-pedido">
-          {lista.map((p) => (
-            <li key={p.id}>
-              <span>
-                {p.nombre} <small className="texto-suave">(quedan {p.stock})</small>
-              </span>
-              <input
-                inputMode="numeric"
-                aria-label={`Cantidad a pedir de ${p.nombre}`}
-                value={cantidades[p.id!] ?? 0}
-                onChange={(e) => setCantidades({ ...cantidades, [p.id!]: Number(e.target.value.replace(/\D/g, '')) || 0 })}
-              />
-            </li>
-          ))}
-        </ul>
+        {lista.length > 0 && (
+          <div className="lista-pedido" role="table" aria-label={`Pedido a ${grupo}`}>
+            <div className="lista-pedido-cabecera texto-suave" role="row">
+              <span>Producto</span>
+              <span>Quedan</span>
+              <span>Pedir</span>
+              <span />
+            </div>
+            {lista.map((p) => (
+              <div key={p.id} className="lista-pedido-fila" role="row">
+                <span className="lista-pedido-nombre">{sinCortes(p.nombre)}</span>
+                <span className={`lista-pedido-quedan ${necesitaReponer(p) ? 'texto-aviso' : ''}`}>
+                  {textoStock(p)}
+                  {p.stockMinimo > 0 && <small className="texto-suave">mín. {p.stockMinimo}</small>}
+                </span>
+                <input
+                  inputMode="numeric"
+                  aria-label={`Cantidad a pedir de ${p.nombre}`}
+                  value={cantidades[p.id!] ?? 0}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onChange={(e) => setCantidades({ ...cantidades, [p.id!]: Number(e.target.value.replace(/\D/g, '')) || 0 })}
+                />
+                <button type="button" className="boton-icono" aria-label={`Sacar ${p.nombre} del pedido`} onClick={() => sacar(p)}>
+                  <Icono nombre="basura" tam={18} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="buscador-campo buscador-chico ingreso-buscador">
+          <Icono nombre="buscar" tam={18} />
+          <input
+            ref={buscador}
+            value={q}
+            autoFocus={elegidos.length === 0}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (encontrados[0]) agregar(encontrados[0]);
+              }
+            }}
+            placeholder={grupo === SIN_PROVEEDOR || grupos.length === 0 || window.innerWidth < 600 ? 'Agregar otro producto' : `Agregar otro producto de ${grupo}`}
+            aria-label="Agregar producto al pedido"
+          />
+          {encontrados.length > 0 && (
+            <ul className="resultados">
+              {encontrados.map((p) => (
+                <li key={p.id}>
+                  <button type="button" onClick={() => agregar(p)}>
+                    <span>
+                      <strong>{p.nombre}</strong>
+                      <small>
+                        quedan {textoStock(p)}
+                        {proveedorDe(p) !== grupo && ` · ${proveedorDe(p)}`}
+                      </small>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         <div className="botonera botonera-final">
           <button
             type="button"
             className="boton"
+            disabled={!hayQuePedir}
             onClick={async () => avisar((await copiarTexto(texto)) ? { texto: 'Pedido copiado.', tipo: 'ok' } : { texto: 'No se pudo copiar.', tipo: 'error' })}
           >
             <Icono nombre="copiar" tam={18} /> Copiar
           </button>
-          <a className="boton boton-primario" href={`https://wa.me/?text=${encodeURIComponent(texto)}`} target="_blank" rel="noreferrer">
+          <a
+            className={`boton boton-primario ${hayQuePedir ? '' : 'deshabilitado'}`}
+            aria-disabled={!hayQuePedir}
+            href={hayQuePedir ? `https://wa.me/?text=${encodeURIComponent(texto)}` : undefined}
+            target="_blank"
+            rel="noreferrer"
+          >
             <Icono nombre="whatsapp" tam={18} /> Mandar por WhatsApp
           </a>
         </div>
@@ -729,6 +835,8 @@ interface RenglonIngreso {
 function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Producto[]; proveedores: string[]; onCerrar: () => void }) {
   const avisar = useAvisar();
   const { sesion } = useSesion();
+  // Subir precios es cosa del dueño: al empleado se lo proponemos sin marcar.
+  const dueño = useEsDueño();
   const [q, setQ] = useState('');
   const [renglones, setRenglones] = useState<RenglonIngreso[]>([]);
   const [proveedor, setProveedor] = useState('');
@@ -744,7 +852,7 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
   }, [q, productos, renglones]);
   const porCodigo = useMemo(() => new Map(productos.filter((p) => p.codigo).map((p) => [p.codigo, p])), [productos]);
   const sumar = (p: Producto) => {
-    setRenglones((r) => (r.some((x) => x.p.id === p.id) ? r : [...r, { p, cantidad: '', costo: p.costo > 0 ? p.costo : null, mantenerMargen: true }]));
+    setRenglones((r) => (r.some((x) => x.p.id === p.id) ? r : [...r, { p, cantidad: '', costo: p.costo > 0 ? p.costo : null, mantenerMargen: dueño }]));
     setQ('');
     buscador.current?.focus();
     if (!proveedor && p.proveedor) setProveedor(p.proveedor);
@@ -771,6 +879,7 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
   const cant = (r: { cantidad: string; p: Producto }) => cantidadDeTexto(r.cantidad, !!r.p.porPeso);
   const total = renglones.reduce((s, r) => s + Math.round(cant(r) * (r.costo ?? 0)), 0);
   const montoCaja = pagado ?? total;
+  const subidas = renglones.filter((r) => r.mantenerMargen && precioNuevo(r)).length;
   return (
     <Modal titulo="Llegó mercadería" onCerrar={onCerrar} ancho="ancho">
       <form
@@ -890,8 +999,8 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
                   <label className="casilla lista-compra-precio">
                     <input type="checkbox" checked={r.mantenerMargen} onChange={(e) => setRenglones((x) => x.map((y, j) => (j === i ? { ...y, mantenerMargen: e.target.checked } : y)))} />
                     <span>
-                      Subir el precio a <strong>{formatPesos(nuevo)}</strong> para seguir ganando {m}%
-                      {mNuevo !== null && !r.mantenerMargen && <small className="texto-aviso"> (si no, pasás a ganar {mNuevo}%)</small>}
+                      Subir el precio de {formatPesos(r.p.precio)} a <strong>{formatPesos(nuevo)}</strong> (para seguir ganando {m}%)
+                      {mNuevo !== null && !r.mantenerMargen && <small className="texto-aviso"> · si no, pasás a ganar {mNuevo}%</small>}
                     </span>
                   </label>
                 )}
@@ -925,7 +1034,7 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
           <strong className="importe texto-normal">{formatPesos(total)}</strong>
         </div>
         <button type="submit" className="boton boton-primario boton-grande" disabled={enCurso || !renglones.some((r) => cant(r) > 0)}>
-          Guardar ingreso
+          {subidas > 0 ? `Guardar ingreso y subir ${subidas === 1 ? '1 precio' : `${subidas} precios`}` : 'Guardar ingreso'}
         </button>
       </form>
     </Modal>

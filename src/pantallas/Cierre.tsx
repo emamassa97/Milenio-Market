@@ -3,7 +3,8 @@ import { DENOMINACIONES, resumirTurno, textoCierre, totalConteo, type ResumenTur
 import { pagosDeVenta } from '../dominio/carrito';
 import { describirItems, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
-import { nombreMedio, type MovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
+import { nombreMedio, type Cliente, type MovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
+import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
 import { db } from '../datos/db';
 import { anularVenta, cerrarTurno, registrarMovimientoCaja, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
 import { CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
@@ -51,6 +52,7 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
   );
 
   const [resultado, setResultado] = useState<Resultado | null>(null);
+  const [abierto, setAbierto] = useState<number | null>(null);
   const dueño = useEsDueño();
   if (datos === null) return null;
   return (
@@ -69,22 +71,29 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
       {historial.length > 0 && (
         <section className="tarjeta historial">
           <h2 className="titulo-chico">Cierres anteriores</h2>
+          <p className="texto-suave">Para devolver o reimprimir el ticket de una venta de otro día, abrí ese cierre.</p>
           <ul>
             {historial.map((t) => {
               const dif = (t.contado ?? 0) - (t.esperado ?? 0);
               return (
-                <li key={t.id}>
-                  <span>
-                    {fechaCorta(t.apertura)} a {hora(t.cierre!)} · {t.cajero}
-                    {t.nota && <small className="texto-suave"> · {t.nota}</small>}
-                  </span>
-                  {dueño ? (
-                    <span className={`importe ${dif < 0 ? 'texto-alerta' : dif > 0 ? 'texto-positivo' : ''}`}>
-                      {dif === 0 ? 'Justo' : dif < 0 ? `Faltaron ${formatPesos(-dif)}` : `Sobraron ${formatPesos(dif)}`}
+                <li key={t.id} className={abierto === t.id ? 'historial-abierto' : ''}>
+                  <button type="button" className="historial-fila" aria-expanded={abierto === t.id} onClick={() => setAbierto(abierto === t.id ? null : t.id!)}>
+                    <span>
+                      {fechaCorta(t.apertura)} a {hora(t.cierre!)} · {t.cajero}
+                      {t.nota && <small className="texto-suave"> · {t.nota}</small>}
                     </span>
-                  ) : (
-                    <span className="texto-suave">Cerrada</span>
-                  )}
+                    {dueño ? (
+                      <span className={`importe ${dif < 0 ? 'texto-alerta' : dif > 0 ? 'texto-aviso' : ''}`}>
+                        {dif === 0 ? 'Justo' : dif < 0 ? `Faltaron ${formatPesos(-dif)}` : `Sobraron ${formatPesos(dif)}`}
+                      </span>
+                    ) : (
+                      <span className="texto-suave">Cerrada</span>
+                    )}
+                    <span className="desplegable-indicador texto-suave">
+                      {abierto === t.id ? 'Ocultar' : 'Ver ventas'} <Icono nombre="abrir" tam={16} />
+                    </span>
+                  </button>
+                  {abierto === t.id && <VentasDeCierre turnoId={t.id!} />}
                 </li>
               );
             })}
@@ -122,7 +131,7 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
         diferencia,
         contado,
         esperado: resumen.efectivoEsperado,
-        vendido: resumen.totalVendido,
+        vendido: resumen.vendidoNeto,
         ventas: resumen.cantidadVentas,
         texto: textoCierre({ ...turno, cierre: Date.now() }, resumen, contoAlgo ? contado : null),
       });
@@ -224,19 +233,25 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
                   <dd className="importe">{formatPesos(resumen.porMedio[m])}</dd>
                 </div>
               ))}
+              {resumen.devuelto > 0 && (
+                <>
+                  <div>
+                    <dt>Cobrado en total</dt>
+                    <dd className="importe">{formatPesos(resumen.totalVendido)}</dd>
+                  </div>
+                  <div>
+                    <dt>Devuelto de esas ventas</dt>
+                    <dd className="importe">− {formatPesos(resumen.devuelto)}</dd>
+                  </div>
+                </>
+              )}
               <div className="cuentas-total">
                 <dt>Total vendido</dt>
-                <dd className="importe">{formatPesos(resumen.totalVendido)}</dd>
+                <dd className="importe">{formatPesos(resumen.vendidoNeto)}</dd>
               </div>
-              {resumen.devuelto > 0 && (
-                <div>
-                  <dt>Devuelto de esas ventas</dt>
-                  <dd className="importe">− {formatPesos(resumen.devuelto)}</dd>
-                </div>
-              )}
               {fiadoCobrado > 0 && (
                 <div>
-                  <dt>Además, cobraste fiado viejo</dt>
+                  <dt>Fiado cobrado (de otros días)</dt>
                   <dd className="importe texto-positivo">{formatPesos(fiadoCobrado)}</dd>
                 </div>
               )}
@@ -321,7 +336,7 @@ function ResultadoCierre({ r, irACaja }: { r: Resultado; irACaja: () => void }) 
           Abrir un turno nuevo
         </button>
         <a className="boton" href={`https://wa.me/?text=${encodeURIComponent(r.texto)}`} target="_blank" rel="noreferrer">
-          <Icono nombre="whatsapp" tam={18} /> Mandar el resumen por WhatsApp
+          <Icono nombre="whatsapp" tam={18} /> Mandar por WhatsApp
         </a>
         <button
           type="button"
@@ -335,25 +350,25 @@ function ResultadoCierre({ r, irACaja }: { r: Resultado; irACaja: () => void }) 
   );
 }
 
-function VentasDelTurno({ ventas }: { ventas: Venta[] }) {
+function VentasDelTurno({ ventas, soloDevolver = false }: { ventas: Venta[]; soloDevolver?: boolean }) {
   const avisar = useAvisar();
   const pedirDueño = usePedirDueño();
   const [anulando, setAnulando] = useState<number | null>(null);
   const [devolviendo, setDevolviendo] = useState<Venta | null>(null);
-  const [abierta, setAbierta] = useState(false);
+  const [abierta, setAbierta] = useState(!!soloDevolver);
+  const clientes = useConsulta(async () => new Map((await db.clientes.toArray()).map((c) => [c.id!, c])), [], new Map<number, Cliente>());
+  const ticket = useConsulta(() => leerAjustesTicket(db), [], TICKET_INICIAL);
   const ordenadas = [...ventas].sort((a, b) => b.fecha - a.fecha);
-  if (ventas.length === 0) return null;
-  return (
-    <section className="tarjeta">
-      <Desplegable abierto={abierta} titulo={`Ventas del turno (${ventas.length})`} texto={abierta ? 'Ocultar' : 'Ver, devolver o anular'} onClick={() => setAbierta(!abierta)} />
-      {abierta && (
+  if (ventas.length === 0) return soloDevolver ? <p className="texto-suave">No hubo ventas en ese turno.</p> : null;
+  const lista = (
         <ul className="ventas-turno">
           {ordenadas.map((v) => {
             const devuelto = totalDevuelto(v);
+            const cliente = v.clienteId !== null ? clientes.get(v.clienteId)?.nombre : undefined;
             return (
               <li key={v.id} className={v.anulada ? 'anulada' : ''}>
                 <span>
-                  <strong>{hora(v.fecha)}</strong> · {pagosDeVenta(v).map((p) => nombreMedio(p.medio)).join(' + ')}
+                  <strong>{hora(v.fecha)}</strong> · {pagosDeVenta(v).map((p) => (p.medio === 'fiado' && cliente ? `Fiado a ${cliente}` : nombreMedio(p.medio))).join(' + ')}
                   {devuelto > 0 && <span className="insignia insignia-aviso">Devuelto {formatPesos(devuelto)}</span>}
                   <small className="texto-suave"> · {describirItems(v.items)}</small>
                 </span>
@@ -362,10 +377,13 @@ function VentasDelTurno({ ventas }: { ventas: Venta[] }) {
                   <span className="texto-suave">Anulada</span>
                 ) : (
                   <span className="botonera botonera-compacta">
+                    <button type="button" className="boton boton-chico" onClick={() => imprimirTicket(v, ticket)} aria-label="Reimprimir el ticket" title="Reimprimir el ticket">
+                      <Icono nombre="ticket" tam={16} />
+                    </button>
                     <button type="button" className="boton boton-chico" onClick={() => setDevolviendo(v)}>
                       Devolver
                     </button>
-                    {devuelto === 0 && (
+                    {devuelto === 0 && !soloDevolver && (
                       <button
                         type="button"
                         className={`boton boton-chico ${anulando === v.id ? 'boton-peligro' : 'boton-texto-peligro'}`}
@@ -391,13 +409,32 @@ function VentasDelTurno({ ventas }: { ventas: Venta[] }) {
             );
           })}
         </ul>
-      )}
+  );
+  if (soloDevolver) {
+    return (
+      <>
+        {lista}
+        {devolviendo && <DevolverVenta venta={devolviendo} onCerrar={() => setDevolviendo(null)} />}
+      </>
+    );
+  }
+  return (
+    <section className="tarjeta">
+      <Desplegable abierto={abierta} titulo={`Ventas del turno (${ventas.length})`} texto={abierta ? 'Ocultar' : 'Ver, devolver o anular'} onClick={() => setAbierta(!abierta)} />
+      {abierta && lista}
       {devolviendo && <DevolverVenta venta={devolviendo} onCerrar={() => setDevolviendo(null)} />}
     </section>
   );
 }
 
-function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
+/** Las ventas de un cierre anterior: sólo para devolver o reimprimir (anular ya no se puede). */
+function VentasDeCierre({ turnoId }: { turnoId: number }) {
+  const ventas = useConsulta(() => db.ventas.where('turnoId').equals(turnoId).toArray(), [turnoId], null as Venta[] | null);
+  if (ventas === null) return <p className="texto-suave">Cargando…</p>;
+  return <VentasDelTurno ventas={ventas} soloDevolver />;
+}
+
+export function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
   const avisar = useAvisar();
   const pedirDueño = usePedirDueño();
   const { sesion } = useSesion();
@@ -452,7 +489,7 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
         </div>
         <p className="texto-suave">
           {tipo === 'mercaderia'
-            ? 'Lo que le pagaste a un proveedor con plata de la caja. No cuenta como gasto del local: ya está en el costo.'
+            ? 'Lo que le pagaste a un proveedor con plata de la caja. No cuenta como gasto del local: ya está en el costo. Si además querés sumar el stock, hacelo desde Productos → "Llegó mercadería": ahí se anota el gasto solo, no lo cargues dos veces.'
             : tipo === 'gasto'
               ? 'Luz, limpieza, delivery, sueldos: gastos del local pagados de la caja.'
               : tipo === 'retiro'

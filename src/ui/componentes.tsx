@@ -1,3 +1,4 @@
+import type { MedioPago } from '../dominio/tipos';
 import {
   createContext,
   useCallback,
@@ -299,6 +300,15 @@ const ICONOS = {
 
 export type NombreIcono = keyof typeof ICONOS;
 
+/** El ícono de cada medio de pago, el mismo en la caja, el cierre y las devoluciones. */
+export const ICONO_MEDIO: Record<MedioPago, NombreIcono> = {
+  efectivo: 'efectivo',
+  mercadopago: 'qr',
+  tarjeta: 'tarjeta',
+  transferencia: 'transferencia',
+  fiado: 'clientes',
+};
+
 /** Copia al portapapeles; en http (sin https) el navegador no da navigator.clipboard y se usa el método viejo. */
 export async function copiarTexto(texto: string): Promise<boolean> {
   try {
@@ -359,12 +369,27 @@ export function Desplegable({ abierto, titulo, texto, onClick }: { abierto: bool
   );
 }
 
+/** "27/10, 18:45" (en Argentina la hora va en 24 h). */
 export function fechaCorta(ms: number): string {
-  return new Date(ms).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return new Date(ms).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 export function hora(ms: number): string {
-  return new Date(ms).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  return new Date(ms).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+/** "hoy a las 18:45", "ayer a las 18:45" o "el 25/10 a las 18:45". */
+export function cuando(ms: number, ahora = Date.now()): string {
+  const dia = (t: number) => {
+    const d = new Date(t);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  const dias = Math.round((dia(ahora) - dia(ms)) / 86_400_000);
+  const h = hora(ms);
+  if (dias === 0) return `hoy a las ${h}`;
+  if (dias === 1) return `ayer a las ${h}`;
+  return `el ${new Date(ms).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} a las ${h}`;
 }
 
 export function descargarArchivo(nombre: string, contenido: string, tipo: string) {

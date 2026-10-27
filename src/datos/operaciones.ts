@@ -506,6 +506,7 @@ export async function cargarPlanilla(db: BaseKiosco, filas: FilaImportada[]): Pr
           precio: f.precio,
           ...(f.costo > 0 ? { costo: f.costo } : {}),
           ...(f.categoria ? { categoria: f.categoria } : {}),
+          ...(f.proveedor ? { proveedor: f.proveedor.trim() } : {}),
           actualizado: ahora(),
         });
         actualizados++;
@@ -518,6 +519,7 @@ export async function cargarPlanilla(db: BaseKiosco, filas: FilaImportada[]): Pr
           stock: f.stock,
           stockMinimo: 0,
           categoria: f.categoria,
+          ...(f.proveedor ? { proveedor: f.proveedor.trim() } : {}),
           rapido: false,
           creado: ahora(),
           actualizado: ahora(),

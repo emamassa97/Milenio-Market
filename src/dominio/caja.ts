@@ -23,6 +23,8 @@ export interface ResumenTurno {
   devoluciones: Pesos;
   /** Lo devuelto de las ventas de este turno, por cualquier medio. */
   devuelto: Pesos;
+  /** Lo que de verdad se vendió: `totalVendido` menos `devuelto`. Es el "vendido" que se muestra en todos lados. */
+  vendidoNeto: Pesos;
   efectivoEsperado: Pesos;
 }
 
@@ -70,20 +72,20 @@ export function resumirTurno(
     else ingresos += m.monto;
   }
   const efectivoEsperado = fondoInicial + porMedio.efectivo + cobrosFiado.efectivo + ingresos - retiros - gastos - devoluciones;
-  return { cantidadVentas, totalVendido, porMedio, cobrosFiado, retiros, gastos, ingresos, devoluciones, devuelto, efectivoEsperado };
+  return { cantidadVentas, totalVendido, porMedio, cobrosFiado, retiros, gastos, ingresos, devoluciones, devuelto, vendidoNeto: totalVendido - devuelto, efectivoEsperado };
 }
 
 /** El cierre en texto, para mandarlo por WhatsApp o copiarlo. */
 export function textoCierre(turno: Turno, r: ResumenTurno, contado: Pesos | null): string {
-  const f = (ms: number) => new Date(ms).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const f = (ms: number) => new Date(ms).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+  const h = (ms: number) => new Date(ms).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
   const fiadoCobrado = Object.values(r.cobrosFiado).reduce((a, b) => a + b, 0);
   const lineas = [
-    `Cierre de caja · ${f(turno.apertura)} a ${turno.cierre ? f(turno.cierre) : 'ahora'} · ${turno.cajero}`,
-    `Vendido: ${formatPesos(r.totalVendido)} (${r.cantidadVentas} ${r.cantidadVentas === 1 ? 'venta' : 'ventas'})`,
+    `Cierre de caja · ${f(turno.apertura)} a ${turno.cierre ? h(turno.cierre) : 'ahora'} · ${turno.cajero}`,
+    `Vendido: ${formatPesos(r.vendidoNeto)} (${r.cantidadVentas} ${r.cantidadVentas === 1 ? 'venta' : 'ventas'}${r.devuelto > 0 ? `, ${formatPesos(r.devuelto)} devueltos` : ''})`,
     ...MEDIOS.filter((m) => r.porMedio[m.id] > 0).map((m) => `• ${m.nombre}: ${formatPesos(r.porMedio[m.id])}`),
   ];
   if (fiadoCobrado > 0) lineas.push(`Fiado cobrado: ${formatPesos(fiadoCobrado)}`);
-  if (r.devuelto > 0) lineas.push(`Devoluciones: ${formatPesos(r.devuelto)}`);
   if (r.gastos > 0) lineas.push(`Gastos: ${formatPesos(r.gastos)}`);
   if (r.retiros > 0) lineas.push(`Retiros: ${formatPesos(r.retiros)}`);
   if (r.ingresos > 0) lineas.push(`Ingresos: ${formatPesos(r.ingresos)}`);

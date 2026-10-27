@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
-import { describirItems } from '../dominio/devoluciones';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { pagosDeVenta } from '../dominio/carrito';
+import { describirItems, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { telefonoWhatsApp } from '../dominio/entrada';
 import { deudaDesde, saldoCliente } from '../dominio/fiado';
@@ -59,6 +60,13 @@ export function PantallaClientes() {
   const deudores = filas.filter((f) => f.saldo > 0).length;
   const detalle = filas.find((f) => f.cliente.id === elegido) ?? null;
   const whatsapp = detalle ? telefonoWhatsApp(detalle.cliente.telefono) : null;
+  // "Marta (la del 3° B)" → "Marta" para el saludo.
+  const nombreCorto = detalle ? detalle.cliente.nombre.replace(/\s*\(.*?\)\s*/g, ' ').trim().split(' ')[0] : '';
+  // En el celular la cuenta queda abajo de la lista: al elegir, la traemos a la vista.
+  const refDetalle = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (elegido !== null && window.matchMedia('(max-width: 900px)').matches) refDetalle.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [elegido]);
 
   return (
     <div className="pagina">
@@ -105,7 +113,7 @@ export function PantallaClientes() {
               ))}
             </ul>
           </section>
-          <section className="tarjeta detalle-cliente">
+          <section className="tarjeta detalle-cliente" ref={refDetalle}>
             {detalle ? (
               <>
                 <div className="pagina-cabecera">
@@ -136,7 +144,7 @@ export function PantallaClientes() {
                       target="_blank"
                       rel="noreferrer"
                       href={`https://wa.me/${whatsapp}?text=${encodeURIComponent(
-                        `Hola ${detalle.cliente.nombre}! Te escribo de Milenio Market. Te quedó un saldo de ${formatPesos(detalle.saldo)}. Cuando puedas pasá. Gracias!`,
+                        `Hola ${nombreCorto}! Te escribo de Milenio Market. Te quedó un saldo de ${formatPesos(detalle.saldo)}. Cuando puedas pasá. Gracias!`,
                       )}`}
                     >
                       <Icono nombre="whatsapp" tam={18} /> Recordarle por WhatsApp
@@ -144,7 +152,7 @@ export function PantallaClientes() {
                   )}
                   {detalle.saldo > 0 && !whatsapp && (
                     <button type="button" className="boton" onClick={() => setModal({ tipo: 'cliente', cliente: detalle.cliente })}>
-                      <Icono nombre="whatsapp" tam={18} /> Cargale el WhatsApp para recordarle
+                      <Icono nombre="whatsapp" tam={18} /> Cargar WhatsApp
                     </button>
                   )}
                 </div>
@@ -154,6 +162,10 @@ export function PantallaClientes() {
                     const esDevolucion = m.tipo === 'pago' && m.medio === null;
                     const puedeAnularVenta = m.tipo === 'compra' && !m.anulado && venta && !venta.anulada && turno && venta.turnoId === turno.id && !venta.devoluciones?.length;
                     const puedeAnularPago = m.tipo === 'pago' && !esDevolucion && !m.anulado;
+                    // Si pagó una parte con otro medio, lo decimos: anular la venta también deshace esa parte.
+                    const pagos = venta ? pagosDeVenta(venta) : [];
+                    const pagoOtro = pagos.filter((p) => p.medio !== 'fiado').reduce((s, p) => s + p.monto, 0);
+                    const comoPago = pagos.length > 1 ? pagos.map((p) => `${formatPesos(p.monto)} ${p.medio === 'fiado' ? 'fiado' : nombreMedio(p.medio).toLowerCase()}`).join(' + ') : '';
                     const anular = async () => {
                       if (anulando !== m.id) return setAnulando(m.id!);
                       const quien = await pedirDueño(m.tipo === 'pago' ? 'Anular un pago de fiado' : 'Anular una venta');
@@ -161,7 +173,15 @@ export function PantallaClientes() {
                       try {
                         if (m.tipo === 'pago') await anularPagoFiado(db, m.id!, quien);
                         else await anularVenta(db, m.ventaId!, quien);
-                        avisar({ texto: m.tipo === 'pago' ? 'Pago anulado: vuelve a deber ese monto.' : 'Venta anulada. El stock volvió y ya no la debe.', tipo: 'info' });
+                        avisar({
+                          texto:
+                            m.tipo === 'pago'
+                              ? 'Pago anulado: vuelve a deber ese monto.'
+                              : pagoOtro > 0
+                                ? `Venta anulada. El stock volvió, ya no la debe y hay que devolverle los ${formatPesos(pagoOtro)} que pagó.`
+                                : 'Venta anulada. El stock volvió y ya no la debe.',
+                          tipo: 'info',
+                        });
                       } catch (e) {
                         avisar({ texto: errorATexto(e), tipo: 'error' });
                       }
@@ -176,7 +196,11 @@ export function PantallaClientes() {
                             {m.nota && !esDevolucion && <small className="texto-suave"> · {m.nota}</small>}
                           </span>
                           {m.tipo === 'compra' && venta && (
-                            <small className="texto-suave">{describirItems(venta.items)}</small>
+                            <small className="texto-suave">
+                              {describirItems(venta.items)}
+                              {comoPago && ` · Pagó ${comoPago}`}
+                              {totalDevuelto(venta) > 0 && ` · Devuelto ${formatPesos(totalDevuelto(venta))}`}
+                            </small>
                           )}
                           {esDevolucion && m.nota && <small className="texto-suave">{m.nota.replace(/^Devolución: /, '')}</small>}
                         </span>
@@ -185,8 +209,13 @@ export function PantallaClientes() {
                             {m.tipo === 'pago' ? '−' : '+'} {formatPesos(m.monto)}
                           </span>
                           {dueño && (puedeAnularPago || puedeAnularVenta) && (
-                            <button type="button" className={`boton boton-chico ${anulando === m.id ? 'boton-peligro' : 'boton-texto-peligro'}`} onClick={anular}>
-                              {anulando === m.id ? '¿Seguro?' : 'Anular'}
+                            <button
+                              type="button"
+                              className={`boton boton-chico ${anulando === m.id ? 'boton-peligro' : 'boton-texto-peligro'}`}
+                              onClick={anular}
+                              title={m.tipo === 'compra' ? 'Deshace la venta entera: vuelve el stock y se borra de la cuenta' : 'Vuelve a deber este monto'}
+                            >
+                              {anulando === m.id ? (m.tipo === 'compra' ? '¿Anular toda la venta?' : '¿Seguro?') : m.tipo === 'compra' ? 'Anular la venta' : 'Anular'}
                             </button>
                           )}
                         </span>
