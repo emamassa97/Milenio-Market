@@ -1,4 +1,4 @@
-import { TABLAS_NUBE, type BaseKiosco, type TablaNube } from './db';
+import { TABLAS_NUBE, type Ajuste, type BaseKiosco, type TablaNube } from './db';
 import { restaurarCopia, type CopiaDeSeguridad } from './copia';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
 
@@ -42,8 +42,12 @@ export async function pendientes(db: BaseKiosco): Promise<number> {
   const marcas = await leerAjuste<Record<string, number>>(db, 'nube.marcas', {});
   let total = 0;
   for (const t of TABLAS_NUBE) {
-    const filas = await db.table(t).where('_v').above(marcas[t] ?? 0).toArray();
-    total += t === 'ajustes' ? filas.filter((f) => !AJUSTES_LOCALES.has(String(f.clave))).length : filas.length;
+    const cambiadas = db.table(t).where('_v').above(marcas[t] ?? 0);
+    // Ajustes es chica: ahí se filtran en memoria los propios del equipo.
+    total +=
+      t === 'ajustes'
+        ? (await cambiadas.toArray()).filter((f: Ajuste) => !AJUSTES_LOCALES.has(f.clave)).length
+        : await cambiadas.count();
   }
   const ultimoBorrado = await leerAjuste<number>(db, 'nube.borrado', 0);
   total += await db.borrados.where('n').above(ultimoBorrado).count();
