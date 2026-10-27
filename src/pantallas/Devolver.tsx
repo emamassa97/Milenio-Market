@@ -7,8 +7,7 @@ import { MEDIOS, nombreMedio, type MedioPago, type Venta } from '../dominio/tipo
 import { db } from '../datos/db';
 import { devolverProductos, turnoAbierto } from '../datos/operaciones';
 import { CampoCantidad, errorATexto, fechaCorta, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
-import { pitido } from '../ui/hooks';
-import { useConsulta, useUnaVez } from '../ui/hooks';
+import { pitido, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 
@@ -55,6 +54,8 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
   const visibles = (i: number) => venta.items.slice(0, i).filter((_, idx) => quedan(idx) > 0).length;
   // Con el modal abierto se escanea lo que traen: cada pasada marca uno más de ese renglón.
   const marcar = (codigo: string): boolean => {
+    // Lo que no es un código de barras no es del lector: el campo lo trata como cantidad ("Como mucho N").
+    if (!codigoEscaneado(codigo)) return false;
     const i = venta.items.findIndex((it, idx) => it.codigo === codigo && quedan(idx) > (cantidades[idx] ?? 0));
     if (i < 0) {
       pitido('error');

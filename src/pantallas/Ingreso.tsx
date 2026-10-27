@@ -5,7 +5,7 @@ import { recuperarDeLaNube } from '../datos/nube';
 import { crearUsuario, ingresar, leerUsuarios } from '../datos/usuarios';
 import { errorATexto, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
-import { useSesion } from '../ui/sesion';
+import { useSesion, LLAVE_SIGUIENTE } from '../ui/sesion';
 
 export function PantallaIngreso() {
   const usuarios = useConsulta(() => leerUsuarios(db), [], null);
@@ -21,9 +21,21 @@ export function PantallaIngreso() {
   );
 }
 
+/** Si se le pasó la caja a alguien, el ingreso ya tiene su usuario escrito: sólo falta la clave. */
+function usuarioSiguiente(): string {
+  try {
+    const u = sessionStorage.getItem(LLAVE_SIGUIENTE) ?? '';
+    sessionStorage.removeItem(LLAVE_SIGUIENTE);
+    return u;
+  } catch {
+    return '';
+  }
+}
+
 function Entrar() {
   const { entrar } = useSesion();
-  const [usuario, setUsuario] = useState('');
+  const [usuario, setUsuario] = useState(usuarioSiguiente);
+  const [sugerido] = useState(() => usuario !== '');
   const [clave, setClave] = useState('');
   const [recordar, setRecordar] = useState(true);
   const [error, setError] = useState('');
@@ -46,11 +58,11 @@ function Entrar() {
       <h1>Ingresar</h1>
       <label className="campo">
         <span className="campo-etiqueta">Usuario</span>
-        <input value={usuario} onChange={(e) => setUsuario(e.target.value)} autoComplete="username" autoCapitalize="none" autoFocus required />
+        <input value={usuario} onChange={(e) => setUsuario(e.target.value)} autoComplete="username" autoCapitalize="none" autoFocus={!sugerido} required />
       </label>
       <label className="campo">
         <span className="campo-etiqueta">Clave</span>
-        <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} autoComplete="current-password" required />
+        <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} autoComplete="current-password" autoFocus={sugerido} required />
       </label>
       <label className="casilla">
         <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} />

@@ -14,6 +14,7 @@ import {
   itemPorPeso,
   formatoPeso,
   itemMontoLibre,
+  esPagoRedondo,
   pagosSugeridos,
   quitarItem,
   subtotal,
@@ -654,7 +655,7 @@ function Caja() {
                       <button
                         key={s}
                         type="button"
-                        className={`chip ${pagaCon === s ? 'activo' : ''} ${s !== total && s % 1000 !== 0 ? 'chip-redondo' : ''}`}
+                        className={`chip ${pagaCon === s ? 'activo' : ''} ${esPagoRedondo(s, total) ? 'chip-redondo' : ''}`}
                         title={s === total ? undefined : `Vuelto ${formatPesos(s - total)}`}
                         onClick={() => {
                           setPagaCon(s);
@@ -662,7 +663,7 @@ function Caja() {
                         }}
                       >
                         {s === total ? 'Justo' : formatPesos(s)}
-                        {s !== total && s % 1000 !== 0 && <small>vuelto {formatPesos(s - total)}</small>}
+                        {esPagoRedondo(s, total) && <small>vuelto {formatPesos(s - total)}</small>}
                       </button>
                     ))}
                   </div>

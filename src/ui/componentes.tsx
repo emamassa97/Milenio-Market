@@ -179,6 +179,31 @@ export function Modal({
 
 // ---------- Campo de pesos ----------
 
+/**
+ * El lector de códigos tipea todas las cifras en milisegundos; una persona, no. Contando las teclas que llegaron
+ * de corrido se sabe qué parte de lo escrito fue el lector (y qué parte, si la hay, se tecleó a mano antes).
+ */
+const PAUSA_ENTRE_TECLAS = 100;
+function useRafaga() {
+  const rafaga = useRef({ ultimo: 0, n: 0 });
+  return {
+    tecla() {
+      const ahora = Date.now();
+      rafaga.current = { ultimo: ahora, n: ahora - rafaga.current.ultimo < PAUSA_ENTRE_TECLAS ? rafaga.current.n + 1 : 1 };
+    },
+    reiniciar() {
+      rafaga.current = { ultimo: 0, n: 0 };
+    },
+    /** El código que acaba de tipear el lector (8 a 14 cifras de corrido al final de `texto`), o null. */
+    codigo(texto: string): { codigo: string; cabeza: string } | null {
+      const n = rafaga.current.n;
+      if (n < 8) return null;
+      const codigo = codigoEscaneado(texto.slice(-n));
+      return codigo ? { codigo, cabeza: texto.slice(0, -n) } : null;
+    },
+  };
+}
+
 export function CampoPesos({
   valor,
   onCambio,
@@ -211,6 +236,7 @@ export function CampoPesos({
   const ultimo = useRef(valor);
   // Lo que había al entrar al campo: si lo tecleado rebota, se vuelve a eso (no a un parcial de lo que tipeó el lector).
   const alEntrar = useRef(valor);
+  const rafaga = useRafaga();
   useEffect(() => {
     if (valor !== ultimo.current) {
       setTexto(valor === null ? '' : formatearEdicion(valor));
@@ -223,18 +249,12 @@ export function CampoPesos({
   };
   // Un monto imposible vuelve al valor de antes; si era un código de barras, se suma como producto o se avisa.
   const rebotar = (t: string) => {
-    const digitos = t.replace(/\D/g, '');
+    // Sólo lo que llegó de corrido es del lector; "15.000.000" tecleado a mano es un monto pasado, no un código.
+    const leido = rafaga.codigo(t.replace(/\D/g, ''));
+    const codigo = leido?.codigo ?? null;
     let antes = alEntrar.current;
-    let codigo = codigoEscaneado(digitos);
-    // El lector tipeó a continuación de un monto ya escrito ("5.000" + código de 13 cifras): el monto queda y el código se suma aparte.
-    if (!codigo && !t.includes(',') && digitos.length > 13) {
-      const cola = codigoEscaneado(digitos.slice(-13));
-      const cabeza = Number(digitos.slice(0, -13));
-      if (cola && cabeza <= maximo) {
-        codigo = cola;
-        antes = cabeza;
-      }
-    }
+    // El lector tipeó a continuación de un monto ya escrito ("5.000" + código): el monto queda y el código se suma aparte.
+    if (leido && leido.cabeza !== '' && !t.includes(',') && Number(leido.cabeza) <= maximo) antes = Number(leido.cabeza);
     ultimo.current = antes;
     setTexto(antes === null ? '' : formatearEdicion(antes));
     onCambio(antes);
@@ -256,6 +276,7 @@ export function CampoPesos({
         value={texto}
         onFocus={(e) => {
           alEntrar.current = valor;
+          rafaga.reiniciar();
           e.currentTarget.select();
         }}
         onKeyDown={(e) => {
@@ -272,6 +293,7 @@ export function CampoPesos({
         }}
         onChange={(e) => {
           const crudo = e.target.value;
+          rafaga.tecla();
           // Pasado el máximo (el lector tipeando su código) se muestra lo escrito pero no se aplica: al Enter o al salir rebota.
           if (pasado(crudo)) {
             setTexto(crudo);
@@ -338,6 +360,7 @@ export function CampoCantidad({
   const [texto, setTexto] = useState(() => mostrar(valor));
   const [conFoco, setConFoco] = useState(false);
   const antes = useRef(valor);
+  const rafaga = useRafaga();
   useEffect(() => {
     if (!conFoco) setTexto(valor === 0 && vacioEnCero ? '' : String(valor));
   }, [valor, conFoco, vacioEnCero]);
@@ -345,27 +368,18 @@ export function CampoCantidad({
   const terminar = (crudo: string) => {
     setConFoco(false);
     if (crudo.length > largo) {
-      // "12" y enseguida el lector: la cantidad va adelante y el código (13 cifras) atrás; se aplican las dos cosas.
-      if (onEscaneo && crudo.length > 13 && crudo.length - 13 <= largo) {
-        const cantidad = Number(crudo.slice(0, -13));
-        const codigo = crudo.slice(-13);
-        if (cantidad >= Math.max(1, minimo) && cantidad <= max) {
-          // Primero la cantidad de este renglón; después lo escaneado (que puede reacomodar los renglones).
-          onCambio(cantidad);
-          setTexto(mostrar(cantidad));
-          if (onEscaneo(codigo)) {
-            avisar({ texto: `Quedaron ${cantidad}, y lo que pasó el lector se sumó aparte.`, tipo: 'ok' });
-            return;
-          }
-        }
+      // Lo que llegó de corrido fue el lector; "12" tecleado antes es la cantidad: se aplican las dos cosas.
+      const leido = rafaga.codigo(crudo);
+      const cabeza = leido ? Number(leido.cabeza) : NaN;
+      const cantidad = leido && leido.cabeza !== '' && cabeza >= Math.max(1, minimo) && cabeza <= max ? cabeza : antes.current;
+      // Primero la cantidad de este renglón; después lo escaneado (que puede reacomodar los renglones).
+      onCambio(cantidad);
+      setTexto(mostrar(cantidad));
+      if (leido && onEscaneo && onEscaneo(leido.codigo)) {
+        if (cantidad !== antes.current) avisar({ texto: `Quedaron ${cantidad}, y lo que pasó el lector se sumó aparte.`, tipo: 'ok' });
+        return;
       }
-      onCambio(antes.current);
-      setTexto(mostrar(antes.current));
-      if (onEscaneo && onEscaneo(crudo)) return;
-      avisar({
-        texto: codigoEscaneado(crudo) ? 'Pasaste el lector con el cursor acá: en este campo va cuántos hay.' : `Como mucho ${max}.`,
-        tipo: 'error',
-      });
+      avisar({ texto: leido ? 'Pasaste el lector con el cursor acá: en este campo va cuántos hay.' : `Como mucho ${max}.`, tipo: 'error' });
       return;
     }
     const n = crudo === '' ? (minimo > 0 ? antes.current : 0) : Math.min(Number(crudo), max);
@@ -382,11 +396,13 @@ export function CampoCantidad({
       value={texto}
       onFocus={(e) => {
         antes.current = valor;
+        rafaga.reiniciar();
         setConFoco(true);
         e.currentTarget.select();
       }}
       onChange={(e) => {
         const t = e.target.value.replace(/\D/g, '');
+        rafaga.tecla();
         setTexto(t);
         const n = Number(t);
         if (enVivo && t.length <= largo && n >= minimo) onCambio(Math.min(n, max));

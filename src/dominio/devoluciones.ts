@@ -46,18 +46,18 @@ export function totalNeto(venta: Pick<Venta, 'total' | 'devoluciones'>): Pesos {
  * 3 devuelve $400, porque las otras 2 pasan a precio suelto.
  */
 export function montoDevolucion(venta: Pick<Venta, 'items' | 'devoluciones' | 'total' | 'descuento'>, renglones: RenglonDevuelto[]): Pesos {
-  let monto = 0;
-  for (const r of renglones) {
-    const it = venta.items[r.indice];
-    if (!it || r.cantidad <= 0) continue;
-    const quedan = it.cantidad - cantidadDevuelta(venta, r.indice);
-    const despues = quedan - r.cantidad;
-    monto += subtotal({ ...it, cantidad: quedan }) - (despues > 0 ? subtotal({ ...it, cantidad: despues }) : 0);
-  }
-  // Con descuento en la venta, se devuelve lo que se cobró de verdad: una Coca de lista $1.400 vendida con 10 % menos devuelve $1.260.
   const lista = venta.items.reduce((s, it) => s + subtotal(it), 0);
-  if (venta.descuento && lista > 0) monto = Math.round((monto * (lista - venta.descuento)) / lista);
-  return Math.min(monto, totalNeto(venta));
+  if (lista <= 0) return 0;
+  // Lo que se cobra por un estado de la venta: la suma de lista, en la proporción en que se cobró de verdad
+  // (con descuento, una Coca de lista $1.400 vendida con 10 % menos vale $1.260). Se calcula lo cobrado antes y
+  // después de esta devolución y se devuelve la diferencia: así varias devoluciones parciales suman exacto lo cobrado.
+  const cobradoPor = (cantidades: number[]) =>
+    Math.round((venta.items.reduce((s, it, i) => s + (cantidades[i]! > 0 ? subtotal({ ...it, cantidad: cantidades[i]! }) : 0), 0) * venta.total) / lista);
+  const antes = venta.items.map((it, i) => it.cantidad - cantidadDevuelta(venta, i));
+  const despues = [...antes];
+  for (const r of renglones) if (venta.items[r.indice] && r.cantidad > 0) despues[r.indice] = Math.max(0, despues[r.indice]! - r.cantidad);
+  const monto = cobradoPor(antes) - cobradoPor(despues);
+  return Math.max(0, Math.min(monto, totalNeto(venta)));
 }
 
 /** "2 Coca-Cola 500 ml, Queso de máquina" (lo que va por peso vuelve entero). */
