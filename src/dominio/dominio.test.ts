@@ -16,7 +16,7 @@ import { exportarCsv, importarCsv } from './csv';
 import { formatPesos, parsePesos } from './dinero';
 import { deudaDesde, saldoCliente, superaLimite } from './fiado';
 import { aplicarAumento, margen } from './precios';
-import { paraReponer, resumirVentas, sinMovimiento } from './reportes';
+import { masDevueltos, paraReponer, resumirVentas, sinMovimiento } from './reportes';
 import type { ItemVenta, MovimientoFiado, Producto, Venta } from './tipos';
 
 const item = (productoId: number, precio: number, cantidad = 1): ItemVenta => ({
@@ -174,6 +174,20 @@ describe('reportes', () => {
     expect(r.ventasSinCosto).toBe(500);
     expect(r.porHora[18]).toBe(2500);
     expect(r.productos[0]).toMatchObject({ nombre: 'P1', unidades: 2, total: 2000 });
+  });
+  it('lo que más se devolvió, con el motivo más repetido', () => {
+    const base: Venta = {
+      fecha: 0, turnoId: 1, cajero: '', total: 3000, medio: 'efectivo', pagaCon: null, vuelto: 0, clienteId: null, anulada: false,
+      items: [item(1, 1000, 2), item(2, 500, 2)],
+    };
+    const v1: Venta = { ...base, devoluciones: [{ fecha: 1, turnoId: 1, items: [{ indice: 0, cantidad: 1 }, { indice: 1, cantidad: 2 }], monto: 2000, medio: 'efectivo', motivo: 'Vencido' }] };
+    const v2: Venta = { ...base, devoluciones: [{ fecha: 2, turnoId: 1, items: [{ indice: 0, cantidad: 2 }], monto: 2000, medio: 'efectivo', motivo: 'Vino fallado' }] };
+    const filas = masDevueltos([v1, v2, { ...v2, anulada: true }]);
+    expect(filas.map((f) => [f.nombre, f.unidades, f.importe, f.motivo])).toEqual([
+      ['P1', 3, 3000, 'Vino fallado'],
+      ['P2', 2, 1000, 'Vencido'],
+    ]);
+    expect(masDevueltos([base])).toEqual([]);
   });
   it('reposición y sin movimiento', () => {
     const p = (id: number, stock: number, stockMinimo: number): Producto => ({

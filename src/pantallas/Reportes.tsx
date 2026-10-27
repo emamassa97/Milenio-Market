@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { esGastoDelLocal } from '../dominio/caja';
 import { formatPesos } from '../dominio/dinero';
 import { saldoCliente } from '../dominio/fiado';
-import { paraReponer, resumirVentas, sinMovimiento } from '../dominio/reportes';
+import { masDevueltos, paraReponer, resumirVentas, sinMovimiento } from '../dominio/reportes';
 import { MEDIOS, type Producto, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { sinCortes, Vacio } from '../ui/componentes';
@@ -69,6 +69,7 @@ export function PantallaReportes() {
   );
 
   const r = useMemo(() => resumirVentas(ventas), [ventas]);
+  const devueltos = useMemo(() => masDevueltos(ventas), [ventas]);
   const cobradoBruto = Math.max(1, Object.values(r.porMedio).reduce((a, b) => a + b, 0));
   const reponer = useMemo(() => paraReponer(productos), [productos]);
   const quietos = useMemo(() => sinMovimiento(productos, ventas30).slice(0, 10), [productos, ventas30]);
@@ -171,6 +172,24 @@ export function PantallaReportes() {
               ))}
             </ol>
           </section>
+          {devueltos.length > 0 && (
+            <section className="tarjeta">
+              <h2 className="titulo-chico">Lo que más se devolvió</h2>
+              <p className="texto-suave">Si un producto vuelve seguido, conviene revisarlo con el proveedor.</p>
+              <ol className="ranking">
+                {devueltos.slice(0, 8).map((p) => (
+                  <li key={p.clave}>
+                    <span>
+                      {sinCortes(p.nombre)}
+                      {p.motivo && <small className="texto-suave"> · {p.motivo}</small>}
+                    </span>
+                    <span className="texto-suave">{p.unidades} u.</span>
+                    <span className="importe">{formatPesos(p.importe)}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
         </div>
       )}
 
