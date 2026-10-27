@@ -9,8 +9,10 @@ export default defineConfig({
     // "cáscara" (HTML, JS, CSS, fuentes, íconos) y se actualiza solo cuando
     // hay una versión nueva publicada. Los datos viven en IndexedDB, no acá.
     VitePWA({
+      // La versión nueva se instala sola (skipWaiting); src/main.tsx la busca cada
+      // media hora y recarga cuando nadie está usando la caja (no en medio de un cobro).
       registerType: 'autoUpdate',
-      injectRegister: 'auto',
+      injectRegister: false,
       includeAssets: ['icono.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Milenio Market',
@@ -35,9 +37,11 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [],
         cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
       },
     }),
   ],
   build: { assetsInlineLimit: 100_000 },
-  test: { environment: 'node' },
+  test: { environment: 'node', exclude: ['**/node_modules/**', '.claude/**', 'dist/**'] },
 });

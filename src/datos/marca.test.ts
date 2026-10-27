@@ -43,7 +43,8 @@ describe('marca de sincronización', () => {
     await despues.subirCambios(db2, async (l) => {
       for (const r of l.registros) if (r.tabla === 'productos') subidos.push((r.datos as { nombre: string }).nombre);
     });
-    expect(subidos).toEqual(['Chicle']);
+    // Lo de los últimos minutos se vuelve a mandar (la nube lo reconoce); lo nuevo, seguro.
+    expect(subidos).toContain('Chicle');
     await db2.delete();
   });
 

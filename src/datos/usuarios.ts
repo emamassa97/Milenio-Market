@@ -1,4 +1,5 @@
 import type { BaseKiosco } from './db';
+import { pendientes, sincronizarAhora } from './nube';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
 
 // Usuarios para entrar al sistema. Se guardan en los ajustes (así viajan con la
@@ -25,6 +26,15 @@ async function derivar(clave: string, sal: string): Promise<string> {
 }
 
 const normalizar = (usuario: string) => usuario.trim().toLowerCase();
+
+/**
+ * Junta dos listas de usuarios (la de un equipo que se une a la nube y la de la
+ * nube): nadie desaparece. Si el mismo usuario está en las dos, gana `preferida`.
+ */
+export function combinarUsuarios(preferida: Usuario[], otra: Usuario[]): Usuario[] {
+  const nombres = new Set(preferida.map((u) => u.usuario));
+  return [...preferida, ...otra.filter((u) => u && !nombres.has(u.usuario))];
+}
 
 export async function leerUsuarios(db: BaseKiosco): Promise<Usuario[]> {
   return leerAjuste<Usuario[]>(db, 'usuarios', []);
@@ -106,19 +116,24 @@ export async function revalidarSesion(db: BaseKiosco, usuario: string | Pick<Usu
 }
 
 /** Lo que hay guardado en este equipo, para saber qué se pierde al empezar de cero. */
-export async function resumenEquipo(db: BaseKiosco): Promise<{ productos: number; ventas: number; clientes: number }> {
-  const [productos, ventas, clientes] = await Promise.all([db.productos.count(), db.ventas.count(), db.clientes.count()]);
-  return { productos, ventas, clientes };
+export async function resumenEquipo(db: BaseKiosco): Promise<{ productos: number; ventas: number; clientes: number; sinSubir: number }> {
+  const [productos, ventas, clientes, clave] = await Promise.all([db.productos.count(), db.ventas.count(), db.clientes.count(), leerAjuste<string>(db, 'nube.clave', '')]);
+  // Con nube, lo que todavía no se subió es lo único que se pierde de verdad.
+  return { productos, ventas, clientes, sinSubir: clave ? await pendientes(db) : 0 };
 }
 
 /**
  * Para el dueño que se olvidó la clave: borra todo lo guardado en este equipo
- * (usuarios incluidos) y vuelve a la pantalla de crear el usuario. Se conservan
- * el id del equipo y la clave de la nube, para que la copia siga andando.
+ * (usuarios incluidos) y vuelve a la pantalla de crear el usuario. Con la nube,
+ * los datos vuelven solos y la clave nueva del dueño llega a todos los equipos.
  */
 export async function empezarDeCero(db: BaseKiosco): Promise<void> {
+  // Lo que falte subir se sube antes (si hay internet), así no se pierde.
+  await sincronizarAhora(db).catch(() => null);
   await db.transaction('rw', db.tables, async () => {
-    const guardar = (await db.ajustes.toArray()).filter((x) => x.clave === 'dispositivo' || x.clave === 'nube.clave');
+    // Se conserva la nube: al crear el usuario nuevo, este equipo vuelve a traer todo de ahí
+    // (y la clave nueva del dueño pasa a valer en todos los equipos).
+    const guardar = (await db.ajustes.toArray()).filter((x) => x.clave === 'nube.clave' || x.clave === 'nube.id');
     for (const t of db.tables) await t.clear();
     if (guardar.length) await db.ajustes.bulkPut(guardar);
   });

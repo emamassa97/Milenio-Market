@@ -36,10 +36,13 @@ export function PantallaAjustes() {
     }
   };
 
+  // El empleado sólo ve su usuario: una columna. El dueño, dos desde 1200 px (personas y ticket | equipo y copias).
+  const soloEmpleado = Boolean(sesion && !sesion.admin);
   return (
-    <div className="pagina pagina-angosta">
+    <div className={`pagina ${soloEmpleado ? 'pagina-angosta' : 'pagina-ajustes'}`}>
       <h1>Ajustes</h1>
 
+      <div className="ajustes-columna">
       {sesion ? (
         <Usuarios />
       ) : (
@@ -64,9 +67,11 @@ export function PantallaAjustes() {
       </section>
       )}
 
-      {sesion && !sesion.admin ? null : (
-        <>
-      <AjustesDelTicket />
+      {!soloEmpleado && <AjustesDelTicket />}
+      </div>
+
+      {soloEmpleado ? null : (
+        <div className="ajustes-columna">
       <section className="tarjeta formulario">
         <h2 className="titulo-chico">Pantalla para el cliente</h2>
         <p className="texto-suave">Un segundo monitor conectado a esta compu, mirando al mostrador: el cliente ve lo que lleva, el total y el vuelto. Abrila con este botón y arrastrá la ventana a ese monitor.</p>
@@ -164,7 +169,7 @@ export function PantallaAjustes() {
           )}
         </section>
       )}
-        </>
+        </div>
       )}
     </div>
   );
@@ -174,22 +179,25 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
   const avisar = useAvisar();
   const [enCurso, unaVez] = useUnaVez();
   const [clave, setClave] = useState('');
+  const { sesion } = useSesion();
   const estado = useConsulta(
     async () => ({
       clave: await leerAjuste<string>(db, 'nube.clave', ''),
+      equipo: await leerAjuste<number | null>(db, 'nube.n', null),
       ultima: await leerAjuste<number | null>(db, 'nube.ultima', null),
       error: await leerAjuste<string | null>(db, 'nube.error', null),
       pendientes: await pendientes(db),
     }),
     [],
-    { clave: '', ultima: null, error: null, pendientes: 0 },
+    { clave: '', equipo: null as number | null, ultima: null, error: null, pendientes: 0 },
   );
 
   const subir = () =>
     unaVez(async () => {
       try {
         const r = await sincronizarAhora(db);
-        avisar({ texto: r && r.subidas > 0 ? `Listo: se subieron ${r.subidas} cambios.` : 'La copia en la nube ya estaba al día.', tipo: 'ok' });
+        const cambios = (r?.subidas ?? 0) + (r?.bajadas ?? 0);
+        avisar({ texto: cambios > 0 ? `Listo: se subieron ${r!.subidas} y llegaron ${r!.bajadas} cambios.` : 'Este equipo ya estaba al día con la nube.', tipo: 'ok' });
       } catch (e) {
         avisar({ texto: errorATexto(e), tipo: 'error' });
       }
@@ -199,25 +207,30 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
 
   return (
     <section className="tarjeta formulario ajustes-nube">
-      <h2 className="titulo-chico">Copia en la nube</h2>
+      <h2 className="titulo-chico">Nube: todos los equipos al día</h2>
       {estado.clave ? (
         <>
           <p className="texto-suave estado-nube">
-            <span>
+            <span className={estado.error ? 'texto-alerta' : undefined}>
               {estado.error
-                ? `No se pudo subir: ${estado.error}`
+                ? `No se pudo sincronizar: ${estado.error}`
                 : estado.pendientes > 0
-                  ? `Faltan subir ${estado.pendientes} cambios. Se suben solos cada minuto cuando hay internet.`
-                  : 'Todo lo cargado en este equipo ya está copiado en la nube.'}
+                  ? `Faltan subir ${estado.pendientes} cambios. Se suben solos cada medio minuto cuando hay internet.`
+                  : 'Este equipo está al día: lo que se carga acá llega a los otros, y lo de los otros llega acá.'}
             </span>
-            <span>{estado.ultima ? `Última vez: ${fechaCorta(estado.ultima)}` : 'Todavía no se subió nada.'}</span>
             <span>
-              Clave de esta caja: <strong>{estado.clave}</strong>. Guardala: con ella recuperás todo en otra compu.
+              {estado.ultima ? `Última vez: ${fechaCorta(estado.ultima)}` : 'Todavía no se sincronizó.'}
+              {estado.equipo !== null && ` · Este es el equipo ${estado.equipo}`}
             </span>
+            {sesion?.admin && !estado.clave.startsWith('e.') && (
+              <span>
+                Clave de la nube: <strong>{estado.clave}</strong>. No hace falta para entrar en otro equipo (alcanza con tu usuario), pero guardala por las dudas.
+              </span>
+            )}
           </p>
           <div className="botonera">
             <button type="button" className="boton boton-primario" disabled={enCurso || !navigator.onLine} onClick={subir}>
-              <Icono nombre="nube" tam={18} /> Subir ahora
+              <Icono nombre="nube" tam={18} /> Sincronizar ahora
             </button>
             <button
               type="button"
@@ -236,7 +249,7 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
       ) : (
         <>
           <p className="texto-suave">
-            Es una copia de seguridad: cada venta, producto y fiado se guarda también en internet, por si la compu se rompe o se la roban. No sincroniza entre equipos (atender desde dos compus a la vez queda para más adelante). La caja sigue andando igual sin conexión y sube lo pendiente cuando vuelve. La primera caja se activa sola; en una compu o celular nuevo, entrá con tu usuario de siempre y se trae todo solo.
+            Cada venta, producto y fiado se guarda también en internet y llega a todos tus equipos: la PC del mostrador, el celular, otra compu. Cada uno tiene su propia caja y todos ven las mismas ventas, el mismo stock y el mismo fiado. Sin conexión la caja sigue andando y se pone al día cuando vuelve. La primera caja se activa sola; en una compu o celular nuevo, entrá con tu usuario de siempre y se trae todo solo.
           </p>
           <label className="campo">
             <span className="campo-etiqueta">Clave de la nube</span>
@@ -432,7 +445,7 @@ function AjustesDelTicket() {
     await guardarAjuste(db, 'ticket', nuevo);
   };
   return (
-    <section className="tarjeta formulario">
+    <section className="tarjeta formulario ajustes-ticket">
       <h2 className="titulo-chico">Ticket</h2>
       <p className="texto-suave">Para impresoras térmicas. No es factura: es el comprobante para el cliente.</p>
       <div className="ticket-ajustes">

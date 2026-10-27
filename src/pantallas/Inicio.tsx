@@ -6,9 +6,10 @@ import { saldoCliente } from '../dominio/fiado';
 import { paraReponer, porVencer, resumirVentas } from '../dominio/reportes';
 import type { Evento, MovimientoCaja, Producto, Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
-import { leerAjuste, turnoAbierto } from '../datos/operaciones';
+import { cajasDeOtrosEquipos, leerAjuste, turnoAbierto } from '../datos/operaciones';
 import { hora, Icono, sinCortes } from '../ui/componentes';
-import { useConsulta } from '../ui/hooks';
+import { useConsulta, useEstadoNube } from '../ui/hooks';
+import { AVISO_SIN_ACTIVAR } from '../datos/nube';
 import { useSesion } from '../ui/sesion';
 
 // Panel del dueño: en una mirada, cómo viene el día y qué hay que atender.
@@ -68,6 +69,8 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
     { cantidad: 0, monto: 0, porUsuario: [] as [string, number][], lista: [] as Evento[] },
   );
   const [verCanceladas, setVerCanceladas] = useState(false);
+  // La nube que no sube es una advertencia de perder datos: va en "Para atender", no sólo en el chip del menú.
+  const nube = useEstadoNube();
   // Sin copia en la nube, que no pasen más de 7 días sin bajar una copia (si ya hubo algún turno).
   const copia = useConsulta<{ dias: number | null } | null>(
     async () => {
@@ -97,14 +100,16 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
   );
   const caja = useConsulta(
     async () => {
-      const t = await turnoAbierto(db);
+      // La de este equipo; si no tiene, la que está abierta en otro (el dueño mira la PC desde el celular).
+      const propia = await turnoAbierto(db);
+      const t = propia ?? (await cajasDeOtrosEquipos(db)).sort((a, b) => b.apertura - a.apertura)[0];
       if (!t) return null;
       const [vs, movs, pagos] = await Promise.all([
         db.ventas.where('turnoId').equals(t.id!).toArray(),
         db.movimientosCaja.where('turnoId').equals(t.id!).toArray(),
         db.movimientosFiado.where('turnoId').equals(t.id!).toArray(),
       ]);
-      return { turno: t, resumen: resumirTurno(t.fondoInicial, vs, movs, pagos) };
+      return { turno: t, ajena: !propia, resumen: resumirTurno(t.fondoInicial, vs, movs, pagos) };
     },
     [],
     null,
@@ -149,6 +154,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
     });
   }, [ventas, hace7]);
   const maxDia = Math.max(...dias.map((d) => d.total), 1);
+  const semanaVacia = dias.every((d) => d.total === 0);
   const reponer = useMemo(() => paraReponer(productos), [productos]);
   const vencen = useMemo(() => porVencer(productos, 15), [productos]);
   const cambio = variacion(r.total, ayer.total);
@@ -209,15 +215,26 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
               Ver reportes
             </button>
           </div>
-          <ol className="semana" aria-label="Ventas por día">
-            {dias.map((d) => (
-              <li key={d.etiqueta + d.total} className={d.hoy ? 'semana-hoy' : ''}>
-                <span className="semana-monto importe">{d.total > 0 ? formatPesos(d.total) : ''}</span>
-                <span className="semana-barra" style={{ height: `${Math.max(2, (d.total / maxDia) * 100)}%` }} />
-                <span className="semana-dia">{d.etiqueta}</span>
-              </li>
-            ))}
-          </ol>
+          {semanaVacia ? (
+            // Sin ventas, siete rayitas grises no dicen nada: un estado vacío como el de la caja.
+            <div className="semana-vacia">
+              <span className="vacio-icono">
+                <Icono nombre="reportes" tam={26} />
+              </span>
+              <p className="vacio-titulo">Cuando vendas, acá ves la semana</p>
+              <p className="texto-suave">Las ventas de cada día, para comparar con la anterior.</p>
+            </div>
+          ) : (
+            <ol className="semana" aria-label="Ventas por día">
+              {dias.map((d) => (
+                <li key={d.etiqueta + d.total} className={d.hoy ? 'semana-hoy' : ''}>
+                  <span className="semana-monto importe">{d.total > 0 ? formatPesos(d.total) : ''}</span>
+                  <span className="semana-barra" style={{ height: `${Math.max(2, (d.total / maxDia) * 100)}%` }} />
+                  <span className="semana-dia">{d.etiqueta}</span>
+                </li>
+              ))}
+            </ol>
+          )}
         </section>
 
         <section className="tarjeta">
@@ -228,6 +245,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
                 <dt>Abierta por</dt>
                 <dd>
                   {caja.turno.cajero} a las {hora(caja.turno.apertura)}
+                  {caja.ajena && <span className="texto-suave"> · en otro equipo</span>}
                 </dd>
               </div>
               <div>
@@ -248,8 +266,8 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
           ) : (
             <p className="texto-suave inicio-vacio">La caja está cerrada.</p>
           )}
-          <button type="button" className="boton boton-chico inicio-accion" onClick={() => ir(caja ? 'cierre' : 'caja')}>
-            {caja ? 'Ir al cierre' : 'Abrir la caja'}
+          <button type="button" className="boton boton-chico inicio-accion" onClick={() => ir(caja && !caja.ajena ? 'cierre' : 'caja')}>
+            {caja && !caja.ajena ? 'Ir al cierre' : 'Abrir la caja'}
           </button>
         </section>
 
@@ -350,6 +368,19 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
                     ))}
                   </ul>
                 )}
+              </li>
+            )}
+            {nube.aviso && (
+              <li>
+                <button type="button" onClick={() => ir('ajustes')}>
+                  <span className="alerta-icono alerta-aviso">
+                    <Icono nombre="nube-no" tam={18} />
+                  </span>
+                  <span>
+                    <strong>{nube.aviso === AVISO_SIN_ACTIVAR ? 'La copia en la nube no está activada en este equipo' : 'La copia en la nube no se está subiendo'}</strong>
+                    <small>{nube.aviso} Revisalo en Ajustes</small>
+                  </span>
+                </button>
               </li>
             )}
             {copia && (

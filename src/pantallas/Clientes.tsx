@@ -140,8 +140,8 @@ export function PantallaClientes() {
                   <strong className={`importe ${detalle.saldo < 0 ? 'texto-positivo' : ''}`}>{formatPesos(Math.abs(detalle.saldo))}</strong>
                 </div>
                 <div className="botonera">
-                  <button type="button" className="boton boton-primario" disabled={detalle.saldo <= 0} onClick={() => setModal({ tipo: 'pago', fila: detalle })}>
-                    Registrar pago
+                  <button type="button" className="boton boton-primario" onClick={() => setModal({ tipo: 'pago', fila: detalle })}>
+                    {detalle.saldo > 0 ? 'Registrar pago' : 'Dejar plata a cuenta'}
                   </button>
                   {detalle.saldo > 0 && whatsapp && (
                     <a

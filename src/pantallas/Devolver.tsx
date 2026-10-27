@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { formatoPeso, pagosDeVenta } from '../dominio/carrito';
-import { cantidadDevuelta, describirPagos, fiadoDisponible, montoDevolucion, type RenglonDevuelto } from '../dominio/devoluciones';
+import { cantidadDevuelta, describirPagos, efectivoDisponible, fiadoDisponible, montoDevolucion, type RenglonDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { codigoEscaneado } from '../dominio/entrada';
 import { MEDIOS, nombreMedio, type MedioPago, type Venta } from '../dominio/tipos';
@@ -95,10 +95,15 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
         onSubmit={(e) => {
           e.preventDefault();
           unaVez(async () => {
-            const quien = (delTurno ? sesion?.usuario : await pedirDueño('Devolver plata de una venta de otro día')) ?? undefined;
-            if (!delTurno && !quien) return;
+            // Dar efectivo por algo que no entró en efectivo (o más de lo que entró) es como sacar plata del cajón: pide al dueño.
+            const efectivoDeMas = medio === 'efectivo' && monto > efectivoDisponible(venta) && !sesion?.admin;
+            const quien =
+              (delTurno && !efectivoDeMas
+                ? sesion?.usuario
+                : await pedirDueño(delTurno ? 'Devolver en efectivo lo que no se cobró en efectivo' : 'Devolver plata de una venta de otro día')) ?? undefined;
+            if ((!delTurno || efectivoDeMas) && !quien) return;
             try {
-              await devolverProductos(db, venta.id!, renglones, medio, motivo, quien);
+              await devolverProductos(db, venta.id!, renglones, medio, motivo, quien, efectivoDeMas || !delTurno || Boolean(sesion?.admin));
               avisar({
                 texto:
                   medio === 'efectivo'

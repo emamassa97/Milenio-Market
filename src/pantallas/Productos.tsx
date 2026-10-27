@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/csv';
 import { formatPesos } from '../dominio/dinero';
 import { cantidadDeTexto, codigoEscaneado, normalizarTexto as normalizar } from '../dominio/entrada';
@@ -34,6 +34,9 @@ const FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'reponer', nombre: 'Para reponer' },
   { id: 'vencen', nombre: 'Por vencer' },
   { id: 'promos', nombre: 'Con promo' },
+];
+// Los de revisar la carga van en "Más filtros", así los chips entran en una fila.
+const MAS_FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'rapidos', nombre: 'Rápidos' },
   { id: 'sinCodigo', nombre: 'Sin código' },
   { id: 'sinCosto', nombre: 'Sin costo' },
@@ -42,6 +45,8 @@ const FILTROS: { id: Filtro; nombre: string }[] = [
 const necesitaReponer = (p: Producto) => p.stockMinimo > 0 && p.stock <= p.stockMinimo;
 const vencePronto = (p: Producto) => !!p.vence && diasParaVencer(p.vence) <= 15;
 const textoStock = (p: Producto) => (p.porPeso ? `${p.stock.toLocaleString('es-AR', { maximumFractionDigits: 3 })} kg` : String(p.stock));
+
+const POR_PAGINA = 200;
 
 export function PantallaProductos() {
   const avisar = useAvisar();
@@ -87,10 +92,17 @@ export function PantallaProductos() {
     [productos],
   );
 
+  // Con miles de productos: el orden y el texto para buscar se arman una vez, la búsqueda
+  // no frena el tipeo (useDeferredValue) y se dibujan de a 200.
+  const ordenados = useMemo(
+    () => productos.map((p) => ({ p, texto: normalizar(`${p.nombre} ${p.codigo} ${p.categoria}`) })).sort((a, b) => a.p.nombre.localeCompare(b.p.nombre)),
+    [productos],
+  );
+  const qDiferida = useDeferredValue(q);
   const visibles = useMemo(() => {
-    const palabras = normalizar(q.trim()).split(/\s+/).filter(Boolean);
-    return productos
-      .filter((p) => {
+    const palabras = normalizar(qDiferida.trim()).split(/\s+/).filter(Boolean);
+    return ordenados
+      .filter(({ p, texto }) => {
         if (categoria && p.categoria !== categoria) return false;
         if (filtro === 'reponer' && !necesitaReponer(p)) return false;
         if (filtro === 'rapidos' && !p.rapido) return false;
@@ -98,11 +110,12 @@ export function PantallaProductos() {
         if (filtro === 'promos' && !p.promo) return false;
         if (filtro === 'sinCodigo' && p.codigo) return false;
         if (filtro === 'sinCosto' && p.costo > 0) return false;
-        const texto = normalizar(`${p.nombre} ${p.codigo} ${p.categoria}`);
         return palabras.every((w) => texto.includes(w));
       })
-      .sort((a, b) => a.nombre.localeCompare(b.nombre));
-  }, [productos, q, filtro, categoria]);
+      .map(({ p }) => p);
+  }, [ordenados, qDiferida, filtro, categoria]);
+  const [tope, setTope] = useState(POR_PAGINA);
+  useEffect(() => setTope(POR_PAGINA), [qDiferida, filtro, categoria]);
 
   const cuantosReponer = productos.filter(necesitaReponer).length;
 
@@ -194,7 +207,7 @@ export function PantallaProductos() {
         <div className="chips" role="group" aria-label="Filtro">
           {categorias.length > 0 && (
             <select value={categoria} onChange={(e) => setCategoria(e.target.value)} aria-label="Categoría">
-              <option value="">Todas las categorías</option>
+              <option value="">Categorías</option>
               {categorias.map((c) => (
                 <option key={c}>{c}</option>
               ))}
@@ -205,6 +218,19 @@ export function PantallaProductos() {
               {f.nombre}
             </button>
           ))}
+          <select
+            className={MAS_FILTROS.some((f) => f.id === filtro) ? 'activo' : ''}
+            value={MAS_FILTROS.some((f) => f.id === filtro) ? filtro : ''}
+            onChange={(e) => setFiltro((e.target.value || 'todos') as Filtro)}
+            aria-label="Más filtros"
+          >
+            <option value="">Más filtros</option>
+            {MAS_FILTROS.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.nombre}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -225,7 +251,7 @@ export function PantallaProductos() {
             <span />
           </div>
           <ul>
-            {visibles.map((p) => {
+            {visibles.slice(0, tope).map((p) => {
               const m = margen(p.precio, p.costo);
               return (
                 <li key={p.id} className="fila-producto">
@@ -265,6 +291,11 @@ export function PantallaProductos() {
               );
             })}
           </ul>
+          {visibles.length > tope && (
+            <button type="button" className="boton mostrar-mas" onClick={() => setTope((t) => t + POR_PAGINA)}>
+              Mostrar {Math.min(POR_PAGINA, visibles.length - tope)} más (quedan {visibles.length - tope})
+            </button>
+          )}
         </div>
       )}
 

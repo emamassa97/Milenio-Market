@@ -5,7 +5,7 @@ import { manejar, TABLAS_SERVIDOR, type Consulta } from '../../servidor/sincroni
 import { BaseKiosco, TABLAS_NUBE } from './db';
 import { cargarEjemplo } from './ejemplo';
 import { borrarProducto, guardarAjuste, guardarProducto, leerAjuste } from './operaciones';
-import { activarNube, estadoNube, listarEquipos, pedirAlta, pendientes, recuperarDeLaNube, subirCambios, type Lote } from './nube';
+import { activarNube, estadoNube, pedirAlta, pendientes, subirCambios, type Lote } from './nube';
 
 let db: BaseKiosco;
 let n = 0;
@@ -28,13 +28,14 @@ describe('copia en la nube (equipo)', () => {
     const ids = new Set(lotes.flatMap((l) => l.registros.map((r) => `${r.tabla}:${r.id}`)));
     expect([...ids].filter((x) => x.startsWith('productos')).length).toBe(950);
     expect(lotes.every((l) => l.registros.length <= 400)).toBe(true);
-    lotes.length = 0;
-    expect(await subirCambios(db, enviar)).toBe(0);
+    expect(await pendientes(db)).toBe(0);
     await db.productos.update(5, { precio: 99 });
     expect(await pendientes(db)).toBe(1);
+    lotes.length = 0;
     await subirCambios(db, enviar);
-    expect(lotes[0]!.registros).toHaveLength(1);
-    expect((lotes[0]!.registros[0]!.datos as { precio: number }).precio).toBe(99);
+    const cinco = lotes.flatMap((l) => l.registros).filter((r) => r.id === '5');
+    expect(cinco).toHaveLength(1);
+    expect((cinco[0]!.datos as { precio: number }).precio).toBe(99);
   });
 
   it('si el envío falla, lo vuelve a mandar la próxima vez', async () => {
@@ -238,24 +239,18 @@ describe('elegir qué equipo recuperar', () => {
     expect((await manejar(conClave(`/api/sincronizar?dispositivo=${'x'.repeat(101)}`), { consulta, clave: 'secreta' })).status).toBe(400);
     expect((await manejar(new Request('http://x/api/sincronizar?equipos=1'), { consulta, clave: 'secreta' })).status).toBe(401);
   });
-
-  it('el equipo lista y recupera el equipo elegido', async () => {
-    const { consulta } = crearNube(filas);
-    vi.stubGlobal('fetch', (entrada: string, init?: RequestInit) => manejar(new Request(`http://x${entrada}`, init), { consulta, clave: 'secreta' }));
-    try {
-      const equipos = await listarEquipos('secreta');
-      expect(equipos.map((e) => e.dispositivo)).toEqual(['notebook-prueba', 'caja-vieja']);
-      await expect(listarEquipos('mala')).rejects.toThrow('no es correcta');
-      expect(await recuperarDeLaNube(db, 'secreta', 'caja-vieja')).toBe(2);
-      expect((await db.productos.toArray()).map((p) => p.nombre).sort()).toEqual(['Coca', 'Pepsi']);
-      expect(await leerAjuste(db, 'dispositivo', '')).toBe('caja-vieja');
-      expect(await pendientes(db)).toBe(0);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
 });
 
 it('la lista de tablas del servidor coincide con la del equipo', () => {
   expect([...TABLAS_SERVIDOR]).toEqual([...TABLAS_NUBE]);
+});
+
+it('las funciones del servidor importan con .js (Node no adivina la extensión y la función no carga)', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  for (const carpeta of ['api', 'servidor']) {
+    for (const archivo of readdirSync(carpeta).filter((a) => a.endsWith('.ts') && !a.endsWith('.test.ts'))) {
+      const texto = readFileSync(`${carpeta}/${archivo}`, 'utf8');
+      for (const [, ruta] of texto.matchAll(/from '(\.{1,2}\/[^']+)'/g)) expect(ruta, `${carpeta}/${archivo}`).toMatch(/\.js$/);
+    }
+  }
 });

@@ -264,6 +264,9 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
           <section className="tarjeta">
             <h2 className="titulo-chico">Efectivo en la caja</h2>
             <dl className="cuentas">
+              {/* Cierre a ciegas: el empleado no ve las cuentas (con ellas se saca lo que debería haber). */}
+              {dueño ? (
+                <>
               <div>
                 <dt>Cambio inicial</dt>
                 <dd className="importe">{formatPesos(turno.fondoInicial)}</dd>
@@ -293,6 +296,10 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
                   <dt>Devoluciones en efectivo</dt>
                   <dd className="importe">− {formatPesos(resumen.devoluciones)}</dd>
                 </div>
+              )}
+                </>
+              ) : (
+                <p className="texto-suave">Contá los billetes y monedas de la caja y anotalos abajo. El dueño ve si coincide con lo vendido.</p>
               )}
               {dueño && (
                 <div className="cuentas-total">
@@ -412,6 +419,16 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
                 <Icono nombre="usuario" tam={16} /> Cerrar y pasarle la caja a otro
               </button>
             )}
+          </div>
+          {/* En el celular el pie de arriba no puede quedar pegado (son cinco cosas): esta barra sí, como la de cobro. */}
+          <div className="cierre-pie-movil" role="status">
+            <div>
+              <small>{confirmar && textoCerrar.endsWith('?') ? textoCerrar : contoAlgo && dueño ?(diferencia === 0 ? 'Da justo' : diferencia < 0 ? `Faltan ${formatPesos(-diferencia)}` : `Sobran ${formatPesos(diferencia)}`) : 'Contaste'}</small>
+              <strong className="importe">{formatPesos(contado)}</strong>
+            </div>
+            <button type="button" className={`boton ${confirmar ? 'boton-peligro' : 'boton-primario'}`} onClick={cerrar} disabled={cerrando}>
+              {confirmar ? 'Sí, cerrar' : 'Cerrar turno'}
+            </button>
           </div>
         </aside>
       </div>

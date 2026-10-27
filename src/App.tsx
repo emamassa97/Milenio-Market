@@ -127,11 +127,16 @@ function Sistema() {
   const pestañas = visibles.slice(0, 4);
   const enMas = visibles.slice(4);
 
+  // El motivo va escrito debajo del chip: en una pantalla táctil el `title` no se ve nunca.
+  const motivoNube = nube?.error ? (nube.aviso ?? nube.error) : null;
   const estadoNube = nube && (
-    <a href="#ajustes" className={`estado-chip ${nube.error ? 'estado-chip-aviso' : ''}`} title={nube.aviso ?? (nube.pendientes ? `${nube.pendientes} cambios por subir` : 'Copia en la nube al día')}>
-      <Icono nombre={nube.error ? 'nube-no' : 'nube'} tam={16} />
-      <span>{nube.error === 'Nube sin activar' ? 'Nube sin activar' : nube.error ? 'Nube: revisar' : nube.pendientes ? 'Subiendo a la nube' : 'Nube al día'}</span>
-    </a>
+    <>
+      <a href="#ajustes" className={`estado-chip ${nube.error ? 'estado-chip-aviso' : ''}`} title={nube.aviso ?? (nube.pendientes ? `${nube.pendientes} cambios por subir` : 'Copia en la nube al día')}>
+        <Icono nombre={nube.error ? 'nube-no' : 'nube'} tam={16} />
+        <span>{nube.error === 'Nube sin activar' ? 'Nube sin activar' : nube.error ? 'Nube: revisar' : nube.pendientes ? 'Subiendo a la nube' : 'Nube al día'}</span>
+      </a>
+      {motivoNube && <small className="estado-nube-motivo">{motivoNube}</small>}
+    </>
   );
   const estadoRed = (
     <span className={`estado-chip ${online ? '' : 'estado-chip-aviso'}`} title={online ? 'Hay internet' : 'Sin internet: se sigue cobrando y se sube después'}>
@@ -184,6 +189,12 @@ function Sistema() {
         <img src={logoBolsa} alt="Milenio Market" className="cabecera-movil-logo" />
         <strong className="cabecera-movil-titulo">{actual.nombre}</strong>
         <span className={`punto-red ${online ? '' : 'punto-red-sin'}`} title={online ? 'Con internet' : 'Sin internet: se sigue cobrando'} />
+        {/* En el celular la nube no tenía ningún indicador fuera de "Más": si hay que revisarla, se ve acá y lleva a Ajustes. */}
+        {motivoNube && (
+          <a href="#ajustes" className="punto-nube" aria-label={motivoNube} title={motivoNube}>
+            <Icono nombre="nube-no" tam={18} />
+          </a>
+        )}
         {sesion && (
           <span className="avatar" title={`${sesion.nombre} (${sesion.admin ? 'dueño' : 'empleado'})`} aria-label={`Atiende ${sesion.nombre}`}>
             {sesion.nombre.trim().charAt(0).toUpperCase() || '?'}

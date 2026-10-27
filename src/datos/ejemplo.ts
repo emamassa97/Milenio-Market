@@ -1,4 +1,4 @@
-import type { BaseKiosco } from './db';
+import { TABLAS_NUBE, type BaseKiosco, type Borrado } from './db';
 import { estaVacia } from './copia';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
 
@@ -65,7 +65,14 @@ export async function borrarTodo(db: BaseKiosco): Promise<void> {
     if (!enPrueba || cierres > 0) throw new ErrorKiosco('Ya hay cajas cerradas: no se puede borrar todo.');
     // Se conservan los usuarios, el id de este equipo y la nube: sólo se borran los datos de prueba.
     const guardar = (await db.ajustes.toArray()).filter((x) => x.clave === 'usuarios' || x.clave === 'dispositivo' || x.clave.startsWith('nube.'));
-    for (const t of db.tables) await t.clear();
+    // Lo de prueba también se borra en la nube (y así en los otros equipos).
+    const borrados: Borrado[] = [];
+    for (const t of TABLAS_NUBE) {
+      if (t === 'ajustes') continue;
+      for (const id of await db.table(t).toCollection().primaryKeys()) borrados.push({ tabla: t, id: String(id), fecha: Date.now() });
+    }
+    for (const t of db.tables) if (t.name !== 'borrados') await t.clear();
     if (guardar.length) await db.ajustes.bulkPut(guardar);
+    if (borrados.length) await db.borrados.bulkAdd(borrados);
   });
 }

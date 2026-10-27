@@ -122,6 +122,10 @@ export interface Turno {
   usuario?: string;
   /** Usuario que cerró la caja. */
   usuarioCierre?: string;
+  /** Número de equipo (en la nube) donde está esta caja: cada compu o celular tiene la suya. */
+  equipo?: number;
+  /** Cuándo un equipo se quedó con esta caja abierta (gana el más reciente). */
+  reclamo?: number;
 }
 
 /** 'devolucion' es plata que vuelve al cliente por una venta ya cobrada; la anota el sistema, no se carga a mano. */
