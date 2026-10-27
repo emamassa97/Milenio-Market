@@ -1,5 +1,6 @@
+// Con .js: Vercel corre la función como módulo ES de Node, que no adivina la extensión (sin ella, la función fallaba al cargar).
 import { neon } from '@neondatabase/serverless';
-import { manejar, type Consulta } from '../servidor/sincronizar';
+import { manejar, type Consulta } from '../servidor/sincronizar.js';
 
 /** La base de Neon. Vercel la deja en DATABASE_URL, pero si se conectó con un prefijo (MI_DATABASE_URL) se busca cualquier variable con una dirección de Postgres. */
 function urlDeLaBase(): string | undefined {
