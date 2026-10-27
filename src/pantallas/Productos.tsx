@@ -135,11 +135,11 @@ export function PantallaProductos() {
       </div>
 
       {productos.length === 0 ? (
-        <Vacio titulo="Todavía no hay productos">
+        <Vacio titulo="Todavía no hay productos" icono="productos">
           <p className="texto-suave">Cargalos uno por uno, con una planilla de Excel, o directamente escaneando en la caja: si el código no existe, el sistema te pide el nombre y el precio.</p>
         </Vacio>
       ) : visibles.length === 0 ? (
-        <Vacio titulo="No hay productos con ese filtro" />
+        <Vacio titulo="No hay productos con ese filtro" icono="buscar" />
       ) : (
         <div className="tarjeta tabla-productos">
           <div className="tabla-encabezado" aria-hidden="true">

@@ -9,33 +9,37 @@ import { PantallaCierre } from './pantallas/Cierre';
 import { PantallaClientes } from './pantallas/Clientes';
 import { PantallaProductos } from './pantallas/Productos';
 import { PantallaReportes } from './pantallas/Reportes';
-import { Icono, ProveedorAvisos } from './ui/componentes';
+import { Icono, ProveedorAvisos, type NombreIcono } from './ui/componentes';
+import { ProveedorPermisos, useEsDueño } from './ui/permisos';
+import logoIcono from './assets/logo-icono.svg';
 import { PantallaIngreso } from './pantallas/Ingreso';
 import { ProveedorSesion, useSesion } from './ui/sesion';
-import { useConexion, useConsulta, useCopiaEnLaNube } from './ui/hooks';
-import { leerAjuste } from './datos/operaciones';
-import { pendientes } from './datos/nube';
+import { useConexion, useCopiaEnLaNube, useEstadoNube } from './ui/hooks';
+import { revalidarSesion } from './datos/usuarios';
 
 const PANTALLAS = [
-  { id: 'caja', nombre: 'Caja' },
-  { id: 'productos', nombre: 'Productos' },
-  { id: 'cierre', nombre: 'Cierre de caja' },
-  { id: 'reportes', nombre: 'Reportes' },
-  { id: 'clientes', nombre: 'Clientes y fiado' },
-] as const;
+  { id: 'caja', nombre: 'Caja', corto: 'Caja', icono: 'caja', dueño: false },
+  { id: 'productos', nombre: 'Productos', corto: 'Productos', icono: 'productos', dueño: true },
+  { id: 'cierre', nombre: 'Cierre de caja', corto: 'Cierre', icono: 'cierre', dueño: false },
+  { id: 'clientes', nombre: 'Clientes y fiado', corto: 'Fiado', icono: 'clientes', dueño: true },
+  { id: 'reportes', nombre: 'Reportes', corto: 'Reportes', icono: 'reportes', dueño: true },
+  { id: 'ajustes', nombre: 'Ajustes', corto: 'Ajustes', icono: 'ajustes', dueño: false },
+] as const satisfies readonly { id: string; nombre: string; corto: string; icono: NombreIcono; dueño: boolean }[];
 
-type IdPantalla = (typeof PANTALLAS)[number]['id'] | 'ajustes';
+type IdPantalla = (typeof PANTALLAS)[number]['id'];
 
 function leerHash(): IdPantalla {
   const h = window.location.hash.replace('#', '');
-  return (PANTALLAS.some((p) => p.id === h) || h === 'ajustes' ? h : 'caja') as IdPantalla;
+  return PANTALLAS.find((p) => p.id === h)?.id ?? 'caja';
 }
 
 export function App() {
   return (
     <ProveedorSesion>
       <ProveedorAvisos>
-        <Contenido />
+        <ProveedorPermisos>
+          <Contenido />
+        </ProveedorPermisos>
       </ProveedorAvisos>
     </ProveedorSesion>
   );
@@ -48,19 +52,30 @@ function Contenido() {
 }
 
 function Sistema() {
-  const { sesion, salir } = useSesion();
-  const [pantalla, setPantalla] = useState<IdPantalla>(leerHash);
+  const { sesion, salir, entrar } = useSesion();
+  const dueño = useEsDueño();
+  const [hash, setHash] = useState<IdPantalla>(leerHash);
+  const [menuMas, setMenuMas] = useState(false);
   const online = useConexion();
-  const nube = useConsulta(
-    async () => {
-      const clave = await leerAjuste<string>(db, 'nube.clave', '');
-      if (!clave) return null;
-      return { error: await leerAjuste<string | null>(db, 'nube.error', null), pendientes: await pendientes(db) };
-    },
-    [],
-    null,
-  );
+  const estado = useEstadoNube();
+  const nube = estado.activa || estado.sinActivar ? { error: estado.sinActivar ? 'Nube sin activar' : estado.error, aviso: estado.aviso, pendientes: estado.pendientes } : null;
   useCopiaEnLaNube(!import.meta.env.VITE_DEMO);
+
+  // Si borraron al usuario o le sacaron el permiso de dueño, se corta la sesión.
+  useEffect(() => {
+    if (!sesion) return;
+    const revisar = () =>
+      revalidarSesion(db, sesion.usuario)
+        .then((u) => {
+          if (!u) salir();
+          else if (u.admin !== sesion.admin || u.nombre !== sesion.nombre) entrar(u);
+        })
+        .catch(() => {});
+    revisar();
+    window.addEventListener('focus', revisar);
+    return () => window.removeEventListener('focus', revisar);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sesion?.usuario, sesion?.admin, sesion?.nombre]);
 
   // Versión de prueba publicada: arranca con productos de ejemplo.
   useEffect(() => {
@@ -71,67 +86,136 @@ function Sistema() {
   }, []);
 
   useEffect(() => {
-    const cambio = () => setPantalla(leerHash());
+    const cambio = () => {
+      setHash(leerHash());
+      setMenuMas(false);
+    };
     window.addEventListener('hashchange', cambio);
     return () => window.removeEventListener('hashchange', cambio);
   }, []);
 
+  const visibles = PANTALLAS.filter((p) => dueño || !p.dueño);
+  // Un empleado que entra por un enlace a Reportes cae en la caja.
+  const pantalla: IdPantalla = visibles.some((p) => p.id === hash) ? hash : 'caja';
+  const actual = PANTALLAS.find((p) => p.id === pantalla)!;
+
   const ir = (id: IdPantalla) => {
     window.location.hash = id;
-    setPantalla(id);
+    setHash(id);
   };
 
+  // En el celular entran cuatro pestañas; el resto va en "Más".
+  const pestañas = visibles.length <= 5 ? visibles : visibles.slice(0, 4);
+  const enMas = visibles.length <= 5 ? [] : visibles.slice(4);
+
+  const estadoNube = nube && (
+    <a href="#ajustes" className={`estado-chip ${nube.error ? 'estado-chip-aviso' : ''}`} title={nube.aviso ?? (nube.pendientes ? `${nube.pendientes} cambios por subir` : 'Copia en la nube al día')}>
+      <Icono nombre={nube.error ? 'nube-no' : 'nube'} tam={16} />
+      <span>{nube.error === 'Nube sin activar' ? 'Nube sin activar' : nube.error ? 'Nube: revisar' : nube.pendientes ? 'Subiendo a la nube' : 'Nube al día'}</span>
+    </a>
+  );
+  const estadoRed = (
+    <span className={`estado-chip ${online ? '' : 'estado-chip-aviso'}`} title={online ? 'Hay internet' : 'Sin internet: se sigue cobrando y se sube después'}>
+      <Icono nombre={online ? 'wifi' : 'wifi-no'} tam={16} />
+      <span>{online ? 'Con internet' : 'Sin internet'}</span>
+    </span>
+  );
+
   return (
-    <>
-      <header className="barra">
-        <a href="#caja" className="barra-logo" onClick={() => ir('caja')}>
+    <div className="marco">
+      <aside className="lateral" aria-label="Menú">
+        <a href="#caja" className="lateral-logo" onClick={() => ir('caja')}>
           <img src={logo} alt="Milenio Market" />
         </a>
-        <nav className="barra-nav" aria-label="Secciones">
-          {PANTALLAS.map((p) => (
+        <nav className="lateral-nav" aria-label="Secciones">
+          {visibles.map((p) => (
             <a key={p.id} href={`#${p.id}`} className={pantalla === p.id ? 'activo' : ''} aria-current={pantalla === p.id ? 'page' : undefined}>
-              {p.nombre}
+              <Icono nombre={p.icono} tam={20} />
+              <span>{p.nombre}</span>
             </a>
           ))}
         </nav>
-        <div className="barra-estado">
-          <span className={`punto ${online ? 'punto-ok' : 'punto-sin'}`} aria-hidden="true" />
-          <span className="barra-estado-texto">
-            {online ? 'Conectado' : 'Sin internet: se sigue cobrando'}
-          </span>
-          {nube && (
-            <a href="#ajustes" className="barra-nube" title={nube.error ?? (nube.pendientes ? `${nube.pendientes} cambios por subir` : 'Copia en la nube al día')}>
-              <Icono nombre="nube" tam={18} />
-              <span className="barra-estado-texto">{nube.error ? 'Nube: revisar' : nube.pendientes ? 'Nube: subiendo' : 'Nube al día'}</span>
-              {nube.error && <span className="punto punto-sin" aria-hidden="true" />}
-            </a>
-          )}
+        <div className="lateral-pie">
+          <div className="lateral-estados">
+            {estadoRed}
+            {estadoNube}
+          </div>
           {sesion && (
-            <span className="barra-usuario">
-              <span className="barra-estado-texto">{sesion.nombre}</span>
-              <button type="button" className="barra-salir" onClick={salir}>
-                Salir
+            <div className="lateral-usuario">
+              <span className="avatar" aria-hidden="true">
+                {sesion.nombre.trim().charAt(0).toUpperCase() || '?'}
+              </span>
+              <span className="lateral-usuario-nombre">
+                <strong>{sesion.nombre}</strong>
+                <small>{sesion.admin ? 'Dueño' : 'Empleado'}</small>
+              </span>
+              <button type="button" className="boton-icono" onClick={salir} aria-label="Salir" title="Salir">
+                <Icono nombre="salir" tam={20} />
               </button>
-            </span>
+            </div>
           )}
-          <a href="#ajustes" className={`boton-icono barra-ajustes ${pantalla === 'ajustes' ? 'activo' : ''}`} aria-label="Ajustes y copia de seguridad">
-            <Icono nombre="ajustes" />
-          </a>
         </div>
+      </aside>
+
+      <header className="cabecera-movil">
+        <img src={logoIcono} alt="Milenio Market" className="cabecera-movil-logo" />
+        <strong className="cabecera-movil-titulo">{actual.nombre}</strong>
+        <span className={`punto-red ${online ? '' : 'punto-red-sin'}`} title={online ? 'Con internet' : 'Sin internet: se sigue cobrando'} />
+        {sesion && (
+          <button type="button" className="boton-icono" onClick={salir} aria-label={`Salir (${sesion.nombre})`}>
+            <Icono nombre="salir" tam={20} />
+          </button>
+        )}
       </header>
-      {import.meta.env.VITE_DEMO && (
-        <p className="aviso-prueba">
-          Versión de prueba con productos de ejemplo. Lo que cargues queda sólo en este navegador. La cámara y las descargas no andan dentro de esta vista previa.
-        </p>
+
+      <div className="contenido">
+        {import.meta.env.VITE_DEMO && (
+          <p className="aviso-prueba">
+            Versión de prueba con productos de ejemplo. Lo que cargues queda sólo en este navegador.
+          </p>
+        )}
+        {!online && <p className="aviso-sin-red">Sin internet. Seguí cobrando normal: todo queda guardado y se sube a la nube cuando vuelva.</p>}
+        <main>
+          {pantalla === 'caja' && <PantallaCaja />}
+          {pantalla === 'productos' && <PantallaProductos />}
+          {pantalla === 'cierre' && <PantallaCierre irACaja={() => ir('caja')} />}
+          {pantalla === 'reportes' && <PantallaReportes />}
+          {pantalla === 'clientes' && <PantallaClientes />}
+          {pantalla === 'ajustes' && <PantallaAjustes />}
+        </main>
+      </div>
+
+      <nav className="pestañas" aria-label="Secciones">
+        {pestañas.map((p) => (
+          <a key={p.id} href={`#${p.id}`} className={pantalla === p.id ? 'activo' : ''} aria-current={pantalla === p.id ? 'page' : undefined}>
+            <Icono nombre={p.icono} tam={22} />
+            <span>{p.corto}</span>
+          </a>
+        ))}
+        {enMas.length > 0 && (
+          <button type="button" className={enMas.some((p) => p.id === pantalla) ? 'activo' : ''} aria-expanded={menuMas} onClick={() => setMenuMas(!menuMas)}>
+            <Icono nombre="menu" tam={22} />
+            <span>Más</span>
+          </button>
+        )}
+      </nav>
+      {menuMas && (
+        <>
+          <button type="button" className="hoja-fondo" aria-label="Cerrar menú" onClick={() => setMenuMas(false)} />
+          <div className="hoja" role="menu">
+            {enMas.map((p) => (
+              <a key={p.id} role="menuitem" href={`#${p.id}`} className={pantalla === p.id ? 'activo' : ''}>
+                <Icono nombre={p.icono} tam={22} />
+                {p.nombre}
+              </a>
+            ))}
+            <div className="hoja-estados">
+              {estadoRed}
+              {estadoNube}
+            </div>
+          </div>
+        </>
       )}
-      <main>
-        {pantalla === 'caja' && <PantallaCaja />}
-        {pantalla === 'productos' && <PantallaProductos />}
-        {pantalla === 'cierre' && <PantallaCierre irACaja={() => ir('caja')} />}
-        {pantalla === 'reportes' && <PantallaReportes />}
-        {pantalla === 'clientes' && <PantallaClientes />}
-        {pantalla === 'ajustes' && <PantallaAjustes />}
-      </main>
-    </>
+    </div>
   );
 }

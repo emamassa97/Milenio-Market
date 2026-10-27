@@ -1,11 +1,11 @@
 import 'fake-indexeddb/auto';
 import Dexie from 'dexie';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { manejar, type Consulta } from '../../servidor/sincronizar';
-import { BaseKiosco } from './db';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { manejar, TABLAS_SERVIDOR, type Consulta } from '../../servidor/sincronizar';
+import { BaseKiosco, TABLAS_NUBE } from './db';
 import { cargarEjemplo } from './ejemplo';
-import { borrarProducto, guardarAjuste, guardarProducto } from './operaciones';
-import { pendientes, subirCambios, type Lote } from './nube';
+import { borrarProducto, guardarAjuste, guardarProducto, leerAjuste } from './operaciones';
+import { activarNube, estadoNube, listarEquipos, pedirAlta, pendientes, recuperarDeLaNube, subirCambios, type Lote } from './nube';
 
 let db: BaseKiosco;
 let n = 0;
@@ -143,4 +143,119 @@ describe('alta automática de la clave', () => {
     expect((await subir(consulta, '')).status).toBe(401);
     expect((await alta(consulta, 'fija')).status).toBe(409);
   });
+});
+
+describe('nube sin activar', () => {
+  const respuesta = (estado: number, cuerpo: unknown = {}) =>
+    vi.fn(async () => new Response(JSON.stringify(cuerpo), { status: estado, headers: { 'content-type': 'application/json' } }));
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('si el alta responde 409 lo anota, y se limpia al activar', async () => {
+    vi.stubGlobal('fetch', respuesta(409, { error: 'La nube ya tiene clave.' }));
+    expect(await pedirAlta(db)).toBe(false);
+    const sin = await estadoNube(db);
+    expect(sin).toMatchObject({ activa: false, sinActivar: true, aviso: 'Nube sin activar: escribí la clave en Ajustes.' });
+    await activarNube(db, ' la-clave ');
+    expect(await leerAjuste(db, 'nube.clave', '')).toBe('la-clave');
+    expect(await estadoNube(db)).toMatchObject({ activa: true, sinActivar: false, error: null, aviso: null });
+  });
+
+  it('con el alta concedida queda activa sin aviso', async () => {
+    vi.stubGlobal('fetch', respuesta(200, { clave: 'nueva-clave-larga' }));
+    expect(await pedirAlta(db)).toBe(true);
+    const e = await estadoNube(db);
+    expect(e).toMatchObject({ activa: true, sinActivar: false, aviso: null });
+    expect(e.pendientes).toBe(0);
+  });
+
+  it('una clave escrita a mano tapa el aviso aunque quede anotado', async () => {
+    await guardarAjuste(db, 'nube.estado', 'sin-activar');
+    await guardarAjuste(db, 'nube.clave', 'puesta-a-mano');
+    expect((await estadoNube(db)).sinActivar).toBe(false);
+  });
+});
+
+describe('elegir qué equipo recuperar', () => {
+  // Nube falsa en memoria que entiende las consultas del servidor.
+  const crearNube = (filas: { dispositivo: string; tabla: string; id: string; datos: unknown; actualizado: number }[]) => {
+    const consultas: string[] = [];
+    const consulta: Consulta = async (texto, parametros) => {
+      consultas.push(texto);
+      if (texto.includes('from config_nube')) return [];
+      if (texto.includes('count(*)')) {
+        const por = new Map<string, { dispositivo: string; registros: number; ultima: Date }>();
+        for (const f of filas) {
+          const e = por.get(f.dispositivo) ?? { dispositivo: f.dispositivo, registros: 0, ultima: new Date(0) };
+          e.registros++;
+          if (f.actualizado > e.ultima.getTime()) e.ultima = new Date(f.actualizado);
+          por.set(f.dispositivo, e);
+        }
+        return [...por.values()].sort((a, b) => b.ultima.getTime() - a.ultima.getTime()).map((e) => ({ ...e, registros: String(e.registros) }));
+      }
+      if (texto.includes('group by dispositivo order by max(actualizado) desc limit 1')) {
+        const ultima = [...filas].sort((a, b) => b.actualizado - a.actualizado)[0];
+        return ultima ? [{ dispositivo: ultima.dispositivo }] : [];
+      }
+      if (texto.includes('select tabla, id, datos')) {
+        const [disp, tabla, id] = parametros as string[];
+        return filas
+          .filter((f) => f.dispositivo === disp && (f.tabla > tabla! || (f.tabla === tabla && f.id > id!)))
+          .map((f) => ({ tabla: f.tabla, id: f.id, datos: f.datos }));
+      }
+      return [];
+    };
+    return { consulta, consultas };
+  };
+  const filas = [
+    { dispositivo: 'caja-vieja', tabla: 'productos', id: '1', datos: { id: 1, codigo: '', nombre: 'Coca', precio: 1, costo: 0, stock: 0, stockMinimo: 0, categoria: '', rapido: false, creado: 0, actualizado: 0 }, actualizado: 1000 },
+    { dispositivo: 'caja-vieja', tabla: 'productos', id: '2', datos: { id: 2, codigo: '', nombre: 'Pepsi', precio: 1, costo: 0, stock: 0, stockMinimo: 0, categoria: '', rapido: false, creado: 0, actualizado: 0 }, actualizado: 1000 },
+    { dispositivo: 'notebook-prueba', tabla: 'productos', id: '1', datos: { id: 1, codigo: '', nombre: 'Prueba', precio: 1, costo: 0, stock: 0, stockMinimo: 0, categoria: '', rapido: false, creado: 0, actualizado: 0 }, actualizado: 5000 },
+  ];
+  const conClave = (u: string) => new Request(`http://x${u}`, { headers: { 'x-clave': 'secreta' } });
+
+  it('el servidor lista los equipos, el más reciente primero', async () => {
+    const { consulta } = crearNube(filas);
+    const r = await manejar(conClave('/api/sincronizar?equipos=1'), { consulta, clave: 'secreta' });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({
+      equipos: [
+        { dispositivo: 'notebook-prueba', registros: 1, ultima: 5000 },
+        { dispositivo: 'caja-vieja', registros: 2, ultima: 1000 },
+      ],
+    });
+  });
+
+  it('el servidor devuelve el equipo pedido, o el último si no se pide', async () => {
+    const { consulta } = crearNube(filas);
+    const pedido = await manejar(conClave('/api/sincronizar?desde=&dispositivo=caja-vieja'), { consulta, clave: 'secreta' });
+    const cuerpo = (await pedido.json()) as { dispositivo: string; registros: unknown[] };
+    expect(cuerpo.dispositivo).toBe('caja-vieja');
+    expect(cuerpo.registros).toHaveLength(2);
+    const ultimo = (await (await manejar(conClave('/api/sincronizar?desde='), { consulta, clave: 'secreta' })).json()) as { dispositivo: string };
+    expect(ultimo.dispositivo).toBe('notebook-prueba');
+    expect((await manejar(conClave(`/api/sincronizar?dispositivo=${'x'.repeat(101)}`), { consulta, clave: 'secreta' })).status).toBe(400);
+    expect((await manejar(new Request('http://x/api/sincronizar?equipos=1'), { consulta, clave: 'secreta' })).status).toBe(401);
+  });
+
+  it('el equipo lista y recupera el equipo elegido', async () => {
+    const { consulta } = crearNube(filas);
+    vi.stubGlobal('fetch', (entrada: string, init?: RequestInit) => manejar(new Request(`http://x${entrada}`, init), { consulta, clave: 'secreta' }));
+    try {
+      const equipos = await listarEquipos('secreta');
+      expect(equipos.map((e) => e.dispositivo)).toEqual(['notebook-prueba', 'caja-vieja']);
+      await expect(listarEquipos('mala')).rejects.toThrow('no es correcta');
+      expect(await recuperarDeLaNube(db, 'secreta', 'caja-vieja')).toBe(2);
+      expect((await db.productos.toArray()).map((p) => p.nombre).sort()).toEqual(['Coca', 'Pepsi']);
+      expect(await leerAjuste(db, 'dispositivo', '')).toBe('caja-vieja');
+      expect(await pendientes(db)).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+it('la lista de tablas del servidor coincide con la del equipo', () => {
+  expect([...TABLAS_SERVIDOR]).toEqual([...TABLAS_NUBE]);
 });

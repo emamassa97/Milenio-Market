@@ -7,7 +7,7 @@ import { descargarArchivo, errorATexto, fechaCorta, Icono, useAvisar } from '../
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
 import { borrarUsuario, cambiarClave, crearUsuario, leerUsuarios } from '../datos/usuarios';
-import { pendientes, recuperarDeLaNube, sincronizarAhora } from '../datos/nube';
+import { pendientes, recuperarDeLaNube, sincronizarAhora, activarNube } from '../datos/nube';
 
 export function PantallaAjustes() {
   const avisar = useAvisar();
@@ -238,7 +238,7 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
               disabled={!clave.trim() || enCurso}
               onClick={() =>
                 unaVez(async () => {
-                  await guardarAjuste(db, 'nube.clave', clave.trim());
+                  await activarNube(db, clave.trim());
                   try {
                     const r = await sincronizarAhora(db);
                     setClave('');

@@ -21,6 +21,12 @@ export class ErrorKiosco extends Error {}
 
 const ahora = () => Date.now();
 
+/** `{ [campo]: usuario }` si hay usuario; si no, nada (para no guardar campos vacíos). */
+function quien<K extends string>(campo: K, usuario: string | undefined): Partial<Record<K, string>> {
+  const limpio = usuario?.trim();
+  return limpio ? ({ [campo]: limpio } as Record<K, string>) : {};
+}
+
 // ---------- Turnos ----------
 
 export async function turnoAbierto(db: BaseKiosco): Promise<Turno | undefined> {
@@ -28,7 +34,8 @@ export async function turnoAbierto(db: BaseKiosco): Promise<Turno | undefined> {
   return abiertos.sort((a, b) => b.apertura - a.apertura)[0];
 }
 
-export async function abrirTurno(db: BaseKiosco, cajero: string, fondoInicial: Pesos): Promise<number> {
+/** `usuario`: quién inició sesión y abre la caja (opcional). */
+export async function abrirTurno(db: BaseKiosco, cajero: string, fondoInicial: Pesos, usuario?: string): Promise<number> {
   if (fondoInicial < 0) throw new ErrorKiosco('El fondo inicial no puede ser negativo.');
   return db.transaction('rw', db.turnos, async () => {
     if (await turnoAbierto(db)) throw new ErrorKiosco('Ya hay una caja abierta.');
@@ -41,6 +48,7 @@ export async function abrirTurno(db: BaseKiosco, cajero: string, fondoInicial: P
       contado: null,
       esperado: null,
       nota: '',
+      ...quien('usuario', usuario),
     });
   });
 }
@@ -55,7 +63,13 @@ export async function resumenDeTurno(db: BaseKiosco, turno: Turno) {
   return { ventas, movimientos, resumen: resumirTurno(turno.fondoInicial, ventas, movimientos, pagos) };
 }
 
-export async function cerrarTurno(db: BaseKiosco, conteo: Record<string, number>, nota: string): Promise<Turno> {
+/** `usuario`: quién cierra la caja (opcional). */
+export async function cerrarTurno(
+  db: BaseKiosco,
+  conteo: Record<string, number>,
+  nota: string,
+  usuario?: string,
+): Promise<Turno> {
   const limpio = Object.fromEntries(Object.entries(conteo).map(([k, v]) => [k, Math.max(0, Math.floor(v) || 0)]));
   const cerrado = await db.transaction('rw', [db.turnos, db.ventas, db.movimientosCaja, db.movimientosFiado], async () => {
     const turno = await turnoAbierto(db);
@@ -67,6 +81,7 @@ export async function cerrarTurno(db: BaseKiosco, conteo: Record<string, number>
       contado: totalConteo(limpio),
       esperado: resumen.efectivoEsperado,
       nota: nota.trim(),
+      ...quien('usuarioCierre', usuario),
     };
     await db.turnos.update(turno.id!, cambios);
     return { ...turno, ...cambios };
@@ -82,12 +97,13 @@ export async function registrarMovimientoCaja(
   tipo: TipoMovimientoCaja,
   monto: Pesos,
   motivo: string,
+  usuario?: string,
 ): Promise<number> {
   if (!(monto > 0)) throw new ErrorKiosco('Poné un monto mayor a cero.');
   return db.transaction('rw', db.turnos, db.movimientosCaja, async () => {
     const turno = await turnoAbierto(db);
     if (!turno) throw new ErrorKiosco('Primero abrí la caja.');
-    const mov: MovimientoCaja = { turnoId: turno.id!, fecha: ahora(), tipo, monto, motivo: motivo.trim() };
+    const mov: MovimientoCaja = { turnoId: turno.id!, fecha: ahora(), tipo, monto, motivo: motivo.trim(), ...quien('usuario', usuario) };
     return db.movimientosCaja.add(mov);
   });
 }
@@ -107,7 +123,7 @@ export interface DatosVenta {
  * no se hace nada. El stock puede quedar negativo (pasa cuando el conteo
  * estaba mal); se avisa en Productos para corregirlo.
  */
-export async function registrarVenta(db: BaseKiosco, datos: DatosVenta): Promise<Venta> {
+export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?: string): Promise<Venta> {
   const items = datos.items.filter((i) => i.cantidad > 0);
   if (items.length === 0) throw new ErrorKiosco('No hay nada para cobrar.');
   for (const i of items) {
@@ -148,6 +164,7 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta): Promise
         vuelto,
         clienteId,
         anulada: false,
+        ...quien('usuario', usuario),
       };
       venta.id = await db.ventas.add(venta);
       for (const it of items) {
@@ -181,7 +198,7 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta): Promise
  * Anula una venta del turno abierto: devuelve el stock y saca el fiado.
  * La venta no se borra; queda marcada como anulada.
  */
-export async function anularVenta(db: BaseKiosco, ventaId: number): Promise<void> {
+export async function anularVenta(db: BaseKiosco, ventaId: number, usuario?: string): Promise<void> {
   await db.transaction('rw', [db.turnos, db.ventas, db.productos, db.movimientosFiado], async () => {
     const venta = await db.ventas.get(ventaId);
     if (!venta) throw new ErrorKiosco('No se encontró la venta.');
@@ -190,7 +207,7 @@ export async function anularVenta(db: BaseKiosco, ventaId: number): Promise<void
     if (!turno || turno.id !== venta.turnoId) {
       throw new ErrorKiosco('Sólo se pueden anular ventas de la caja abierta.');
     }
-    await db.ventas.update(ventaId, { anulada: true, anuladaFecha: ahora() });
+    await db.ventas.update(ventaId, { anulada: true, anuladaFecha: ahora(), ...quien('anuladaPor', usuario) });
     for (const it of venta.items) {
       if (it.productoId === null) continue;
       await db.productos

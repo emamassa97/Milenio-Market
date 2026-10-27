@@ -31,9 +31,45 @@ import {
   registrarVenta,
   turnoAbierto,
 } from '../datos/operaciones';
-import { CampoPesos, errorATexto, Icono, Modal, useAvisar } from '../ui/componentes';
+import { CampoPesos, errorATexto, Icono, Modal, useAvisar, type NombreIcono } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
 import { pitido, useConsulta, useUnaVez } from '../ui/hooks';
+import { usePedirDueño } from '../ui/permisos';
+
+// El carrito y las ventas en espera sobreviven a cambiar de pantalla (y a recargar).
+function useGuardado<T>(llave: string, inicial: T) {
+  const [valor, setValor] = useState<T>(() => {
+    try {
+      const crudo = sessionStorage.getItem(llave);
+      return crudo ? (JSON.parse(crudo) as T) : inicial;
+    } catch {
+      return inicial;
+    }
+  });
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(llave, JSON.stringify(valor));
+    } catch {
+      /* sin almacenamiento: queda en memoria */
+    }
+  }, [llave, valor]);
+  return [valor, setValor] as const;
+}
+
+const ICONO_MEDIO: Record<MedioPago, NombreIcono> = {
+  efectivo: 'efectivo',
+  mercadopago: 'qr',
+  tarjeta: 'tarjeta',
+  transferencia: 'transferencia',
+  fiado: 'clientes',
+};
+
+interface UltimaVenta {
+  id: number;
+  total: number;
+  medio: MedioPago;
+  hora: number;
+}
 
 function normalizar(t: string) {
   return t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -61,7 +97,7 @@ function AbrirCaja() {
     e.preventDefault();
     unaVez(async () => {
       try {
-        await abrirTurno(db, cajero, fondo ?? 0);
+        await abrirTurno(db, cajero, fondo ?? 0, sesion?.usuario);
         avisar({ texto: 'Caja abierta. ¡Buenas ventas!', tipo: 'ok' });
       } catch (err) {
         avisar({ texto: errorATexto(err), tipo: 'error' });
@@ -95,8 +131,11 @@ interface Espera {
 function Caja() {
   const avisar = useAvisar();
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
-  const [carrito, setCarrito] = useState<Carrito>(carritoVacio);
-  const [espera, setEspera] = useState<Espera[]>([]);
+  const pedirDueño = usePedirDueño();
+  const { sesion } = useSesion();
+  const [carrito, setCarrito] = useGuardado<Carrito>('milenio.carrito', carritoVacio);
+  const [espera, setEspera] = useGuardado<Espera[]>('milenio.espera', []);
+  const [ultima, setUltima] = useGuardado<UltimaVenta | null>('milenio.ultima', null);
   const [entrada, setEntrada] = useState('');
   const [resaltado, setResaltado] = useState(0);
   const [medio, setMedio] = useState<MedioPago>('efectivo');
@@ -176,7 +215,7 @@ function Caja() {
     limpiarCobro();
     avisar({ texto: 'Venta en espera. Podés atender a otro.', tipo: 'info' });
     enfocar();
-  }, [carrito, avisar, enfocar]);
+  }, [carrito, avisar, enfocar, setCarrito, setEspera]);
 
   const retomar = (e: Espera) => {
     setEspera((l) => {
@@ -199,7 +238,7 @@ function Caja() {
     limpiarCobro();
     setConfirmarCancelar(false);
     enfocar();
-  }, [carrito, confirmarCancelar, enfocar]);
+  }, [carrito, confirmarCancelar, enfocar, setCarrito]);
 
   const cobrar = useCallback(async () => {
     if (cobrando || carrito.items.length === 0) return;
@@ -223,7 +262,7 @@ function Caja() {
         medio,
         pagaCon: medio === 'efectivo' ? pagaCon : null,
         clienteId: medio === 'fiado' ? (cliente?.id ?? null) : null,
-      });
+      }, sesion?.usuario);
       pitido('ok');
       const detalle =
         medio === 'efectivo' && venta.vuelto > 0
@@ -231,17 +270,8 @@ function Caja() {
           : medio === 'fiado'
             ? `Anotado ${formatPesos(venta.total)} a ${cliente?.nombre}`
             : `Cobrado ${formatPesos(venta.total)} con ${nombreMedio(medio)}`;
-      avisar({
-        texto: detalle,
-        tipo: 'ok',
-        accion: {
-          texto: 'Anular',
-          hacer: () =>
-            anularVenta(db, venta.id!)
-              .then(() => avisar({ texto: 'Venta anulada. El stock volvió.', tipo: 'info' }))
-              .catch((e) => avisar({ texto: errorATexto(e), tipo: 'error' })),
-        },
-      });
+      avisar({ texto: detalle, tipo: 'ok' });
+      setUltima({ id: venta.id!, total: venta.total, medio, hora: Date.now() });
       setCarrito(carritoVacio);
       limpiarCobro();
     } catch (e) {
@@ -251,7 +281,21 @@ function Caja() {
       setCobrando(false);
       enfocar();
     }
-  }, [cobrando, carrito, medio, cliente, pagaCon, total, avisar, enfocar]);
+  }, [cobrando, carrito, medio, cliente, pagaCon, total, avisar, enfocar, setCarrito, setUltima, sesion]);
+
+  const anularUltima = async () => {
+    if (!ultima) return;
+    const quien = await pedirDueño('Anular una venta');
+    if (!quien) return enfocar();
+    try {
+      await anularVenta(db, ultima.id, quien);
+      setUltima(null);
+      avisar({ texto: `Venta de ${formatPesos(ultima.total)} anulada. El stock volvió.`, tipo: 'info' });
+    } catch (e) {
+      avisar({ texto: errorATexto(e), tipo: 'error' });
+    }
+    enfocar();
+  };
 
   // Teclas rápidas y lector USB cuando el foco no está en un campo.
   // Se leen por referencia para usar siempre el estado más nuevo.
@@ -355,7 +399,10 @@ function Caja() {
             {rapidos.map((p) => (
               <button key={p.id} type="button" className="rapido" onClick={() => agregar(p, 1)}>
                 <span className="rapido-nombre">{p.nombre}</span>
-                <span className="rapido-precio">{formatPesos(p.precio)}</span>
+                <span className="rapido-pie">
+                  <span className="rapido-precio importe">{formatPesos(p.precio)}</span>
+                  {p.stockMinimo > 0 && p.stock <= p.stockMinimo && <span className={`rapido-stock ${p.stock <= 0 ? 'rapido-stock-cero' : ''}`}>{p.stock <= 0 ? 'Sin stock' : `Quedan ${p.stock}`}</span>}
+                </span>
               </button>
             ))}
           </div>
@@ -375,10 +422,20 @@ function Caja() {
         <div className="tarjeta lista-venta">
           {carrito.items.length === 0 ? (
             <div className="lista-vacia">
+              <span className="vacio-icono">
+                <Icono nombre="camara" tam={28} />
+              </span>
               <p className="vacio-titulo">Listo para cobrar</p>
               <p className="texto-suave">Pasá el primer producto por el lector o tocá un botón rápido.</p>
             </div>
           ) : (
+            <>
+            <div className="lista-venta-cabecera">
+              <h2 className="titulo-chico">Venta actual</h2>
+              <span className="texto-suave">
+                {unidades(carrito)} {unidades(carrito) === 1 ? 'producto' : 'productos'}
+              </span>
+            </div>
             <ul>
               {carrito.items.map((it, i) => {
                 const prod = it.productoId !== null ? productos.find((p) => p.id === it.productoId) : undefined;
@@ -418,6 +475,7 @@ function Caja() {
                 );
               })}
             </ul>
+          </>
           )}
         </div>
       </section>
@@ -445,7 +503,8 @@ function Caja() {
                   if (m.id === 'fiado' && !cliente) setModal({ tipo: 'cliente' });
                 }}
               >
-                {m.id === 'fiado' ? (cliente ? `Fiado: ${cliente.nombre}` : 'Fiado (anotar a un cliente)') : m.nombre}
+                <Icono nombre={ICONO_MEDIO[m.id]} tam={18} />
+                <span>{m.id === 'fiado' ? (cliente ? `Fiado: ${cliente.nombre}` : 'Fiado (anotar a un cliente)') : m.nombre}</span>
               </button>
             ))}
           </div>
@@ -477,7 +536,10 @@ function Caja() {
         </div>
 
         <button type="button" className="boton boton-primario boton-cobrar" onClick={cobrar} disabled={carrito.items.length === 0 || cobrando}>
-          {medio === 'fiado' ? 'Anotar' : 'Cobrar'} {formatPesos(total)} <kbd>F12</kbd>
+          <span>
+            {medio === 'fiado' ? 'Anotar' : 'Cobrar'} <span className="importe">{formatPesos(total)}</span>
+          </span>
+          <kbd>F12</kbd>
         </button>
         <div className="acciones-secundarias">
           <button type="button" className="boton" onClick={ponerEnEspera} disabled={carrito.items.length === 0}>
@@ -487,17 +549,34 @@ function Caja() {
             {confirmarCancelar ? '¿Seguro? Tocá de nuevo' : 'Cancelar venta'}
           </button>
         </div>
+        {ultima && (
+          <div className="ultima-venta">
+            <span>
+              <small className="texto-suave">Última venta</small>
+              <strong className="importe">
+                {formatPesos(ultima.total)} · {nombreMedio(ultima.medio)}
+              </strong>
+            </span>
+            <button type="button" className="boton boton-chico boton-texto-peligro" onClick={anularUltima}>
+              <Icono nombre="deshacer" tam={16} /> Anular
+            </button>
+          </div>
+        )}
       </aside>
 
+      {carrito.items.length > 0 && (
       <div className="barra-cobro-movil">
         <div>
-          <small>Total</small>
+          <small>
+            Total · {unidades(carrito)} {unidades(carrito) === 1 ? 'producto' : 'productos'}
+          </small>
           <strong className="importe">{formatPesos(total)}</strong>
         </div>
         <button type="button" className="boton boton-primario" onClick={() => document.querySelector('.caja-derecha')?.scrollIntoView({ behavior: 'smooth' })} disabled={carrito.items.length === 0}>
-          Ir a cobrar
+          Cobrar
         </button>
       </div>
+      )}
 
       {modal?.tipo === 'libre' && (
         <MontoLibre
@@ -540,7 +619,11 @@ function Caja() {
         <ElegirCliente
           onCerrar={() => {
             setModal(null);
-            if (!cliente) setMedio('efectivo');
+            if (!cliente) {
+              setMedio('efectivo');
+              avisar({ texto: 'No elegiste cliente: el cobro volvió a Efectivo.', tipo: 'info' });
+            }
+            enfocar();
           }}
           onElegir={(c) => {
             setCliente(c);
@@ -675,10 +758,12 @@ function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir:
           placeholder="Buscá o escribí un nombre nuevo"
           aria-label="Buscar cliente"
           onKeyDown={(e) => {
+            // Con el buscador vacío Enter no hace nada: así no se anota fiado a cualquiera.
             if (e.key === 'Enter') {
               e.preventDefault();
+              if (!q.trim()) return;
               if (filtrados[0]) onElegir(filtrados[0].c);
-              else if (q.trim()) crear();
+              else crear();
             }
           }}
         />
