@@ -15,6 +15,7 @@ import {
   guardarProducto,
   ingresarMercaderia,
   resumenDeTurno,
+  STOCK_MAXIMO,
   turnoAbierto,
   type DatosProducto,
 } from '../datos/operaciones';
@@ -125,7 +126,7 @@ export function PantallaProductos() {
 
   return (
     <div className="pagina">
-      <div className="pagina-cabecera">
+      <div className="pagina-cabecera cabecera-productos">
         <div>
           <h1>Productos</h1>
           <p className="texto-suave">
@@ -140,15 +141,16 @@ export function PantallaProductos() {
             )}
           </p>
         </div>
+        {/* "Nuevo producto" vive siempre en la fila del título, a la derecha; las demás acciones tienen su propia fila. */}
+        <button type="button" className="boton boton-primario solo-pc" onClick={() => setModal({ tipo: 'editar' })}>
+          <Icono nombre="mas" tam={18} /> Nuevo producto
+        </button>
         <div className="botonera solo-pc">
           {acciones.map((a) => (
             <button key={a.id} type="button" className="boton" onClick={() => setModal({ tipo: a.id })} disabled={a.deshabilitado}>
               <Icono nombre={a.icono} tam={18} /> {a.texto}
             </button>
           ))}
-          <button type="button" className="boton boton-primario" onClick={() => setModal({ tipo: 'editar' })}>
-            <Icono nombre="mas" tam={18} /> Nuevo producto
-          </button>
         </div>
         <div className="botonera solo-movil">
           <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'compra' })} disabled={productos.length === 0}>
@@ -310,6 +312,7 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
   const [precio, setPrecio] = useState<number | null>(producto ? producto.precio : null);
   const [costo, setCosto] = useState<number | null>(producto && producto.costo > 0 ? producto.costo : null);
   const [stockTexto, setStockTexto] = useState(producto ? String(producto.stock).replace('.', ',') : '0');
+  const stockAlEntrar = useRef(stockTexto);
   const [promoCant, setPromoCant] = useState(producto?.promo ? String(producto.promo.cantidad) : '');
   const [promoPrecio, setPromoPrecio] = useState<number | null>(producto?.promo?.precio ?? null);
   const [masOpciones, setMasOpciones] = useState(!!(producto?.porPeso || producto?.promo || producto?.vence));
@@ -372,7 +375,20 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
         <div className="fila-campos">
           <label className="campo">
             <span className="campo-etiqueta">{d.porPeso ? 'Stock (kilos)' : 'Stock actual'}</span>
-            <input inputMode="decimal" value={stockTexto} onChange={(e) => setStockTexto(e.target.value.replace(d.porPeso ? /[^\d,.-]/g : /[^\d-]/g, ''))} />
+            <input
+              inputMode="decimal"
+              value={stockTexto}
+              onFocus={() => (stockAlEntrar.current = stockTexto)}
+              onChange={(e) => setStockTexto(e.target.value.replace(d.porPeso ? /[^\d,.-]/g : /[^\d-]/g, ''))}
+              onKeyDown={(e) => {
+                // El lector escribe el código y da Enter: eso no es un stock, se vuelve a lo que había.
+                if (e.key !== 'Enter' || stockTexto.replace(/\D/g, '').length <= String(STOCK_MAXIMO).length) return;
+                e.preventDefault();
+                setStockTexto(stockAlEntrar.current);
+                pitido('error');
+                avisar({ texto: 'Eso fue el lector, no un stock. Quedó el que había.', tipo: 'info' });
+              }}
+            />
           </label>
           <label className="campo">
             <span className="campo-etiqueta">Avisar cuando queden</span>
@@ -661,14 +677,9 @@ function ListaPrecios({
             {elegidos.length === 1 ? 'producto' : 'productos'}, {hojas === 1 ? '1 hoja' : `unas ${hojas} hojas`}.
           </small>
         </div>
-        <div className="botonera">
-          <button type="button" className="boton" onClick={onCerrar}>
-            Cerrar
-          </button>
-          <button type="submit" className="boton boton-primario" disabled={elegidos.length === 0}>
-            <Icono nombre="impresora" tam={18} /> Imprimir
-          </button>
-        </div>
+        <button type="submit" className="boton boton-primario boton-grande" disabled={elegidos.length === 0}>
+          <Icono nombre="impresora" tam={18} /> Imprimir
+        </button>
       </form>
     </Modal>
   );
@@ -1174,18 +1185,22 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
         {deCaja && (
           <div className="fila-campos">
             <CampoPesos etiqueta="Cuánto pagaste de la caja" valor={pagado ?? (total || null)} onCambio={setPagado} placeholder={String(total)} />
-            {sePasa && (
-              <p className="texto-alerta" role="alert">
-                {dueño ? `En la caja debería haber ${formatPesos(Math.max(0, enCaja))}: con eso queda en negativo.` : 'Es más de lo que hay en la caja.'} Si está bien, anotalo igual.
-              </p>
-            )}
           </div>
         )}
-        <div className="vuelto">
-          <span>Total de la compra</span>
-          <strong className="importe texto-normal">{formatPesos(total)}</strong>
-        </div>
         </>
+        )}
+        {/* El total, la alerta y el botón que la resuelve quedan siempre a la vista, aunque la lista sea larga. */}
+        <div className="modal-pie">
+        {!soloStock && (
+          <div className="vuelto">
+            <span>Total de la compra</span>
+            <strong className="importe texto-normal">{formatPesos(total)}</strong>
+          </div>
+        )}
+        {!soloStock && deCaja && sePasa && (
+          <p className="texto-alerta" role="alert">
+            {dueño ? `En la caja debería haber ${formatPesos(Math.max(0, enCaja))}: con eso queda en negativo.` : 'Es más de lo que hay en la caja.'} Si está bien, anotalo igual.
+          </p>
         )}
         <button type="submit" className={`boton boton-grande ${sePasa && confirmarPasado ? 'boton-peligro' : 'boton-primario'}`} disabled={enCurso || !renglones.some((r) => cant(r) > 0)}>
           {sePasa && confirmarPasado
@@ -1198,6 +1213,7 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
                   ? `Guardar ingreso y subir ${subidas === 1 ? '1 precio' : `${subidas} precios`}`
                   : 'Guardar ingreso'}
         </button>
+        </div>
       </form>
     </Modal>
   );

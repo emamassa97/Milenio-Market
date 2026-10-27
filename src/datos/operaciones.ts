@@ -163,6 +163,8 @@ export interface DatosVenta {
   pagos?: Pago[];
   /** Descuento sobre toda la venta: se resta de la suma de los renglones. */
   descuento?: Pesos;
+  /** La venta armada en la caja: si ya se cobró (desde otra pestaña), no se cobra de nuevo. */
+  idCarrito?: string;
 }
 
 /**
@@ -220,7 +222,12 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
       if (clienteId !== null && !(await db.clientes.get(clienteId))) {
         throw new ErrorKiosco('Ese cliente ya no existe.');
       }
+      // Dentro de la misma transacción: aunque dos pestañas cobren a la vez, la segunda ve la primera y no la repite.
+      if (datos.idCarrito && (await db.ventas.where('turnoId').equals(turno.id!).filter((v) => v.idCarrito === datos.idCarrito).count()) > 0) {
+        throw new ErrorKiosco('Esta venta ya se cobró en otra pantalla.');
+      }
       const venta: Venta = {
+        ...(datos.idCarrito ? { idCarrito: datos.idCarrito } : {}),
         fecha: ahora(),
         turnoId: turno.id!,
         cajero: turno.cajero,
@@ -429,7 +436,14 @@ function validarProducto(p: DatosProducto) {
     throw new ErrorKiosco('La promo tiene que ser de 2 o más unidades y más barata que comprarlas sueltas.');
   }
   if (p.vence && !/^\d{4}-\d{2}-\d{2}$/.test(p.vence)) throw new ErrorKiosco('La fecha de vencimiento no es válida.');
+  // Un código de barras leído en el campo de stock no se guarda como stock.
+  if (!(Math.abs(p.stock) <= STOCK_MAXIMO) || !(p.stockMinimo <= STOCK_MAXIMO)) {
+    throw new ErrorKiosco('El stock es demasiado grande (máximo 99.999): ¿se pasó el lector en ese campo?');
+  }
 }
+
+/** Ningún kiosco tiene cien mil unidades de algo: más que esto es un código leído en el campo equivocado. */
+export const STOCK_MAXIMO = 99_999;
 
 export async function buscarPorCodigo(db: BaseKiosco, codigo: string): Promise<Producto | undefined> {
   if (!codigo) return undefined;

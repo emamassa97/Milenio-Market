@@ -142,7 +142,8 @@ export function PantallaReportes() {
           <label className={`filtro-dia ${periodo === 'dia' ? 'activo' : ''}`} title="Un día puntual">
             <input
               type="date"
-              value={dia}
+              // Si no es el filtro que manda, no muestra una fecha que no está filtrando.
+              value={periodo === 'dia' ? dia : ''}
               max={diaISO()}
               aria-label="Un día puntual"
               onChange={(e) => {

@@ -55,6 +55,7 @@ export function PantallaClientes() {
   const visibles = useMemo(() => filas.filter((f) => normalizar(f.cliente.nombre).includes(normalizar(q.trim()))), [filas, q]);
   const total = filas.reduce((s, f) => s + Math.max(0, f.saldo), 0);
   const deudores = filas.filter((f) => f.saldo > 0).length;
+  const aFavor = filas.filter((f) => f.saldo < 0);
   const detalle = filas.find((f) => f.cliente.id === elegido) ?? null;
   const whatsapp = detalle ? telefonoWhatsApp(detalle.cliente.telefono) : null;
   // "Marta (la del 3° B)" → "Marta" para el saludo.
@@ -72,7 +73,11 @@ export function PantallaClientes() {
           <h1>Clientes y fiado</h1>
           <p className="texto-suave">
             {deudores === 0 ? (
-              'Nadie debe fiado'
+              <>
+                Nadie debe fiado
+                {aFavor.length === 1 && ` · ${aFavor[0]!.cliente.nombre} tiene ${formatPesos(-aFavor[0]!.saldo)} a favor`}
+                {aFavor.length > 1 && ` · ${aFavor.length} clientes tienen saldo a favor`}
+              </>
             ) : (
               <>
                 Te deben <strong className="texto-normal">{formatPesos(total)}</strong> {deudores === 1 ? 'un cliente' : `entre ${deudores} clientes`}
@@ -105,9 +110,9 @@ export function PantallaClientes() {
                   <button type="button" className={elegido === f.cliente.id ? 'activo' : ''} onClick={() => setElegido(f.cliente.id!)}>
                     <span>
                       <strong>{f.cliente.nombre}</strong>
-                      <small className="texto-suave">{f.saldo > 0 && f.desde ? `debe ${desdeCuando(f.desde)}` : 'al día'}</small>
+                      <small className="texto-suave">{f.saldo > 0 && f.desde ? `debe ${desdeCuando(f.desde)}` : f.saldo < 0 ? 'a favor' : 'al día'}</small>
                     </span>
-                    <strong className={`importe ${f.saldo > 0 ? '' : 'texto-suave'}`}>{formatPesos(f.saldo)}</strong>
+                    <strong className={`importe ${f.saldo > 0 ? '' : f.saldo < 0 ? 'texto-positivo' : 'texto-suave'}`}>{formatPesos(Math.abs(f.saldo))}</strong>
                   </button>
                 </li>
               ))}
@@ -130,9 +135,9 @@ export function PantallaClientes() {
                 </div>
                 <div className="saldo-cliente">
                   <span>
-                    Saldo <span className={`insignia ${detalle.saldo > 0 ? 'insignia-aviso' : 'insignia-promo'}`}>{detalle.saldo > 0 ? 'Debe' : 'Al día'}</span>
+                    Saldo <span className={`insignia ${detalle.saldo > 0 ? 'insignia-aviso' : 'insignia-promo'}`}>{detalle.saldo > 0 ? 'Debe' : detalle.saldo < 0 ? 'A favor' : 'Al día'}</span>
                   </span>
-                  <strong className="importe">{formatPesos(detalle.saldo)}</strong>
+                  <strong className={`importe ${detalle.saldo < 0 ? 'texto-positivo' : ''}`}>{formatPesos(Math.abs(detalle.saldo))}</strong>
                 </div>
                 <div className="botonera">
                   <button type="button" className="boton boton-primario" disabled={detalle.saldo <= 0} onClick={() => setModal({ tipo: 'pago', fila: detalle })}>
@@ -304,7 +309,8 @@ export function RegistrarPago({
           try {
             await registrarPagoFiado(db, cliente.id!, monto ?? 0, medio);
             const resto = saldo - (monto ?? 0);
-            avisar({ texto: resto > 0 ? `Anotado. Le quedan ${formatPesos(resto)}.` : 'Anotado. ¡Quedó al día!', tipo: 'ok' });
+            // En la caja el resultado ya queda a la vista en el panel verde: no se repite en un aviso.
+            if (!onHecho) avisar({ texto: resto > 0 ? `Anotado. Le quedan ${formatPesos(resto)}.` : resto < 0 ? `Anotado. Le quedan ${formatPesos(-resto)} a favor.` : 'Anotado. ¡Quedó al día!', tipo: 'ok' });
             onHecho?.({ monto: monto ?? 0, medio, resto });
             onCerrar();
           } catch (err) {
@@ -313,7 +319,7 @@ export function RegistrarPago({
           });
         }}
       >
-        <p>{saldo > 0 ? <>Debe <strong>{formatPesos(saldo)}</strong>.</> : 'Está al día: lo que pague le queda a favor.'}</p>
+        <p>{saldo > 0 ? <>Debe <strong>{formatPesos(saldo)}</strong>.</> : saldo < 0 ? <>Ya tiene <strong>{formatPesos(-saldo)}</strong> a favor: lo que pague se suma.</> : 'Está al día: lo que pague le queda a favor.'}</p>
         <CampoPesos etiqueta="¿Cuánto paga?" valor={monto} onCambio={setMonto} autoFocus grande />
         <div className="medios">
           {MEDIOS.filter((m) => m.id !== 'fiado').map((m) => (
