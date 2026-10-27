@@ -97,7 +97,7 @@ function AbrirCaja() {
     e.preventDefault();
     unaVez(async () => {
       try {
-        await abrirTurno(db, cajero, fondo ?? 0);
+        await abrirTurno(db, cajero, fondo ?? 0, sesion?.usuario);
         avisar({ texto: 'Caja abierta. ¡Buenas ventas!', tipo: 'ok' });
       } catch (err) {
         avisar({ texto: errorATexto(err), tipo: 'error' });
@@ -132,6 +132,7 @@ function Caja() {
   const avisar = useAvisar();
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
   const pedirDueño = usePedirDueño();
+  const { sesion } = useSesion();
   const [carrito, setCarrito] = useGuardado<Carrito>('milenio.carrito', carritoVacio);
   const [espera, setEspera] = useGuardado<Espera[]>('milenio.espera', []);
   const [ultima, setUltima] = useGuardado<UltimaVenta | null>('milenio.ultima', null);
@@ -261,7 +262,7 @@ function Caja() {
         medio,
         pagaCon: medio === 'efectivo' ? pagaCon : null,
         clienteId: medio === 'fiado' ? (cliente?.id ?? null) : null,
-      });
+      }, sesion?.usuario);
       pitido('ok');
       const detalle =
         medio === 'efectivo' && venta.vuelto > 0
@@ -280,14 +281,14 @@ function Caja() {
       setCobrando(false);
       enfocar();
     }
-  }, [cobrando, carrito, medio, cliente, pagaCon, total, avisar, enfocar, setCarrito, setUltima]);
+  }, [cobrando, carrito, medio, cliente, pagaCon, total, avisar, enfocar, setCarrito, setUltima, sesion]);
 
   const anularUltima = async () => {
     if (!ultima) return;
     const quien = await pedirDueño('Anular una venta');
     if (!quien) return enfocar();
     try {
-      await anularVenta(db, ultima.id);
+      await anularVenta(db, ultima.id, quien);
       setUltima(null);
       avisar({ texto: `Venta de ${formatPesos(ultima.total)} anulada. El stock volvió.`, tipo: 'info' });
     } catch (e) {
@@ -563,6 +564,7 @@ function Caja() {
         )}
       </aside>
 
+      {carrito.items.length > 0 && (
       <div className="barra-cobro-movil">
         <div>
           <small>
@@ -574,6 +576,7 @@ function Caja() {
           Cobrar
         </button>
       </div>
+      )}
 
       {modal?.tipo === 'libre' && (
         <MontoLibre

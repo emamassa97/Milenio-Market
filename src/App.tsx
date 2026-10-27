@@ -14,9 +14,8 @@ import { ProveedorPermisos, useEsDueño } from './ui/permisos';
 import logoIcono from './assets/logo-icono.svg';
 import { PantallaIngreso } from './pantallas/Ingreso';
 import { ProveedorSesion, useSesion } from './ui/sesion';
-import { useConexion, useConsulta, useCopiaEnLaNube } from './ui/hooks';
-import { leerAjuste } from './datos/operaciones';
-import { pendientes } from './datos/nube';
+import { useConexion, useCopiaEnLaNube, useEstadoNube } from './ui/hooks';
+import { revalidarSesion } from './datos/usuarios';
 
 const PANTALLAS = [
   { id: 'caja', nombre: 'Caja', corto: 'Caja', icono: 'caja', dueño: false },
@@ -53,21 +52,30 @@ function Contenido() {
 }
 
 function Sistema() {
-  const { sesion, salir } = useSesion();
+  const { sesion, salir, entrar } = useSesion();
   const dueño = useEsDueño();
   const [hash, setHash] = useState<IdPantalla>(leerHash);
   const [menuMas, setMenuMas] = useState(false);
   const online = useConexion();
-  const nube = useConsulta(
-    async () => {
-      const clave = await leerAjuste<string>(db, 'nube.clave', '');
-      if (!clave) return null;
-      return { error: await leerAjuste<string | null>(db, 'nube.error', null), pendientes: await pendientes(db) };
-    },
-    [],
-    null,
-  );
+  const estado = useEstadoNube();
+  const nube = estado.activa || estado.sinActivar ? { error: estado.sinActivar ? 'Nube sin activar' : estado.error, aviso: estado.aviso, pendientes: estado.pendientes } : null;
   useCopiaEnLaNube(!import.meta.env.VITE_DEMO);
+
+  // Si borraron al usuario o le sacaron el permiso de dueño, se corta la sesión.
+  useEffect(() => {
+    if (!sesion) return;
+    const revisar = () =>
+      revalidarSesion(db, sesion.usuario)
+        .then((u) => {
+          if (!u) salir();
+          else if (u.admin !== sesion.admin || u.nombre !== sesion.nombre) entrar(u);
+        })
+        .catch(() => {});
+    revisar();
+    window.addEventListener('focus', revisar);
+    return () => window.removeEventListener('focus', revisar);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sesion?.usuario, sesion?.admin, sesion?.nombre]);
 
   // Versión de prueba publicada: arranca con productos de ejemplo.
   useEffect(() => {
@@ -101,9 +109,9 @@ function Sistema() {
   const enMas = visibles.length <= 5 ? [] : visibles.slice(4);
 
   const estadoNube = nube && (
-    <a href="#ajustes" className={`estado-chip ${nube.error ? 'estado-chip-aviso' : ''}`} title={nube.error ?? (nube.pendientes ? `${nube.pendientes} cambios por subir` : 'Copia en la nube al día')}>
+    <a href="#ajustes" className={`estado-chip ${nube.error ? 'estado-chip-aviso' : ''}`} title={nube.aviso ?? (nube.pendientes ? `${nube.pendientes} cambios por subir` : 'Copia en la nube al día')}>
       <Icono nombre={nube.error ? 'nube-no' : 'nube'} tam={16} />
-      <span>{nube.error ? 'Nube: revisar' : nube.pendientes ? 'Subiendo a la nube' : 'Nube al día'}</span>
+      <span>{nube.error === 'Nube sin activar' ? 'Nube sin activar' : nube.error ? 'Nube: revisar' : nube.pendientes ? 'Subiendo a la nube' : 'Nube al día'}</span>
     </a>
   );
   const estadoRed = (

@@ -7,6 +7,7 @@ import { anularVenta, cerrarTurno, registrarMovimientoCaja, turnoAbierto } from 
 import { CampoPesos, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { usePedirDueño } from '../ui/permisos';
+import { useSesion } from '../ui/sesion';
 
 interface Resultado {
   diferencia: number;
@@ -92,6 +93,7 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
   const [movimiento, setMovimiento] = useState(false);
   const [confirmar, setConfirmar] = useState(false);
   const [cerrando, unaVez] = useUnaVez();
+  const { sesion } = useSesion();
   const contado = totalConteo(conteo);
   const contoAlgo = Object.values(conteo).some((v) => v > 0);
   const diferencia = contado - resumen.efectivoEsperado;
@@ -105,7 +107,7 @@ function CierreAbierto({ datos, onCerrado }: { datos: Datos; onCerrado: (r: Resu
     unaVez(async () => {
     try {
       onCerrado({ diferencia, contado, esperado: resumen.efectivoEsperado, vendido: resumen.totalVendido, ventas: resumen.cantidadVentas });
-      await cerrarTurno(db, conteo, nota);
+      await cerrarTurno(db, conteo, nota, sesion?.usuario);
     } catch (e) {
       avisar({ texto: errorATexto(e), tipo: 'error' });
     }
@@ -316,9 +318,10 @@ function VentasDelTurno({ ventas }: { ventas: Venta[] }) {
                   className={`boton boton-chico ${anulando === v.id ? 'boton-peligro' : 'boton-texto-peligro'}`}
                   onClick={async () => {
                     if (anulando !== v.id) return setAnulando(v.id!);
-                    if (!(await pedirDueño('Anular una venta'))) return setAnulando(null);
+                    const quien = await pedirDueño('Anular una venta');
+                    if (!quien) return setAnulando(null);
                     try {
-                      await anularVenta(db, v.id!);
+                      await anularVenta(db, v.id!, quien);
                       avisar({ texto: 'Venta anulada. El stock volvió.', tipo: 'info' });
                     } catch (e) {
                       avisar({ texto: errorATexto(e), tipo: 'error' });
@@ -340,6 +343,7 @@ function VentasDelTurno({ ventas }: { ventas: Venta[] }) {
 function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
   const avisar = useAvisar();
   const pedirDueño = usePedirDueño();
+  const { sesion } = useSesion();
   const [tipo, setTipo] = useState<TipoMovimientoCaja>('gasto');
   const [monto, setMonto] = useState<number | null>(null);
   const [motivo, setMotivo] = useState('');
@@ -351,9 +355,10 @@ function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
         onSubmit={(e) => {
           e.preventDefault();
           unaVez(async () => {
-            if (tipo === 'retiro' && !(await pedirDueño('Sacar plata de la caja'))) return;
+            const quien = tipo === 'retiro' ? await pedirDueño('Sacar plata de la caja') : sesion?.usuario;
+            if (tipo === 'retiro' && !quien) return;
             try {
-              await registrarMovimientoCaja(db, tipo, monto ?? 0, motivo);
+              await registrarMovimientoCaja(db, tipo, monto ?? 0, motivo, quien ?? undefined);
               avisar({ texto: 'Anotado.', tipo: 'ok' });
               onCerrar();
             } catch (err) {
