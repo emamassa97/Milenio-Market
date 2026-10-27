@@ -1,3 +1,4 @@
+import { useSesion } from '../ui/sesion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   agregarItem,
@@ -51,9 +52,11 @@ function AbrirCaja() {
   const [cajero, setCajero] = useState('');
   const [fondo, setFondo] = useState<number | null>(null);
   const [enCurso, unaVez] = useUnaVez();
+  const { sesion } = useSesion();
   useEffect(() => {
-    leerAjuste(db, 'cajero', '').then((c) => setCajero(String(c)));
-  }, []);
+    if (sesion) setCajero(sesion.nombre);
+    else leerAjuste(db, 'cajero', '').then((c) => setCajero(String(c)));
+  }, [sesion]);
   const abrir = (e: React.FormEvent) => {
     e.preventDefault();
     unaVez(async () => {

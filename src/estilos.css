@@ -382,3 +382,15 @@ input[type='file'] { padding: 10px; }
 .barra-nube { display: inline-flex; align-items: center; gap: 6px; color: #fff; text-decoration: none; padding: 4px 8px; border-radius: 8px; }
 .barra-nube:hover { background: rgba(255, 255, 255, 0.15); }
 .estado-nube { display: grid; gap: 4px; margin: 0; }
+
+/* ---------- Ingreso ---------- */
+.ingreso { min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 0 16px 32px; }
+.ingreso-logo { background: var(--rojo); width: calc(100% + 32px); display: flex; justify-content: center; padding: 20px 16px; margin-bottom: 32px; }
+.ingreso-logo img { height: 72px; width: auto; display: block; }
+.ingreso-tarjeta { width: 100%; max-width: 420px; }
+.barra-usuario { display: inline-flex; align-items: center; gap: 6px; }
+.barra-salir { background: transparent; border: 1px solid rgba(255, 255, 255, 0.6); color: #fff; border-radius: 8px; padding: 4px 10px; font-size: 0.85rem; }
+.barra-salir:hover { background: rgba(255, 255, 255, 0.15); }
+.lista-usuarios { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lista-usuarios li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; background: var(--gris); border-radius: 10px; flex-wrap: wrap; }
+.grilla-usuario { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); gap: 12px; }

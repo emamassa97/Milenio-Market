@@ -10,8 +10,10 @@ import { PantallaClientes } from './pantallas/Clientes';
 import { PantallaProductos } from './pantallas/Productos';
 import { PantallaReportes } from './pantallas/Reportes';
 import { Icono, ProveedorAvisos } from './ui/componentes';
+import { PantallaIngreso } from './pantallas/Ingreso';
+import { ProveedorSesion, useSesion } from './ui/sesion';
 import { useConexion, useConsulta, useCopiaEnLaNube } from './ui/hooks';
-import { leerAjuste, turnoAbierto } from './datos/operaciones';
+import { leerAjuste } from './datos/operaciones';
 import { pendientes } from './datos/nube';
 
 const PANTALLAS = [
@@ -30,9 +32,25 @@ function leerHash(): IdPantalla {
 }
 
 export function App() {
+  return (
+    <ProveedorSesion>
+      <ProveedorAvisos>
+        <Contenido />
+      </ProveedorAvisos>
+    </ProveedorSesion>
+  );
+}
+
+function Contenido() {
+  const { sesion } = useSesion();
+  if (!import.meta.env.VITE_DEMO && !sesion) return <PantallaIngreso />;
+  return <Sistema />;
+}
+
+function Sistema() {
+  const { sesion, salir } = useSesion();
   const [pantalla, setPantalla] = useState<IdPantalla>(leerHash);
   const online = useConexion();
-  const turno = useConsulta(() => turnoAbierto(db), [], undefined);
   const nube = useConsulta(
     async () => {
       const clave = await leerAjuste<string>(db, 'nube.clave', '');
@@ -64,7 +82,7 @@ export function App() {
   };
 
   return (
-    <ProveedorAvisos>
+    <>
       <header className="barra">
         <a href="#caja" className="barra-logo" onClick={() => ir('caja')}>
           <img src={logo} alt="Milenio Market" />
@@ -80,7 +98,6 @@ export function App() {
           <span className={`punto ${online ? 'punto-ok' : 'punto-sin'}`} aria-hidden="true" />
           <span className="barra-estado-texto">
             {online ? 'Conectado' : 'Sin internet: se sigue cobrando'}
-            {turno ? ` · ${turno.cajero}` : ''}
           </span>
           {nube && (
             <a href="#ajustes" className="barra-nube" title={nube.error ?? (nube.pendientes ? `${nube.pendientes} cambios por subir` : 'Copia en la nube al día')}>
@@ -88,6 +105,14 @@ export function App() {
               <span className="barra-estado-texto">{nube.error ? 'Nube: revisar' : nube.pendientes ? 'Nube: subiendo' : 'Nube al día'}</span>
               {nube.error && <span className="punto punto-sin" aria-hidden="true" />}
             </a>
+          )}
+          {sesion && (
+            <span className="barra-usuario">
+              <span className="barra-estado-texto">{sesion.nombre}</span>
+              <button type="button" className="barra-salir" onClick={salir}>
+                Salir
+              </button>
+            </span>
           )}
           <a href="#ajustes" className={`boton-icono barra-ajustes ${pantalla === 'ajustes' ? 'activo' : ''}`} aria-label="Ajustes y copia de seguridad">
             <Icono nombre="ajustes" />
@@ -107,6 +132,6 @@ export function App() {
         {pantalla === 'clientes' && <PantallaClientes />}
         {pantalla === 'ajustes' && <PantallaAjustes />}
       </main>
-    </ProveedorAvisos>
+    </>
   );
 }

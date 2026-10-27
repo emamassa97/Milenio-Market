@@ -5,10 +5,13 @@ import { borrarTodo, cargarEjemplo } from '../datos/ejemplo';
 import { guardarAjuste, leerAjuste } from '../datos/operaciones';
 import { descargarArchivo, errorATexto, fechaCorta, Icono, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
+import { useSesion } from '../ui/sesion';
+import { borrarUsuario, cambiarClave, crearUsuario, leerUsuarios } from '../datos/usuarios';
 import { pendientes, recuperarDeLaNube, sincronizarAhora } from '../datos/nube';
 
 export function PantallaAjustes() {
   const avisar = useAvisar();
+  const { sesion } = useSesion();
   const [cajero, setCajero] = useState('');
   const vacia = useConsulta(() => estaVacia(db), [], false);
   const modoPrueba = useConsulta(() => leerAjuste(db, 'modoPrueba', false), [], false);
@@ -36,7 +39,10 @@ export function PantallaAjustes() {
     <div className="pagina pagina-angosta">
       <h1>Ajustes</h1>
 
-      <section className="tarjeta formulario">
+      {sesion ? (
+        <Usuarios />
+      ) : (
+        <section className="tarjeta formulario">
         <h2 className="titulo-chico">Quién atiende</h2>
         <label className="campo">
           <span className="campo-etiqueta">Nombre que aparece al abrir la caja</span>
@@ -55,7 +61,10 @@ export function PantallaAjustes() {
           </div>
         </label>
       </section>
+      )}
 
+      {sesion && !sesion.admin ? null : (
+        <>
       <section className="tarjeta formulario">
         <h2 className="titulo-chico">Copia de seguridad</h2>
         <p className="texto-suave">
@@ -143,6 +152,8 @@ export function PantallaAjustes() {
             </>
           )}
         </section>
+      )}
+        </>
       )}
     </div>
   );
@@ -263,6 +274,119 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
             )}
           </div>
           {vacia && <p className="texto-suave">¿Compu nueva? Con la misma clave podés traer todo lo que estaba guardado en la nube.</p>}
+        </>
+      )}
+    </section>
+  );
+}
+
+function Usuarios() {
+  const avisar = useAvisar();
+  const { sesion } = useSesion();
+  const usuarios = useConsulta(() => leerUsuarios(db), [], []);
+  const [miClave, setMiClave] = useState('');
+  const [nuevo, setNuevo] = useState({ nombre: '', usuario: '', clave: '', admin: false });
+  const [enCurso, unaVez] = useUnaVez();
+  if (!sesion) return null;
+
+  return (
+    <section className="tarjeta formulario">
+      <h2 className="titulo-chico">Usuarios</h2>
+      <p className="texto-suave">
+        Entraste como <strong>{sesion.nombre}</strong> ({sesion.usuario}){sesion.admin ? ', dueño' : ''}.
+      </p>
+      <label className="campo">
+        <span className="campo-etiqueta">Cambiar mi clave</span>
+        <div className="campo-con-boton">
+          <input type="password" value={miClave} onChange={(e) => setMiClave(e.target.value)} autoComplete="new-password" />
+          <button
+            type="button"
+            className="boton"
+            disabled={!miClave || enCurso}
+            onClick={() =>
+              unaVez(async () => {
+                try {
+                  await cambiarClave(db, sesion.usuario, miClave);
+                  setMiClave('');
+                  avisar({ texto: 'Clave cambiada.', tipo: 'ok' });
+                } catch (e) {
+                  avisar({ texto: errorATexto(e), tipo: 'error' });
+                }
+              })
+            }
+          >
+            Guardar
+          </button>
+        </div>
+      </label>
+
+      {sesion.admin && (
+        <>
+          <ul className="lista-usuarios">
+            {usuarios.map((u) => (
+              <li key={u.usuario}>
+                <span>
+                  <strong>{u.nombre}</strong> <span className="texto-suave">· {u.usuario}{u.admin ? ' · dueño' : ' · empleado'}</span>
+                </span>
+                {u.usuario !== sesion.usuario && (
+                  <button
+                    type="button"
+                    className="boton"
+                    disabled={enCurso}
+                    onClick={() =>
+                      unaVez(async () => {
+                        try {
+                          await borrarUsuario(db, u.usuario);
+                          avisar({ texto: `Se borró a ${u.nombre}.`, tipo: 'info' });
+                        } catch (e) {
+                          avisar({ texto: errorATexto(e), tipo: 'error' });
+                        }
+                      })
+                    }
+                  >
+                    Borrar
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          <h3>Sumar un usuario</h3>
+          <div className="grilla-usuario">
+            <label className="campo">
+              <span className="campo-etiqueta">Nombre</span>
+              <input value={nuevo.nombre} onChange={(e) => setNuevo({ ...nuevo, nombre: e.target.value })} />
+            </label>
+            <label className="campo">
+              <span className="campo-etiqueta">Usuario</span>
+              <input value={nuevo.usuario} onChange={(e) => setNuevo({ ...nuevo, usuario: e.target.value })} autoCapitalize="none" autoComplete="off" />
+            </label>
+            <label className="campo">
+              <span className="campo-etiqueta">Clave</span>
+              <input type="password" value={nuevo.clave} onChange={(e) => setNuevo({ ...nuevo, clave: e.target.value })} autoComplete="new-password" />
+            </label>
+          </div>
+          <label className="campo-check">
+            <input type="checkbox" checked={nuevo.admin} onChange={(e) => setNuevo({ ...nuevo, admin: e.target.checked })} />
+            Es dueño (puede entrar a Ajustes y manejar usuarios)
+          </label>
+          <button
+            type="button"
+            className="boton boton-primario"
+            disabled={!nuevo.usuario || !nuevo.clave || enCurso}
+            onClick={() =>
+              unaVez(async () => {
+                try {
+                  const u = await crearUsuario(db, nuevo);
+                  setNuevo({ nombre: '', usuario: '', clave: '', admin: false });
+                  avisar({ texto: `Listo: ${u.nombre} ya puede entrar.`, tipo: 'ok' });
+                } catch (e) {
+                  avisar({ texto: errorATexto(e), tipo: 'error' });
+                }
+              })
+            }
+          >
+            Sumar usuario
+          </button>
         </>
       )}
     </section>
