@@ -69,7 +69,7 @@ export function PantallaAjustes() {
       <AjustesDelTicket />
       <section className="tarjeta formulario">
         <h2 className="titulo-chico">Pantalla para el cliente</h2>
-        <p className="texto-suave">Un segundo monitor o una tablet mirando al mostrador: el cliente ve lo que lleva, el total y el vuelto. Tiene que abrirse en este mismo navegador.</p>
+        <p className="texto-suave">Un segundo monitor conectado a esta compu, mirando al mostrador: el cliente ve lo que lleva, el total y el vuelto. Abrila con este botón y arrastrá la ventana a ese monitor.</p>
         <div className="botonera">
           <button type="button" className="boton" onClick={() => window.open(`${window.location.pathname}#visor`, 'milenio-visor', 'popup,width=1024,height=640')}>
             <Icono nombre="caja" tam={18} /> Abrir la pantalla para el cliente

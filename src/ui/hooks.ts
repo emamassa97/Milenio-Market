@@ -134,6 +134,8 @@ export function useEstadoNube(): EstadoNube {
 export const LLAVE_CARRITO = 'milenio.carrito';
 export const LLAVE_ESPERA = 'milenio.espera';
 export const LLAVE_ULTIMA = 'milenio.ultima';
+/** Con cuánto paga el cliente que se está atendiendo: sólo para la pantalla del cliente. */
+export const LLAVE_PAGA_CON = 'milenio.pagacon';
 
 export function leerGuardado<T>(llave: string, porDefecto: T): T {
   try {

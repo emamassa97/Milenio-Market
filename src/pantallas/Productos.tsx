@@ -313,6 +313,8 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
   const [costo, setCosto] = useState<number | null>(producto && producto.costo > 0 ? producto.costo : null);
   const [stockTexto, setStockTexto] = useState(producto ? String(producto.stock).replace('.', ',') : '0');
   const stockAlEntrar = useRef(stockTexto);
+  const codigoAlEntrar = useRef(producto?.codigo ?? '');
+  const minimoAlEntrar = useRef(producto?.stockMinimo ?? 0);
   const [promoCant, setPromoCant] = useState(producto?.promo ? String(producto.promo.cantidad) : '');
   const [promoPrecio, setPromoPrecio] = useState<number | null>(producto?.promo?.precio ?? null);
   const [masOpciones, setMasOpciones] = useState(!!(producto?.porPeso || producto?.promo || producto?.vence));
@@ -360,7 +362,18 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
               onChange={(e) => setD({ ...d, codigo: e.target.value.trim() })}
               placeholder="Pasalo por el lector"
               inputMode="numeric"
-              onKeyDown={(e) => e.key === 'Enter' && e.preventDefault()}
+              // Al entrar queda todo marcado: una pasada del lector reemplaza el código viejo en vez de pegarse detrás.
+              onFocus={(e) => {
+                codigoAlEntrar.current = d.codigo;
+                e.currentTarget.select();
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                const viejo = codigoAlEntrar.current;
+                const nuevo = viejo && d.codigo.startsWith(viejo) ? d.codigo.slice(viejo.length) : '';
+                if (codigoEscaneado(nuevo)) setD({ ...d, codigo: nuevo });
+              }}
             />
             <button type="button" className="boton boton-cuadrado" onClick={() => setCamara(true)} aria-label="Leer código con la cámara">
               <Icono nombre="camara" />
@@ -392,7 +405,19 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
           </label>
           <label className="campo">
             <span className="campo-etiqueta">Avisar cuando queden</span>
-            <input inputMode="numeric" value={d.stockMinimo} onChange={(e) => setD({ ...d, stockMinimo: Number(e.target.value.replace(/\D/g, '')) || 0 })} />
+            <input
+              inputMode="numeric"
+              value={d.stockMinimo}
+              onFocus={() => (minimoAlEntrar.current = d.stockMinimo)}
+              onChange={(e) => setD({ ...d, stockMinimo: Number(e.target.value.replace(/\D/g, '')) || 0 })}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || d.stockMinimo <= STOCK_MAXIMO) return;
+                e.preventDefault();
+                setD({ ...d, stockMinimo: minimoAlEntrar.current });
+                pitido('error');
+                avisar({ texto: 'Eso fue el lector, no una cantidad. Quedó la que había.', tipo: 'info' });
+              }}
+            />
           </label>
         </div>
         <div className="fila-campos">

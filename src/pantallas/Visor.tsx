@@ -1,44 +1,64 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import logo from '../assets/logo-oscuro.svg';
-import { carritoVacio, subtotal, totalCarrito, type Carrito } from '../dominio/carrito';
+import { calcularVuelto, carritoVacio, subtotal, totalCarrito, type Carrito } from '../dominio/carrito';
 import { formatPesos } from '../dominio/dinero';
-import { leerGuardado, LLAVE_CARRITO, LLAVE_ULTIMA } from '../ui/hooks';
+import type { MedioPago } from '../dominio/tipos';
+import { leerGuardado, LLAVE_CARRITO, LLAVE_PAGA_CON, LLAVE_ULTIMA } from '../ui/hooks';
 
 interface Cobrada {
   total: number;
   hora: number;
+  medio?: MedioPago;
   vuelto?: number;
+  fiado?: number;
 }
 
 // Después de cobrar, el "Gracias" y el vuelto quedan a la vista este rato (o hasta que arranca la próxima venta).
 const GRACIAS_MS = 20_000;
 
+// Cuántos renglones entran según el alto de la pantalla: el total siempre se ve entero.
+const renglonesQueEntran = () => Math.max(2, Math.min(8, Math.floor((window.innerHeight - 440) / 64)));
+
 /**
- * Pantalla para el cliente (#visor): un monitor o una tablet mirando al mostrador con lo que se está
- * cobrando. Sin menú ni sesión: sólo lee la venta que la caja deja en este navegador.
+ * Pantalla para el cliente (#visor): un segundo monitor conectado a la compu de la caja, mirando al mostrador,
+ * con lo que se está cobrando. Sin menú ni sesión: sólo lee la venta que la caja deja en este navegador.
  */
 export function Visor() {
   const [carrito, setCarrito] = useState<Carrito>(() => leerGuardado(LLAVE_CARRITO, carritoVacio));
-  const [ultima, setUltima] = useState<Cobrada | null>(() => leerGuardado(LLAVE_ULTIMA, null));
-  const [ahora, setAhora] = useState(Date.now());
+  const [pagaCon, setPagaCon] = useState<number | null>(() => leerGuardado(LLAVE_PAGA_CON, null));
+  // Sólo un cobro que pasa con esta pantalla abierta dice "¡Gracias!": dejar una venta en espera no lo repite.
+  const [gracias, setGracias] = useState<Cobrada | null>(null);
+  const horaUltima = useRef(leerGuardado<Cobrada | null>(LLAVE_ULTIMA, null)?.hora ?? 0);
+  const [entran, setEntran] = useState(renglonesQueEntran);
   useEffect(() => {
+    let reloj = 0;
     const leer = () => {
-      setCarrito(leerGuardado(LLAVE_CARRITO, carritoVacio));
-      setUltima(leerGuardado(LLAVE_ULTIMA, null));
-      setAhora(Date.now());
+      const c = leerGuardado(LLAVE_CARRITO, carritoVacio);
+      setCarrito(c);
+      setPagaCon(leerGuardado(LLAVE_PAGA_CON, null));
+      const u = leerGuardado<Cobrada | null>(LLAVE_ULTIMA, null);
+      if (u && u.hora !== horaUltima.current) {
+        horaUltima.current = u.hora;
+        setGracias(u);
+        window.clearTimeout(reloj);
+        reloj = window.setTimeout(() => setGracias(null), GRACIAS_MS);
+      }
+      if (c.items.length > 0) setGracias(null);
     };
+    const medir = () => setEntran(renglonesQueEntran());
     window.addEventListener('storage', leer);
-    const reloj = window.setInterval(() => setAhora(Date.now()), 5_000);
+    window.addEventListener('resize', medir);
     document.title = 'Milenio Market';
     return () => {
       window.removeEventListener('storage', leer);
-      window.clearInterval(reloj);
+      window.removeEventListener('resize', medir);
+      window.clearTimeout(reloj);
     };
   }, []);
 
   const total = totalCarrito(carrito);
-  const gracias = carrito.items.length === 0 && ultima && ahora - ultima.hora < GRACIAS_MS ? ultima : null;
-  const renglones = carrito.items.slice(0, 6);
+  const renglones = carrito.items.slice(0, entran);
+  const vuelto = pagaCon !== null && pagaCon >= total ? (calcularVuelto(total, pagaCon) ?? 0) : 0;
 
   return (
     <div className="visor">
@@ -65,18 +85,27 @@ export function Visor() {
           <div className="visor-total" aria-live="polite">
             <span>Total</span>
             <strong className="importe">{formatPesos(total)}</strong>
+            {pagaCon !== null && pagaCon > total && (
+              <p className="visor-paga">
+                Paga con {formatPesos(pagaCon)} · <b>vuelto {formatPesos(vuelto)}</b>
+              </p>
+            )}
           </div>
         </main>
       ) : gracias ? (
         <main className="visor-gracias" aria-live="polite">
           <strong>¡Gracias!</strong>
-          {gracias.vuelto ? (
+          {gracias.medio === 'fiado' ? (
+            <p>
+              Quedó anotado <span className="importe">{formatPesos(gracias.total)}</span>
+            </p>
+          ) : gracias.vuelto ? (
             <p>
               Tu vuelto <span className="importe">{formatPesos(gracias.vuelto)}</span>
             </p>
           ) : (
             <p>
-              Cobrado <span className="importe">{formatPesos(gracias.total)}</span>
+              Pagaste <span className="importe">{formatPesos(gracias.total)}</span>
             </p>
           )}
         </main>

@@ -3,6 +3,7 @@
 import { formatPesos } from '../dominio/dinero';
 import type { Producto } from '../dominio/tipos';
 import { escapar } from './ticket';
+import poppins400 from '@fontsource/poppins/files/poppins-latin-400-normal.woff2?url';
 import poppins500 from '@fontsource/poppins/files/poppins-latin-500-normal.woff2?url';
 import poppins600 from '@fontsource/poppins/files/poppins-latin-600-normal.woff2?url';
 import poppins700 from '@fontsource/poppins/files/poppins-latin-700-normal.woff2?url';
@@ -27,6 +28,7 @@ function porCategoria(productos: Producto[]): [string, Producto[]][] {
 // El impreso es un documento aparte: no hereda las fuentes de la app, así que se le pasa la Poppins de la marca.
 const absoluta = (url: string) => (typeof location === 'undefined' ? url : new URL(url, location.href).href);
 const FUENTES = ([
+  [400, poppins400],
   [500, poppins500],
   [600, poppins600],
   [700, poppins700],
