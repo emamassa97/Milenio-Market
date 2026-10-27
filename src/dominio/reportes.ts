@@ -1,3 +1,4 @@
+import { pagosDeVenta, subtotal } from './carrito';
 import type { MedioPago, Pesos, Producto, Venta } from './tipos';
 
 export interface FilaProducto {
@@ -31,11 +32,11 @@ export function resumirVentas(ventas: Venta[]): ResumenVentas {
     if (v.anulada) continue;
     cantidad++;
     total += v.total;
-    porMedio[v.medio] += v.total;
+    for (const p of pagosDeVenta(v)) porMedio[p.medio] += p.monto;
     porHora[new Date(v.fecha).getHours()]! += v.total;
     for (const it of v.items) {
-      const sub = it.precioUnitario * it.cantidad;
-      if (it.costoUnitario > 0) ganancia += (it.precioUnitario - it.costoUnitario) * it.cantidad;
+      const sub = subtotal(it);
+      if (it.costoUnitario > 0) ganancia += sub - it.costoUnitario * it.cantidad;
       else ventasSinCosto += sub;
       const clave = it.productoId !== null ? `p${it.productoId}` : `libre:${it.nombre}`;
       const fila = productos.get(clave) ?? { clave, nombre: it.nombre, unidades: 0, total: 0 };
@@ -70,4 +71,21 @@ export function sinMovimiento(productos: Producto[], ventas: Venta[]): Producto[
     for (const it of v.items) if (it.productoId !== null) vendidos.add(it.productoId);
   }
   return productos.filter((p) => p.id !== undefined && p.stock > 0 && !vendidos.has(p.id));
+}
+
+/** Días que faltan para la fecha 'AAAA-MM-DD' (negativo si ya venció). */
+export function diasParaVencer(vence: string, hoy = new Date()): number {
+  const [a, m, d] = vence.split('-').map(Number);
+  const fecha = new Date(a!, (m ?? 1) - 1, d ?? 1);
+  const base = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  return Math.round((fecha.getTime() - base.getTime()) / 86_400_000);
+}
+
+/** Productos con stock que vencen dentro de `dias` (o ya vencieron), el más urgente primero. */
+export function porVencer(productos: Producto[], dias = 15, hoy = new Date()): (Producto & { faltan: number })[] {
+  return productos
+    .filter((p) => p.vence && p.stock > 0)
+    .map((p) => ({ ...p, faltan: diasParaVencer(p.vence!, hoy) }))
+    .filter((p) => p.faltan <= dias)
+    .sort((a, b) => a.faltan - b.faltan);
 }

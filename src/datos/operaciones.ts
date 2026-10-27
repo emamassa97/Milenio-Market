@@ -1,5 +1,6 @@
 import { resumirTurno, totalConteo } from '../dominio/caja';
-import { CANTIDAD_MAXIMA } from '../dominio/carrito';
+import { CANTIDAD_MAXIMA, stockQueUsa, subtotal } from '../dominio/carrito';
+import { formatPesos } from '../dominio/dinero';
 import type { FilaImportada } from '../dominio/csv';
 import { saldoCliente, superaLimite } from '../dominio/fiado';
 import { aplicarAumento, type Redondeo } from '../dominio/precios';
@@ -8,6 +9,7 @@ import type {
   ItemVenta,
   MedioPago,
   MovimientoCaja,
+  Pago,
   Pesos,
   Producto,
   TipoMovimientoCaja,
@@ -20,6 +22,9 @@ import type { BaseKiosco } from './db';
 export class ErrorKiosco extends Error {}
 
 const ahora = () => Date.now();
+
+/** El stock por peso va en kilos con hasta 3 decimales (gramos). */
+const redondearStock = (n: number) => Math.round(n * 1000) / 1000;
 
 /** `{ [campo]: usuario }` si hay usuario; si no, nada (para no guardar campos vacíos). */
 function quien<K extends string>(campo: K, usuario: string | undefined): Partial<Record<K, string>> {
@@ -116,6 +121,8 @@ export interface DatosVenta {
   /** Sólo efectivo: con cuánto pagó. null = pagó justo. */
   pagaCon: Pesos | null;
   clienteId: number | null;
+  /** Pago dividido: la suma tiene que dar el total. Sin fiado. */
+  pagos?: Pago[];
 }
 
 /**
@@ -132,7 +139,7 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
     }
     if (!Number.isFinite(i.precioUnitario) || i.precioUnitario < 0) throw new ErrorKiosco(`El precio de "${i.nombre}" no es válido.`);
   }
-  const total = items.reduce((s, i) => s + i.precioUnitario * i.cantidad, 0);
+  const total = items.reduce((s, i) => s + subtotal(i), 0);
   if (total <= 0) throw new ErrorKiosco('El total tiene que ser mayor a cero.');
   let pagaCon: Pesos | null = null;
   let vuelto = 0;
@@ -142,6 +149,14 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
     vuelto = datos.pagaCon - total;
   }
   if (datos.medio === 'fiado' && datos.clienteId === null) throw new ErrorKiosco('Elegí a quién se le anota el fiado.');
+  let pagos: Pago[] | undefined;
+  if (datos.pagos && datos.pagos.filter((p) => p.monto > 0).length > 1) {
+    pagos = datos.pagos.filter((p) => p.monto > 0);
+    if (pagos.some((p) => p.medio === 'fiado')) throw new ErrorKiosco('El fiado no se puede combinar con otro medio.');
+    if (pagos.some((p) => !Number.isInteger(p.monto))) throw new ErrorKiosco('Los montos del pago tienen que ser enteros.');
+    const suma = pagos.reduce((s, p) => s + p.monto, 0);
+    if (suma !== total) throw new ErrorKiosco(`Los pagos suman ${formatPesos(suma)} y el total es ${formatPesos(total)}.`);
+  }
   const clienteId = datos.medio === 'fiado' ? datos.clienteId : null;
 
   return db.transaction(
@@ -164,6 +179,7 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
         vuelto,
         clienteId,
         anulada: false,
+        ...(pagos ? { pagos } : {}),
         ...quien('usuario', usuario),
       };
       venta.id = await db.ventas.add(venta);
@@ -173,7 +189,7 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
           .where('id')
           .equals(it.productoId)
           .modify((p) => {
-            p.stock -= it.cantidad;
+            p.stock = redondearStock(p.stock - stockQueUsa(it));
           });
       }
       if (clienteId !== null) {
@@ -214,7 +230,7 @@ export async function anularVenta(db: BaseKiosco, ventaId: number, usuario?: str
         .where('id')
         .equals(it.productoId)
         .modify((p) => {
-          p.stock += it.cantidad;
+          p.stock = redondearStock(p.stock + stockQueUsa(it));
         });
     }
     await db.movimientosFiado
@@ -260,7 +276,7 @@ export async function guardarProducto(
     codigo: datos.codigo.trim(),
     nombre: datos.nombre.trim().replace(/\s+/g, ' '),
     categoria: datos.categoria.trim(),
-    stock: Math.floor(datos.stock),
+    stock: datos.porPeso ? redondearStock(datos.stock) : Math.floor(datos.stock),
     stockMinimo: Math.max(0, Math.floor(datos.stockMinimo)),
   };
   validarProducto(limpio);
@@ -371,10 +387,59 @@ export async function ajustarStock(db: BaseKiosco, id: number, cantidad: number)
     .where('id')
     .equals(id)
     .modify((p) => {
-      p.stock += Math.floor(cantidad);
+      p.stock = p.porPeso ? redondearStock(p.stock + cantidad) : p.stock + Math.floor(cantidad);
       p.actualizado = ahora();
     });
   if (n === 0) throw new ErrorKiosco('Ese producto ya no existe.');
+}
+
+export interface RenglonCompra {
+  productoId: number;
+  cantidad: number;
+  /** Costo nuevo por unidad (o por kilo). 0 = no cambia. */
+  costo: Pesos;
+}
+
+/**
+ * Llegó mercadería del proveedor: suma stock, actualiza el costo y, si se
+ * pagó con plata de la caja, lo anota como gasto del turno.
+ */
+export async function ingresarMercaderia(
+  db: BaseKiosco,
+  renglones: RenglonCompra[],
+  opciones: { proveedor: string; pagadoDeCaja: boolean },
+  usuario?: string,
+): Promise<Pesos> {
+  const validos = renglones.filter((r) => r.cantidad > 0);
+  if (validos.length === 0) throw new ErrorKiosco('Poné al menos una cantidad.');
+  if (validos.some((r) => r.costo < 0)) throw new ErrorKiosco('El costo no puede ser negativo.');
+  return db.transaction('rw', [db.productos, db.turnos, db.movimientosCaja], async () => {
+    let total = 0;
+    for (const r of validos) {
+      const p = await db.productos.get(r.productoId);
+      if (!p) throw new ErrorKiosco('Uno de los productos ya no existe.');
+      const costo = r.costo > 0 ? r.costo : p.costo;
+      total += Math.round(costo * r.cantidad);
+      await db.productos.update(r.productoId, {
+        stock: p.porPeso ? redondearStock(p.stock + r.cantidad) : p.stock + Math.floor(r.cantidad),
+        costo,
+        actualizado: ahora(),
+      });
+    }
+    if (opciones.pagadoDeCaja && total > 0) {
+      const turno = await turnoAbierto(db);
+      if (!turno) throw new ErrorKiosco('Para pagarlo con plata de la caja, primero abrí la caja.');
+      await db.movimientosCaja.add({
+        turnoId: turno.id!,
+        fecha: ahora(),
+        tipo: 'gasto',
+        monto: total,
+        motivo: `Mercadería${opciones.proveedor.trim() ? `: ${opciones.proveedor.trim()}` : ''}`,
+        ...quien('usuario', usuario),
+      });
+    }
+    return total;
+  });
 }
 
 // ---------- Clientes y fiado ----------

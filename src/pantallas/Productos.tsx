@@ -3,6 +3,7 @@ import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/
 import { formatPesos } from '../dominio/dinero';
 import { aplicarAumento, margen, type Redondeo } from '../dominio/precios';
 import type { Producto } from '../dominio/tipos';
+import { diasParaVencer } from '../dominio/reportes';
 import { db } from '../datos/db';
 import {
   ajustarStock,
@@ -11,17 +12,21 @@ import {
   buscarPorCodigo,
   cargarPlanilla,
   guardarProducto,
+  ingresarMercaderia,
   type DatosProducto,
 } from '../datos/operaciones';
 import { CampoPesos, descargarArchivo, errorATexto, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
 import { useConsulta, useUnaVez } from '../ui/hooks';
+import { useSesion } from '../ui/sesion';
 
-type Filtro = 'todos' | 'reponer' | 'rapidos' | 'sinCodigo' | 'sinCosto';
+type Filtro = 'todos' | 'reponer' | 'vencen' | 'promos' | 'rapidos' | 'sinCodigo' | 'sinCosto';
 
 const FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'todos', nombre: 'Todos' },
   { id: 'reponer', nombre: 'Para reponer' },
+  { id: 'vencen', nombre: 'Por vencer' },
+  { id: 'promos', nombre: 'Con promo' },
   { id: 'rapidos', nombre: 'Rápidos' },
   { id: 'sinCodigo', nombre: 'Sin código' },
   { id: 'sinCosto', nombre: 'Sin costo' },
@@ -32,6 +37,8 @@ function normalizar(t: string) {
 }
 
 const necesitaReponer = (p: Producto) => p.stockMinimo > 0 && p.stock <= p.stockMinimo;
+const vencePronto = (p: Producto) => !!p.vence && diasParaVencer(p.vence) <= 15;
+const textoStock = (p: Producto) => (p.porPeso ? `${p.stock.toLocaleString('es-AR', { maximumFractionDigits: 3 })} kg` : String(p.stock));
 
 export function PantallaProductos() {
   const avisar = useAvisar();
@@ -46,6 +53,7 @@ export function PantallaProductos() {
     | { tipo: 'planilla' }
     | { tipo: 'stock'; producto: Producto }
     | { tipo: 'pedido' }
+    | { tipo: 'compra' }
   >(null);
 
   const categorias = useMemo(
@@ -60,6 +68,8 @@ export function PantallaProductos() {
         if (categoria && p.categoria !== categoria) return false;
         if (filtro === 'reponer' && !necesitaReponer(p)) return false;
         if (filtro === 'rapidos' && !p.rapido) return false;
+        if (filtro === 'vencen' && !vencePronto(p)) return false;
+        if (filtro === 'promos' && !p.promo) return false;
         if (filtro === 'sinCodigo' && p.codigo) return false;
         if (filtro === 'sinCosto' && p.costo > 0) return false;
         const texto = normalizar(`${p.nombre} ${p.codigo} ${p.categoria}`);
@@ -97,6 +107,9 @@ export function PantallaProductos() {
           </p>
         </div>
         <div className="botonera">
+          <button type="button" className="boton" onClick={() => setModal({ tipo: 'compra' })} disabled={productos.length === 0}>
+            <Icono nombre="camion" tam={18} /> Llegó mercadería
+          </button>
           <button type="button" className="boton" onClick={() => setModal({ tipo: 'pedido' })} disabled={cuantosReponer === 0}>
             <Icono nombre="whatsapp" tam={18} /> Pedido al proveedor
           </button>
@@ -160,6 +173,17 @@ export function PantallaProductos() {
                       {p.codigo || 'sin código'}
                       {p.categoria ? ` · ${p.categoria}` : ''}
                     </small>
+                    {(p.porPeso || p.promo || p.vence) && (
+                      <span className="insignias">
+                        {p.porPeso && <span className="insignia">Por kilo</span>}
+                        {p.promo && (
+                          <span className="insignia insignia-promo">
+                            {p.promo.cantidad} x {formatPesos(p.promo.precio)}
+                          </span>
+                        )}
+                        {p.vence && <Vencimiento vence={p.vence} />}
+                      </span>
+                    )}
                   </div>
                   <span className="importe fila-precio">{formatPesos(p.precio)}</span>
                   <span className="fila-costo texto-suave">
@@ -172,7 +196,7 @@ export function PantallaProductos() {
                     )}
                   </span>
                   <button type="button" className={`stock ${p.stock <= 0 ? 'stock-cero' : necesitaReponer(p) ? 'stock-bajo' : ''}`} onClick={() => setModal({ tipo: 'stock', producto: p })} aria-label={`Stock de ${p.nombre}: ${p.stock}. Sumar o corregir`}>
-                    {p.stock}
+                    {textoStock(p)}
                   </button>
                   <div className="fila-acciones">
                     <button type="button" className={`boton-icono ${p.rapido ? 'estrella-activa' : ''}`} onClick={() => alternarRapido(p)} aria-pressed={p.rapido} aria-label={p.rapido ? `Sacar ${p.nombre} de rápidos` : `Poner ${p.nombre} en rápidos`} title="Botón rápido en la caja">
@@ -193,6 +217,7 @@ export function PantallaProductos() {
       {modal?.tipo === 'aumento' && <AumentoPrecios productos={productos} visibles={visibles} categorias={categorias} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'planilla' && <Planilla productos={productos} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'stock' && <SumarStock producto={modal.producto} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'compra' && <IngresoMercaderia productos={productos} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'pedido' && <PedidoProveedor productos={productos.filter(necesitaReponer)} onCerrar={() => setModal(null)} />}
     </div>
   );
@@ -211,11 +236,18 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
           stockMinimo: producto.stockMinimo,
           categoria: producto.categoria,
           rapido: producto.rapido,
+          porPeso: producto.porPeso ?? false,
+          promo: producto.promo ?? null,
+          vence: producto.vence ?? null,
         }
-      : { codigo: '', nombre: '', precio: 0, costo: 0, stock: 0, stockMinimo: 0, categoria: '', rapido: false },
+      : { codigo: '', nombre: '', precio: 0, costo: 0, stock: 0, stockMinimo: 0, categoria: '', rapido: false, porPeso: false, promo: null, vence: null },
   );
   const [precio, setPrecio] = useState<number | null>(producto ? producto.precio : null);
   const [costo, setCosto] = useState<number | null>(producto && producto.costo > 0 ? producto.costo : null);
+  const [stockTexto, setStockTexto] = useState(producto ? String(producto.stock).replace('.', ',') : '0');
+  const [promoCant, setPromoCant] = useState(producto?.promo ? String(producto.promo.cantidad) : '');
+  const [promoPrecio, setPromoPrecio] = useState<number | null>(producto?.promo?.precio ?? null);
+  const [masOpciones, setMasOpciones] = useState(!!(producto?.porPeso || producto?.promo || producto?.vence));
   const [camara, setCamara] = useState(false);
   const [confirmarBorrar, setConfirmarBorrar] = useState(false);
   const [enCurso, unaVez] = useUnaVez();
@@ -225,7 +257,10 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
     e.preventDefault();
     unaVez(async () => {
       try {
-        await guardarProducto(db, { ...d, precio: precio ?? 0, costo: costo ?? 0 }, producto?.id, producto?.stock);
+        const cant = Number(promoCant) || 0;
+        const promo = cant > 1 && promoPrecio ? { cantidad: cant, precio: promoPrecio } : null;
+        const stock = Number(stockTexto.replace(',', '.')) || 0;
+        await guardarProducto(db, { ...d, stock, promo, precio: precio ?? 0, costo: costo ?? 0 }, producto?.id, producto?.stock);
         avisar({ texto: producto ? 'Cambios guardados.' : `"${d.nombre.trim()}" cargado.`, tipo: 'ok' });
         onCerrar();
       } catch (err) {
@@ -265,14 +300,14 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
           </div>
         </label>
         <div className="fila-campos">
-          <CampoPesos etiqueta="Precio de venta" valor={precio} onCambio={setPrecio} />
-          <CampoPesos etiqueta="Costo (opcional)" valor={costo} onCambio={setCosto} />
+          <CampoPesos etiqueta={d.porPeso ? 'Precio por kilo' : 'Precio de venta'} valor={precio} onCambio={setPrecio} />
+          <CampoPesos etiqueta={d.porPeso ? 'Costo por kilo (opcional)' : 'Costo (opcional)'} valor={costo} onCambio={setCosto} />
         </div>
-        {m !== null && <p className="texto-suave">Ganás {formatPesos((precio ?? 0) - (costo ?? 0))} por unidad ({m}% del precio).</p>}
+        {m !== null && <p className="texto-suave">Ganás {formatPesos((precio ?? 0) - (costo ?? 0))} por {d.porPeso ? 'kilo' : 'unidad'} ({m}% del precio).</p>}
         <div className="fila-campos">
           <label className="campo">
-            <span className="campo-etiqueta">Stock actual</span>
-            <input inputMode="numeric" value={d.stock} onChange={(e) => setD({ ...d, stock: Number(e.target.value.replace(/[^\d-]/g, '')) || 0 })} />
+            <span className="campo-etiqueta">{d.porPeso ? 'Stock (kilos)' : 'Stock actual'}</span>
+            <input inputMode="decimal" value={stockTexto} onChange={(e) => setStockTexto(e.target.value.replace(d.porPeso ? /[^\d,.-]/g : /[^\d-]/g, ''))} />
           </label>
           <label className="campo">
             <span className="campo-etiqueta">Avisar cuando queden</span>
@@ -292,6 +327,32 @@ function EditarProducto({ producto, categorias, onCerrar }: { producto?: Product
           <input type="checkbox" checked={d.rapido} onChange={(e) => setD({ ...d, rapido: e.target.checked })} />
           <span>Botón rápido en la caja (para lo que más sale)</span>
         </label>
+        <button type="button" className="desplegable" aria-expanded={masOpciones} onClick={() => setMasOpciones(!masOpciones)}>
+          <span className="titulo-chico">Venta por peso, promo y vencimiento</span>
+          <span className="texto-suave">{masOpciones ? 'Ocultar' : 'Mostrar'}</span>
+        </button>
+        {masOpciones && (
+          <div className="formulario opciones-producto">
+            <label className="casilla">
+              <input type="checkbox" checked={!!d.porPeso} onChange={(e) => setD({ ...d, porPeso: e.target.checked })} />
+              <span>Se vende por peso (fiambre, queso, golosinas sueltas): en la caja pide los gramos</span>
+            </label>
+            <div className="fila-campos">
+              <label className="campo">
+                <span className="campo-etiqueta">Promo: llevando</span>
+                <input inputMode="numeric" value={promoCant} onChange={(e) => setPromoCant(e.target.value.replace(/\D/g, ''))} placeholder="Ej.: 2" disabled={!!d.porPeso} />
+              </label>
+              <CampoPesos etiqueta="pagan en total" valor={promoPrecio} onCambio={setPromoPrecio} placeholder="Ej.: 1500" />
+            </div>
+            {Number(promoCant) > 1 && promoPrecio !== null && precio !== null && promoPrecio >= precio * Number(promoCant) && (
+              <p className="texto-alerta">Con ese precio la promo no tiene descuento.</p>
+            )}
+            <label className="campo">
+              <span className="campo-etiqueta">Vence (el lote más próximo)</span>
+              <input type="date" value={d.vence ?? ''} onChange={(e) => setD({ ...d, vence: e.target.value || null })} />
+            </label>
+          </div>
+        )}
         <div className="botonera botonera-final">
           {producto && (
             <button type="button" className={`boton ${confirmarBorrar ? 'boton-peligro' : 'boton-texto-peligro'}`} onClick={borrar}>
@@ -587,6 +648,132 @@ function PedidoProveedor({ productos, onCerrar }: { productos: Producto[]; onCer
           </a>
         </div>
       </div>
+    </Modal>
+  );
+}
+
+function Vencimiento({ vence }: { vence: string }) {
+  const dias = diasParaVencer(vence);
+  const texto = dias < 0 ? 'Vencido' : dias === 0 ? 'Vence hoy' : dias <= 30 ? `Vence en ${dias} ${dias === 1 ? 'día' : 'días'}` : `Vence ${vence.split('-').reverse().join('/')}`;
+  return <span className={`insignia ${dias <= 7 ? 'insignia-alerta' : dias <= 15 ? 'insignia-aviso' : ''}`}>{texto}</span>;
+}
+
+function IngresoMercaderia({ productos, onCerrar }: { productos: Producto[]; onCerrar: () => void }) {
+  const avisar = useAvisar();
+  const { sesion } = useSesion();
+  const [q, setQ] = useState('');
+  const [renglones, setRenglones] = useState<{ p: Producto; cantidad: string; costo: number | null }[]>([]);
+  const [proveedor, setProveedor] = useState('');
+  const [deCaja, setDeCaja] = useState(false);
+  const [enCurso, unaVez] = useUnaVez();
+  const encontrados = useMemo(() => {
+    const t = normalizar(q.trim());
+    if (t.length < 2) return [];
+    const ya = new Set(renglones.map((r) => r.p.id));
+    return productos.filter((p) => !ya.has(p.id) && (p.codigo === q.trim() || normalizar(p.nombre).includes(t))).slice(0, 6);
+  }, [q, productos, renglones]);
+  const sumar = (p: Producto) => {
+    setRenglones((r) => [...r, { p, cantidad: '', costo: p.costo > 0 ? p.costo : null }]);
+    setQ('');
+  };
+  const cant = (t: string) => Number(t.replace(',', '.')) || 0;
+  const total = renglones.reduce((s, r) => s + Math.round(cant(r.cantidad) * (r.costo ?? 0)), 0);
+  return (
+    <Modal titulo="Llegó mercadería" onCerrar={onCerrar} ancho="ancho">
+      <form
+        className="formulario"
+        onSubmit={(e) => {
+          e.preventDefault();
+          unaVez(async () => {
+            try {
+              const pagado = await ingresarMercaderia(
+                db,
+                renglones.map((r) => ({ productoId: r.p.id!, cantidad: cant(r.cantidad), costo: r.costo ?? 0 })),
+                { proveedor, pagadoDeCaja: deCaja },
+                sesion?.usuario,
+              );
+              avisar({ texto: `Stock actualizado${deCaja ? `. Gasto de ${formatPesos(pagado)} anotado en la caja` : ''}.`, tipo: 'ok' });
+              onCerrar();
+            } catch (err) {
+              avisar({ texto: errorATexto(err), tipo: 'error' });
+            }
+          });
+        }}
+      >
+        <p className="texto-suave">Escaneá o buscá cada producto que llegó, poné cuántos y el costo nuevo. El stock y el costo se actualizan solos.</p>
+        <div className="buscador-campo buscador-chico ingreso-buscador">
+          <Icono nombre="buscar" tam={18} />
+          <input
+            value={q}
+            autoFocus
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (encontrados[0]) sumar(encontrados[0]);
+              }
+            }}
+            placeholder="Escaneá o escribí el producto"
+            aria-label="Buscar producto que llegó"
+          />
+          {encontrados.length > 0 && (
+            <ul className="resultados">
+              {encontrados.map((p) => (
+                <li key={p.id}>
+                  <button type="button" onClick={() => sumar(p)}>
+                    <span>
+                      <strong>{p.nombre}</strong>
+                      <small>hay {textoStock(p)}</small>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {renglones.length > 0 && (
+          <ul className="lista-compra">
+            {renglones.map((r, i) => (
+              <li key={r.p.id}>
+                <span className="lista-compra-nombre">
+                  <strong>{r.p.nombre}</strong>
+                  <small className="texto-suave">hay {textoStock(r.p)}</small>
+                </span>
+                <label className="campo">
+                  <span className="campo-etiqueta">{r.p.porPeso ? 'Kilos' : 'Cantidad'}</span>
+                  <input
+                    inputMode="decimal"
+                    value={r.cantidad}
+                    autoFocus
+                    onChange={(e) => setRenglones((x) => x.map((y, j) => (j === i ? { ...y, cantidad: e.target.value.replace(/[^\d,.]/g, '') } : y)))}
+                  />
+                </label>
+                <CampoPesos etiqueta={r.p.porPeso ? 'Costo por kilo' : 'Costo c/u'} valor={r.costo} onCambio={(v) => setRenglones((x) => x.map((y, j) => (j === i ? { ...y, costo: v } : y)))} />
+                <button type="button" className="boton-icono" aria-label={`Sacar ${r.p.nombre}`} onClick={() => setRenglones((x) => x.filter((_, j) => j !== i))}>
+                  <Icono nombre="basura" tam={18} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="fila-campos">
+          <label className="campo">
+            <span className="campo-etiqueta">Proveedor (opcional)</span>
+            <input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej.: Distribuidora Arcor" />
+          </label>
+        </div>
+        <label className="casilla">
+          <input type="checkbox" checked={deCaja} onChange={(e) => setDeCaja(e.target.checked)} />
+          <span>Lo pagué con plata de la caja (se anota como gasto del turno)</span>
+        </label>
+        <div className="vuelto">
+          <span>Total de la compra</span>
+          <strong className="importe texto-normal">{formatPesos(total)}</strong>
+        </div>
+        <button type="submit" className="boton boton-primario boton-grande" disabled={enCurso || !renglones.some((r) => cant(r.cantidad) > 0)}>
+          Guardar ingreso
+        </button>
+      </form>
     </Modal>
   );
 }

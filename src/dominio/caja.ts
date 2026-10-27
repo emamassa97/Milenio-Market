@@ -1,3 +1,4 @@
+import { pagosDeVenta } from './carrito';
 import type { MedioPago, MovimientoCaja, MovimientoFiado, Pesos, Venta } from './tipos';
 
 /** Billetes y monedas que se cuentan al cerrar. */
@@ -42,7 +43,7 @@ export function resumirTurno(
     if (v.anulada) continue;
     cantidadVentas++;
     totalVendido += v.total;
-    porMedio[v.medio] += v.total;
+    for (const p of pagosDeVenta(v)) porMedio[p.medio] += p.monto;
   }
   for (const p of pagosFiado) {
     if (p.anulado || p.tipo !== 'pago' || !p.medio) continue;

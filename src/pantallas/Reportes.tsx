@@ -37,6 +37,11 @@ export function PantallaReportes() {
   const [desde, hasta] = rango(periodo);
   const ventas = useConsulta(() => db.ventas.where('fecha').between(desde, hasta, true, false).toArray(), [desde, hasta], [] as Venta[]);
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
+  const gastos = useConsulta(
+    async () => (await db.movimientosCaja.filter((m) => m.tipo === 'gasto' && !m.motivo.startsWith('Mercadería') && m.fecha >= desde && m.fecha < hasta).toArray()).reduce((s, m) => s + m.monto, 0),
+    [desde, hasta],
+    0,
+  );
   const ventas30 = useConsulta(() => db.ventas.where('fecha').above(Date.now() - 30 * 86400000).toArray(), [], [] as Venta[]);
   const fiadoPendiente = useConsulta(
     async () => {
@@ -97,6 +102,16 @@ export function PantallaReportes() {
           <span>Ganancia estimada</span>
           <strong className="importe texto-positivo">{formatPesos(r.ganancia)}</strong>
           {r.ventasSinCosto > 0 && <small className="texto-suave">{formatPesos(r.ventasSinCosto)} vendidos sin costo cargado no entran</small>}
+        </div>
+        <div className="tarjeta indicador">
+          <span>Gastos del local</span>
+          <strong className="importe">{formatPesos(gastos)}</strong>
+          <small className="texto-suave">Luz, alquiler, sueldos y otros (la mercadería ya está en el costo)</small>
+        </div>
+        <div className="tarjeta indicador">
+          <span>Queda después de gastos</span>
+          <strong className={`importe ${r.ganancia - gastos < 0 ? 'texto-alerta' : ''}`}>{formatPesos(r.ganancia - gastos)}</strong>
+          <small className="texto-suave">Ganancia estimada menos gastos</small>
         </div>
       </div>
 

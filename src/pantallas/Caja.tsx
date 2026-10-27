@@ -7,7 +7,10 @@ import {
   carritoVacio,
   esCodigo,
   interpretarEntrada,
+  ahorroPromo,
   itemDeProducto,
+  itemPorPeso,
+  formatoPeso,
   itemMontoLibre,
   pagosSugeridos,
   quitarItem,
@@ -18,7 +21,8 @@ import {
 } from '../dominio/carrito';
 import { formatPesos } from '../dominio/dinero';
 import { saldoCliente } from '../dominio/fiado';
-import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type Producto } from '../dominio/tipos';
+import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type Pago, type Producto } from '../dominio/tipos';
+import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
 import { db } from '../datos/db';
 import {
   abrirTurno,
@@ -69,7 +73,12 @@ interface UltimaVenta {
   total: number;
   medio: MedioPago;
   hora: number;
+  dividido?: boolean;
 }
+
+// Teclas de función para elegir el medio sin mouse (F3 lleva a "Paga con").
+const TECLA_DE: Record<MedioPago, string> = { efectivo: 'F5', mercadopago: 'F6', tarjeta: 'F7', transferencia: 'F9', fiado: 'F10' };
+const TECLA_MEDIO: Record<string, MedioPago> = Object.fromEntries(Object.entries(TECLA_DE).map(([m, t]) => [t, m as MedioPago]));
 
 function normalizar(t: string) {
   return t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -136,13 +145,20 @@ function Caja() {
   const [carrito, setCarrito] = useGuardado<Carrito>('milenio.carrito', carritoVacio);
   const [espera, setEspera] = useGuardado<Espera[]>('milenio.espera', []);
   const [ultima, setUltima] = useGuardado<UltimaVenta | null>('milenio.ultima', null);
+  const ticket = useConsulta(() => leerAjustesTicket(db), [], TICKET_INICIAL);
   const [entrada, setEntrada] = useState('');
   const [resaltado, setResaltado] = useState(0);
   const [medio, setMedio] = useState<MedioPago>('efectivo');
   const [pagaCon, setPagaCon] = useState<number | null>(null);
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [modal, setModal] = useState<
-    null | { tipo: 'libre' } | { tipo: 'nuevo'; codigo: string; cantidad: number } | { tipo: 'camara' } | { tipo: 'cliente' }
+    | null
+    | { tipo: 'libre' }
+    | { tipo: 'nuevo'; codigo: string; cantidad: number }
+    | { tipo: 'camara' }
+    | { tipo: 'cliente' }
+    | { tipo: 'peso'; producto: Producto }
+    | { tipo: 'dividir' }
   >(null);
   const [cobrando, setCobrando] = useState(false);
   const [confirmarCancelar, setConfirmarCancelar] = useState(false);
@@ -175,8 +191,13 @@ function Caja() {
 
   const agregar = useCallback(
     (p: Producto, cantidad: number) => {
-      setCarrito((c) => agregarItem(c, itemDeProducto(p, cantidad)));
       if (buscador.current) buscador.current.value = '';
+      if (p.porPeso) {
+        setEntrada('');
+        setModal({ tipo: 'peso', producto: p });
+        return;
+      }
+      setCarrito((c) => agregarItem(c, itemDeProducto(p, cantidad)));
       setEntrada('');
       setResaltado(0);
       setPagaCon(null);
@@ -240,13 +261,13 @@ function Caja() {
     enfocar();
   }, [carrito, confirmarCancelar, enfocar, setCarrito]);
 
-  const cobrar = useCallback(async () => {
+  const cobrar = useCallback(async (pagos?: Pago[]) => {
     if (cobrando || carrito.items.length === 0) return;
     if (medio === 'fiado' && !cliente) {
       setModal({ tipo: 'cliente' });
       return;
     }
-    if (medio === 'efectivo' && pagaCon !== null && pagaCon < total) {
+    if (!pagos && medio === 'efectivo' && pagaCon !== null && pagaCon < total) {
       pitido('error');
       avisar({ texto: `Faltan ${formatPesos(total - pagaCon)}: con eso no alcanza.`, tipo: 'error' });
       return;
@@ -259,19 +280,22 @@ function Caja() {
       }
       const venta = await registrarVenta(db, {
         items: carrito.items,
-        medio,
-        pagaCon: medio === 'efectivo' ? pagaCon : null,
-        clienteId: medio === 'fiado' ? (cliente?.id ?? null) : null,
+        medio: pagos ? pagos[0]!.medio : medio,
+        pagaCon: !pagos && medio === 'efectivo' ? pagaCon : null,
+        clienteId: !pagos && medio === 'fiado' ? (cliente?.id ?? null) : null,
+        ...(pagos ? { pagos } : {}),
       }, sesion?.usuario);
       pitido('ok');
-      const detalle =
-        medio === 'efectivo' && venta.vuelto > 0
+      const detalle = pagos
+        ? `Cobrado ${formatPesos(venta.total)} en ${pagos.length} pagos`
+        : medio === 'efectivo' && venta.vuelto > 0
           ? `Cobrado ${formatPesos(venta.total)} · Vuelto ${formatPesos(venta.vuelto)}`
           : medio === 'fiado'
             ? `Anotado ${formatPesos(venta.total)} a ${cliente?.nombre}`
             : `Cobrado ${formatPesos(venta.total)} con ${nombreMedio(medio)}`;
       avisar({ texto: detalle, tipo: 'ok' });
-      setUltima({ id: venta.id!, total: venta.total, medio, hora: Date.now() });
+      setUltima({ id: venta.id!, total: venta.total, medio: venta.medio, hora: Date.now(), dividido: !!pagos });
+      if (ticket.auto) imprimirTicket(venta, ticket);
       setCarrito(carritoVacio);
       limpiarCobro();
     } catch (e) {
@@ -281,7 +305,23 @@ function Caja() {
       setCobrando(false);
       enfocar();
     }
-  }, [cobrando, carrito, medio, cliente, pagaCon, total, avisar, enfocar, setCarrito, setUltima, sesion]);
+  }, [cobrando, carrito, medio, cliente, pagaCon, total, avisar, enfocar, setCarrito, setUltima, sesion, ticket]);
+
+  const ticketUltima = async () => {
+    if (!ultima) return;
+    const v = await db.ventas.get(ultima.id);
+    if (v) imprimirTicket(v, ticket);
+    enfocar();
+  };
+
+  const elegirMedio = useCallback(
+    (m: MedioPago) => {
+      setMedio(m);
+      if (m === 'fiado' && !cliente) setModal({ tipo: 'cliente' });
+      if (m === 'efectivo') window.setTimeout(() => document.getElementById('paga-con')?.focus(), 0);
+    },
+    [cliente],
+  );
 
   const anularUltima = async () => {
     if (!ultima) return;
@@ -299,14 +339,21 @@ function Caja() {
 
   // Teclas rápidas y lector USB cuando el foco no está en un campo.
   // Se leen por referencia para usar siempre el estado más nuevo.
-  const acciones = useRef({ cobrar, ponerEnEspera });
-  acciones.current = { cobrar, ponerEnEspera };
+  const acciones = useRef({ cobrar, ponerEnEspera, elegirMedio });
+  acciones.current = { cobrar, ponerEnEspera, elegirMedio };
   useEffect(() => {
     const tecla = (e: KeyboardEvent) => {
       if (document.querySelector('dialog[open]')) return;
-      if (e.key === 'F2') {
+      const medioTecla = TECLA_MEDIO[e.key];
+      if (medioTecla) {
+        e.preventDefault();
+        acciones.current.elegirMedio(medioTecla);
+      } else if (e.key === 'F2') {
         e.preventDefault();
         buscador.current?.focus();
+      } else if (e.key === 'F3') {
+        e.preventDefault();
+        acciones.current.elegirMedio('efectivo');
       } else if (e.key === 'F4') {
         e.preventDefault();
         setModal({ tipo: 'libre' });
@@ -344,6 +391,11 @@ function Caja() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
+                  // Con el buscador vacío, Enter cobra: todo se hace sin soltar el teclado.
+                  if (!e.currentTarget.value.trim()) {
+                    cobrar();
+                    return;
+                  }
                   procesarEntrada();
                 } else if (e.key === 'ArrowDown') {
                   e.preventDefault();
@@ -391,7 +443,10 @@ function Caja() {
           </button>
         </div>
         <p className="ayuda-teclas">
-          Tip: <kbd>3*</kbd> antes del código suma 3 · <kbd>F4</kbd> monto libre · <kbd>F8</kbd> espera · <kbd>F12</kbd> cobrar
+          <span><kbd>3*</kbd> antes del código suma 3</span>
+          <span><kbd>F4</kbd> monto libre</span>
+          <span><kbd>F8</kbd> en espera</span>
+          <span><kbd>Enter</kbd> con el buscador vacío cobra</span>
         </p>
 
         {rapidos.length > 0 && (
@@ -445,7 +500,8 @@ function Caja() {
                     <div className="renglon-nombre">
                       <strong>{it.nombre}</strong>
                       <small className={quedan !== null && prod && prod.stockMinimo > 0 && quedan <= prod.stockMinimo ? 'texto-alerta' : ''}>
-                        {formatPesos(it.precioUnitario)} c/u
+                        {it.gramos ? 'por peso' : `${formatPesos(it.precioUnitario)} c/u`}
+                        {it.promo && ahorroPromo(it) > 0 && <span className="promo-etiqueta"> Promo {it.promo.cantidad} x {formatPesos(it.promo.precio)}: ahorra {formatPesos(ahorroPromo(it))}</span>}
                         {quedan !== null && prod && prod.stockMinimo > 0 && quedan <= prod.stockMinimo ? ` · quedan ${Math.max(quedan, 0)}: reponer` : ''}
                       </small>
                     </div>
@@ -498,21 +554,32 @@ function Caja() {
                 type="button"
                 className={`medio ${medio === m.id ? 'activo' : ''} ${m.id === 'fiado' ? 'medio-ancho' : ''}`}
                 aria-pressed={medio === m.id}
-                onClick={() => {
-                  setMedio(m.id);
-                  if (m.id === 'fiado' && !cliente) setModal({ tipo: 'cliente' });
-                }}
+                aria-keyshortcuts={TECLA_DE[m.id]}
+                onClick={() => elegirMedio(m.id)}
               >
                 <Icono nombre={ICONO_MEDIO[m.id]} tam={18} />
-                <span>{m.id === 'fiado' ? (cliente ? `Fiado: ${cliente.nombre}` : 'Fiado (anotar a un cliente)') : m.nombre}</span>
+                <span className="medio-nombre">{m.id === 'fiado' ? (cliente ? `Fiado: ${cliente.nombre}` : 'Fiado (anotar a un cliente)') : m.nombre}</span>
+                <kbd>{TECLA_DE[m.id]}</kbd>
               </button>
             ))}
           </div>
 
           {medio === 'efectivo' && (
             <>
-              <h2 className="titulo-chico">Paga con</h2>
-              <CampoPesos valor={pagaCon} onCambio={setPagaCon} grande placeholder="Justo" />
+              <div
+                className="paga-con"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    cobrar();
+                  }
+                }}
+              >
+                <label className="titulo-chico" htmlFor="paga-con">
+                  Paga con <kbd>F3</kbd>
+                </label>
+                <CampoPesos id="paga-con" valor={pagaCon} onCambio={setPagaCon} grande placeholder="Justo" />
+              </div>
               {sugeridos.length > 0 && (
                 <div className="sugeridos">
                   {sugeridos.map((s) => (
@@ -528,6 +595,11 @@ function Caja() {
               </div>
             </>
           )}
+          {medio !== 'fiado' && (
+            <button type="button" className="boton boton-chico boton-dividir" onClick={() => setModal({ tipo: 'dividir' })} disabled={carrito.items.length === 0}>
+              <Icono nombre="dividir" tam={16} /> Pagar con dos medios
+            </button>
+          )}
           {medio === 'fiado' && cliente && (
             <button type="button" className="boton boton-texto" onClick={() => setModal({ tipo: 'cliente' })}>
               Cambiar cliente
@@ -535,7 +607,7 @@ function Caja() {
           )}
         </div>
 
-        <button type="button" className="boton boton-primario boton-cobrar" onClick={cobrar} disabled={carrito.items.length === 0 || cobrando}>
+        <button type="button" className="boton boton-primario boton-cobrar" onClick={() => cobrar()} disabled={carrito.items.length === 0 || cobrando}>
           <span>
             {medio === 'fiado' ? 'Anotar' : 'Cobrar'} <span className="importe">{formatPesos(total)}</span>
           </span>
@@ -554,12 +626,17 @@ function Caja() {
             <span>
               <small className="texto-suave">Última venta</small>
               <strong className="importe">
-                {formatPesos(ultima.total)} · {nombreMedio(ultima.medio)}
+                {formatPesos(ultima.total)} · {ultima.dividido ? 'Pago dividido' : nombreMedio(ultima.medio)}
               </strong>
             </span>
-            <button type="button" className="boton boton-chico boton-texto-peligro" onClick={anularUltima}>
-              <Icono nombre="deshacer" tam={16} /> Anular
-            </button>
+            <span className="botonera">
+              <button type="button" className="boton boton-chico" onClick={ticketUltima}>
+                <Icono nombre="ticket" tam={16} /> Ticket
+              </button>
+              <button type="button" className="boton boton-chico boton-texto-peligro" onClick={anularUltima}>
+                <Icono nombre="deshacer" tam={16} /> Anular
+              </button>
+            </span>
           </div>
         )}
       </aside>
@@ -588,6 +665,35 @@ function Caja() {
             setCarrito((c) => agregarItem(c, itemMontoLibre(monto, desc)));
             setModal(null);
             enfocar();
+          }}
+        />
+      )}
+      {modal?.tipo === 'peso' && (
+        <PedirPeso
+          producto={modal.producto}
+          onCerrar={() => {
+            setModal(null);
+            enfocar();
+          }}
+          onAgregar={(gramos) => {
+            setCarrito((c) => agregarItem(c, itemPorPeso(modal.producto, gramos)));
+            setModal(null);
+            setPagaCon(null);
+            pitido('ok');
+            enfocar();
+          }}
+        />
+      )}
+      {modal?.tipo === 'dividir' && (
+        <DividirPago
+          total={total}
+          onCerrar={() => {
+            setModal(null);
+            enfocar();
+          }}
+          onCobrar={(pagos) => {
+            setModal(null);
+            cobrar(pagos);
           }}
         />
       )}
@@ -649,6 +755,13 @@ function MontoLibre({ onCerrar, onAgregar }: { onCerrar: () => void; onAgregar: 
         }}
       >
         <p className="texto-suave">Para algo que no está cargado: una fotocopia, una recarga, un producto suelto.</p>
+        <div className="sugeridos" role="group" aria-label="Qué es">
+          {['Recarga SUBE', 'Recarga celular', 'Pago de servicio', 'Fotocopia', 'Varios'].map((t) => (
+            <button key={t} type="button" className={`chip ${desc === t ? 'activo' : ''}`} onClick={() => setDesc(t)}>
+              {t}
+            </button>
+          ))}
+        </div>
         <CampoPesos etiqueta="Monto" valor={monto} onCambio={setMonto} autoFocus grande />
         <label className="campo">
           <span className="campo-etiqueta">Qué es (opcional)</span>
@@ -783,6 +896,89 @@ function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir:
           </button>
         )}
       </div>
+    </Modal>
+  );
+}
+
+function PedirPeso({ producto, onCerrar, onAgregar }: { producto: Producto; onCerrar: () => void; onAgregar: (gramos: number) => void }) {
+  const [texto, setTexto] = useState('');
+  const gramos = Math.round(Number(texto.replace(',', '.')) || 0);
+  const precio = Math.round((producto.precio * gramos) / 1000);
+  return (
+    <Modal titulo={producto.nombre} onCerrar={onCerrar}>
+      <form
+        className="formulario"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (gramos > 0) onAgregar(gramos);
+        }}
+      >
+        <p className="texto-suave">
+          {formatPesos(producto.precio)} el kilo. Poné cuántos gramos pesó.
+        </p>
+        <div className="sugeridos">
+          {[100, 250, 500, 1000].map((g) => (
+            <button key={g} type="button" className={`chip ${gramos === g ? 'activo' : ''}`} onClick={() => setTexto(String(g))}>
+              {formatoPeso(g)}
+            </button>
+          ))}
+        </div>
+        <label className="campo">
+          <span className="campo-etiqueta">Gramos</span>
+          <div className="campo-pesos campo-pesos-grande">
+            <input inputMode="numeric" autoFocus value={texto} onChange={(e) => setTexto(e.target.value.replace(/[^\d]/g, ''))} placeholder="0" />
+            <span aria-hidden="true">g</span>
+          </div>
+        </label>
+        <button className="boton boton-primario boton-grande" type="submit" disabled={gramos <= 0}>
+          {gramos > 0 ? `Agregar ${formatoPeso(gramos)}: ${formatPesos(precio)}` : 'Agregar'}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+const MEDIOS_DIVIDIR = MEDIOS.filter((m) => m.id !== 'fiado');
+
+function DividirPago({ total, onCerrar, onCobrar }: { total: number; onCerrar: () => void; onCobrar: (pagos: Pago[]) => void }) {
+  const [montos, setMontos] = useState<Partial<Record<MedioPago, number | null>>>({});
+  const suma = Object.values(montos).reduce<number>((s, v) => s + (v ?? 0), 0);
+  const falta = total - suma;
+  const pagos = MEDIOS_DIVIDIR.map((m) => ({ medio: m.id, monto: montos[m.id] ?? 0 })).filter((p) => p.monto > 0);
+  const completar = (m: MedioPago) => setMontos((x) => ({ ...x, [m]: (x[m] ?? 0) + Math.max(0, falta) }));
+  return (
+    <Modal titulo="Pagar con dos medios" onCerrar={onCerrar}>
+      <form
+        className="formulario"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (falta === 0 && pagos.length > 1) onCobrar(pagos);
+        }}
+      >
+        <p className="texto-suave">
+          Total <strong className="importe">{formatPesos(total)}</strong>. Por ejemplo, una parte en efectivo y el resto con Mercado Pago.
+        </p>
+        <div className="dividir">
+          {MEDIOS_DIVIDIR.map((m, i) => (
+            <div key={m.id} className="dividir-fila">
+              <span className="dividir-medio">
+                <Icono nombre={ICONO_MEDIO[m.id]} tam={18} /> {m.nombre}
+              </span>
+              <CampoPesos valor={montos[m.id] ?? null} onCambio={(v) => setMontos((x) => ({ ...x, [m.id]: v }))} autoFocus={i === 0} />
+              <button type="button" className="boton boton-chico" onClick={() => completar(m.id)} disabled={falta <= 0}>
+                El resto
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className={`vuelto ${falta !== 0 ? 'vuelto-falta' : ''}`}>
+          <span>{falta > 0 ? 'Falta' : falta < 0 ? 'Sobra' : 'Completo'}</span>
+          <strong className="importe">{formatPesos(Math.abs(falta))}</strong>
+        </div>
+        <button className="boton boton-primario boton-grande" type="submit" disabled={falta !== 0 || pagos.length < 2}>
+          Cobrar {formatPesos(total)}
+        </button>
+      </form>
     </Modal>
   );
 }

@@ -30,8 +30,24 @@ export interface Producto {
   categoria: string;
   /** Aparece como botón grande en la caja. */
   rapido: boolean;
+  /** Se vende por peso: el precio y el costo son por kilo, y el stock va en kilos. */
+  porPeso?: boolean;
+  /** Promo por cantidad, ej. 2 por $1.500. */
+  promo?: Promo | null;
+  /** Fecha de vencimiento más próxima, 'AAAA-MM-DD'. */
+  vence?: string | null;
   creado: number;
   actualizado: number;
+}
+
+export interface Promo {
+  cantidad: number;
+  precio: Pesos;
+}
+
+export interface Pago {
+  medio: MedioPago;
+  monto: Pesos;
 }
 
 export interface ItemVenta {
@@ -42,6 +58,9 @@ export interface ItemVenta {
   precioUnitario: Pesos;
   costoUnitario: Pesos;
   cantidad: number;
+  /** Venta por peso: cuántos gramos. El precio unitario ya es el de esos gramos. */
+  gramos?: number;
+  promo?: Promo | null;
 }
 
 export interface Venta {
@@ -54,6 +73,8 @@ export interface Venta {
   medio: MedioPago;
   pagaCon: Pesos | null;
   vuelto: Pesos;
+  /** Pago dividido en varios medios. Si no está, se pagó todo con `medio`. */
+  pagos?: Pago[];
   clienteId: number | null;
   anulada: boolean;
   anuladaFecha?: number;
