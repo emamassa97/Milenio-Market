@@ -8,7 +8,7 @@ import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type MovimientoFiado
 import { db } from '../datos/db';
 import { anularPagoFiado, anularVenta, guardarCliente, registrarPagoFiado, turnoAbierto } from '../datos/operaciones';
 import { CampoPesos, errorATexto, fechaCorta, ICONO_MEDIO, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
-import { useConsulta, useUnaVez } from '../ui/hooks';
+import { useBajando, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 
 interface Fila {
@@ -51,6 +51,7 @@ export function PantallaClientes() {
     new Map<number, Venta>(),
   );
   const [modal, setModal] = useState<null | { tipo: 'cliente'; cliente?: Cliente } | { tipo: 'pago'; fila: Fila }>(null);
+  const bajando = useBajando();
   const visibles = useMemo(() => filas.filter((f) => normalizar(f.cliente.nombre).includes(normalizar(q.trim()))), [filas, q]);
   const total = filas.reduce((s, f) => s + Math.max(0, f.saldo), 0);
   const deudores = filas.filter((f) => f.saldo > 0).length;
@@ -83,7 +84,7 @@ export function PantallaClientes() {
           <Icono nombre="mas" tam={18} /> Nuevo cliente
         </button>
       </div>
-      <button type="button" className="fab" onClick={() => setModal({ tipo: 'cliente' })} aria-label="Nuevo cliente" title="Nuevo cliente">
+      <button type="button" className={`fab ${bajando ? 'fab-oculto' : ''}`} onClick={() => setModal({ tipo: 'cliente' })} aria-label="Nuevo cliente" title="Nuevo cliente">
         <Icono nombre="mas" tam={26} />
       </button>
 

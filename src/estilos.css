@@ -728,7 +728,10 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
   .fab {
     display: grid; place-items: center; position: fixed; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 14;
     width: 56px; height: 56px; border-radius: 50%; border: none; background: var(--grafito); color: #fff; box-shadow: var(--sombra-alta);
+    transition: transform 0.2s, opacity 0.2s;
   }
+  /* Mientras se baja por la lista, el botón se esconde; vuelve al subir. */
+  .fab.fab-oculto { transform: translateY(120px); opacity: 0; pointer-events: none; }
   /* Que el botón redondo no tape la última fila. */
   .pagina:has(> .fab) { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
   /* En Ajustes, la copia de seguridad primero; en Reportes, "Para reponer" enseguida después de las cifras. */

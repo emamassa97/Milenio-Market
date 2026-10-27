@@ -20,7 +20,7 @@ import { CampoPesos, copiarTexto, descargarArchivo, Desplegable, errorATexto, Ic
 import { Escaner } from '../ui/Escaner';
 import { htmlListaPrecios, type FormatoLista } from '../ui/listaPrecios';
 import { imprimirHTML, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
-import { pitido, useConsulta, useUnaVez } from '../ui/hooks';
+import { pitido, useBajando, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 
@@ -73,6 +73,7 @@ export function PantallaProductos() {
     | { tipo: 'compra' }
   >(null);
   const [menuAcciones, setMenuAcciones] = useState(false);
+  const bajando = useBajando();
 
   const categorias = useMemo(
     () => [...new Set(productos.map((p) => p.categoria).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
@@ -156,7 +157,7 @@ export function PantallaProductos() {
           </button>
         </div>
       </div>
-      <button type="button" className="fab" onClick={() => setModal({ tipo: 'editar' })} aria-label="Nuevo producto" title="Nuevo producto">
+      <button type="button" className={`fab ${bajando ? 'fab-oculto' : ''}`} onClick={() => setModal({ tipo: 'editar' })} aria-label="Nuevo producto" title="Nuevo producto">
         <Icono nombre="mas" tam={26} />
       </button>
       {menuAcciones && (
