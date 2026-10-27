@@ -45,6 +45,7 @@ import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, LLAVE_ULTIMA, pitido, resume
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { NuevoMovimiento } from './Cierre';
 import { DevolverVenta } from './Devolver';
+import { IngresoMercaderia } from './Productos';
 
 // El carrito y las ventas en espera sobreviven a cambiar de pantalla, a recargar y a cerrar el navegador.
 function useGuardado<T>(llave: string, inicial: T) {
@@ -185,6 +186,7 @@ function Caja() {
     | { tipo: 'devolver'; venta: Venta }
     | { tipo: 'limite'; aviso: string; pagos?: Pago[]; pagaCon: number | null }
     | { tipo: 'movimiento' }
+    | { tipo: 'mercaderia' }
   >(null);
   const [confirmarAnular, setConfirmarAnular] = useState(false);
   const dueño = useEsDueño();
@@ -827,9 +829,15 @@ function Caja() {
         </div>
         {/* Siempre ocupa su lugar, así el botón de cobrar no se mueve con la primera venta. */}
         <div className="solo-pc">{tiraUltima}</div>
-        <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'movimiento' })}>
-          <Icono nombre="billetera" tam={16} /> Anotar un retiro o gasto
-        </button>
+        <div className="botonera botonera-centrada acciones-caja">
+          <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'movimiento' })}>
+            <Icono nombre="billetera" tam={16} /> Anotar un retiro o gasto
+          </button>
+          {/* El empleado recibe el reparto sin salir de la caja: sólo suma stock; el dueño ve el ingreso completo. */}
+          <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'mercaderia' })} disabled={productos.length === 0}>
+            <Icono nombre="camion" tam={16} /> Llegó mercadería
+          </button>
+        </div>
       </aside>
 
       {carrito.items.length > 0 ? (
@@ -969,6 +977,17 @@ function Caja() {
             </div>
           </div>
         </Modal>
+      )}
+      {modal?.tipo === 'mercaderia' && (
+        <IngresoMercaderia
+          productos={productos}
+          proveedores={[...new Set(productos.map((p) => p.proveedor?.trim()).filter((x): x is string => !!x))].sort()}
+          soloStock={!dueño}
+          onCerrar={() => {
+            setModal(null);
+            enfocar();
+          }}
+        />
       )}
       {modal?.tipo === 'movimiento' && (
         <NuevoMovimiento

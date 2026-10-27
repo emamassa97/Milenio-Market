@@ -358,6 +358,8 @@ input[type='file'] { padding: 10px; }
 /* En el celular la tira va arriba de todo, con la venta vacía; en PC vive en el panel de cobro. */
 .ultima-venta-arriba { display: none; }
 .boton-retiro { align-self: center; font-size: 0.92rem; color: var(--texto); }
+.acciones-caja { gap: 4px 16px; }
+.acciones-caja .boton-retiro { align-self: auto; }
 .acciones-secundarias { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .acciones-secundarias .boton { white-space: nowrap; min-height: 46px; font-size: 0.92rem; padding: 0 10px; }
 .barra-cobro-movil { display: none; }
@@ -777,10 +779,13 @@ input[type='file'] { padding: 10px; }
 .lista-compra li { display: grid; grid-template-columns: minmax(0, 1fr) 110px 160px 44px; gap: 10px; align-items: end; padding: 10px 12px; border: 1px solid var(--borde); border-radius: var(--radio); }
 .lista-compra-nombre { display: flex; flex-direction: column; align-self: center; min-width: 0; }
 .lista-compra-precio { grid-column: 1 / -1; min-height: 0; font-size: 0.9rem; }
+/* Sólo stock (empleado): nombre, cantidad y sacar. */
+.lista-compra-simple li { grid-template-columns: minmax(0, 1fr) 120px 44px; }
 .lista-compra-con-precio { background: var(--ambar-suave); border-color: transparent; }
 .texto-normal { color: var(--texto) !important; }
 @media (max-width: 560px) {
   .lista-compra li { grid-template-columns: 1fr 1fr 44px; }
+  .lista-compra-simple li { grid-template-columns: minmax(0, 1fr) 100px 44px; }
   .lista-compra-nombre { grid-column: 1 / -1; }
 }
 .ticket-ajustes { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: start; }

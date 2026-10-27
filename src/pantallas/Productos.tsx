@@ -842,7 +842,11 @@ interface RenglonIngreso {
   mantenerMargen: boolean;
 }
 
-function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Producto[]; proveedores: string[]; onCerrar: () => void }) {
+/**
+ * "Llegó mercadería". Con `soloStock` (el empleado desde la caja) sólo se suman cantidades:
+ * costos, precios, proveedor y plata de la caja quedan para el dueño.
+ */
+export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock = false }: { productos: Producto[]; proveedores: string[]; onCerrar: () => void; soloStock?: boolean }) {
   const avisar = useAvisar();
   const { sesion } = useSesion();
   // Subir precios es cosa del dueño: al empleado se lo proponemos sin marcar.
@@ -921,14 +925,17 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
               const gasto = await ingresarMercaderia(
                 db,
                 renglones.map((r) => {
+                  if (soloStock) return { productoId: r.p.id!, cantidad: cant(r), costo: r.p.costo };
                   const nuevo = r.mantenerMargen ? precioNuevo(r) : null;
                   return { productoId: r.p.id!, cantidad: cant(r), costo: r.costo ?? 0, ...(nuevo ? { precio: nuevo } : {}) };
                 }),
-                { proveedor, pagadoDeCaja: deCaja, montoPagado: deCaja ? montoCaja : undefined },
+                soloStock ? { proveedor: '', pagadoDeCaja: false } : { proveedor, pagadoDeCaja: deCaja, montoPagado: deCaja ? montoCaja : undefined },
                 sesion?.usuario,
               );
               avisar({
-                texto: `Stock actualizado${subidas > 0 ? ` y ${subidas === 1 ? '1 precio subido' : `${subidas} precios subidos`}` : ''}${deCaja && gasto > 0 ? `. Gasto de ${formatPesos(gasto)} anotado en la caja` : ''}.`,
+                texto: soloStock
+                  ? 'Stock actualizado.'
+                  : `Stock actualizado${subidas > 0 ? ` y ${subidas === 1 ? '1 precio subido' : `${subidas} precios subidos`}` : ''}${deCaja && gasto > 0 ? `. Gasto de ${formatPesos(gasto)} anotado en la caja` : ''}.`,
                 tipo: 'ok',
               });
               onCerrar();
@@ -938,7 +945,9 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
           });
         }}
       >
-        <p className="texto-suave">Escaneá o buscá cada producto que llegó, poné cuántos y el costo nuevo. El stock y el costo se actualizan solos.</p>
+        <p className="texto-suave">
+          {soloStock ? 'Escaneá o buscá cada producto que llegó y poné cuántos. Se suman al stock; los costos y precios los revisa el dueño.' : 'Escaneá o buscá cada producto que llegó, poné cuántos y el costo nuevo. El stock y el costo se actualizan solos.'}
+        </p>
         <div className="buscador-campo buscador-chico ingreso-buscador">
           <Icono nombre="buscar" tam={18} />
           <input
@@ -976,9 +985,9 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
           )}
         </div>
         {renglones.length > 0 && (
-          <ul className="lista-compra">
+          <ul className={`lista-compra ${soloStock ? 'lista-compra-simple' : ''}`}>
             {renglones.map((r, i) => {
-              const nuevo = precioNuevo(r);
+              const nuevo = soloStock ? null : precioNuevo(r);
               const m = margen(r.p.precio, r.p.costo);
               const mNuevo = r.costo ? margen(r.p.precio, r.costo) : null;
               return (
@@ -986,8 +995,9 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
                 <span className="lista-compra-nombre">
                   <strong>{r.p.nombre}</strong>
                   <small className="texto-suave">
-                    hay {textoStock(r.p)} · vendés a {formatPesos(r.p.precio)}
-                    {m !== null && ` (ganás ${m}%)`}
+                    hay {textoStock(r.p)}
+                    {!soloStock && ` · vendés a ${formatPesos(r.p.precio)}`}
+                    {!soloStock && m !== null && ` (ganás ${m}%)`}
                   </small>
                 </span>
                 <label className="campo">
@@ -1004,12 +1014,14 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
                     aria-label={`Cantidad de ${r.p.nombre}`}
                   />
                 </label>
-                <CampoPesos
-                  etiqueta={r.p.porPeso ? 'Costo por kilo' : 'Costo c/u'}
-                  valor={r.costo}
-                  ariaLabel={`Costo de ${r.p.nombre}`}
-                  onCambio={(v) => setRenglones((x) => x.map((y, j) => (j === i ? { ...y, costo: v } : y)))}
-                />
+                {!soloStock && (
+                  <CampoPesos
+                    etiqueta={r.p.porPeso ? 'Costo por kilo' : 'Costo c/u'}
+                    valor={r.costo}
+                    ariaLabel={`Costo de ${r.p.nombre}`}
+                    onCambio={(v) => setRenglones((x) => x.map((y, j) => (j === i ? { ...y, costo: v } : y)))}
+                  />
+                )}
                 <button type="button" className="boton-icono" aria-label={`Sacar ${r.p.nombre}`} onClick={() => setRenglones((x) => x.filter((_, j) => j !== i))}>
                   <Icono nombre="basura" tam={18} />
                 </button>
@@ -1027,6 +1039,8 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
             })}
           </ul>
         )}
+        {!soloStock && (
+        <>
         <div className="fila-campos">
           <label className="campo">
             <span className="campo-etiqueta">Proveedor (opcional)</span>
@@ -1060,8 +1074,10 @@ function IngresoMercaderia({ productos, proveedores, onCerrar }: { productos: Pr
           <span>Total de la compra</span>
           <strong className="importe texto-normal">{formatPesos(total)}</strong>
         </div>
+        </>
+        )}
         <button type="submit" className="boton boton-primario boton-grande" disabled={enCurso || !renglones.some((r) => cant(r) > 0)}>
-          {subidas > 0 ? `Guardar ingreso y subir ${subidas === 1 ? '1 precio' : `${subidas} precios`}` : 'Guardar ingreso'}
+          {soloStock ? 'Sumar al stock' : subidas > 0 ? `Guardar ingreso y subir ${subidas === 1 ? '1 precio' : `${subidas} precios`}` : 'Guardar ingreso'}
         </button>
       </form>
     </Modal>
