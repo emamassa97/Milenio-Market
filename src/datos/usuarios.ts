@@ -104,3 +104,22 @@ export async function revalidarSesion(db: BaseKiosco, usuario: string | Pick<Usu
   const u = (await leerUsuarios(db)).find((x) => x.usuario === nombre);
   return u ? { usuario: u.usuario, nombre: u.nombre, admin: u.admin } : null;
 }
+
+/** Lo que hay guardado en este equipo, para saber qué se pierde al empezar de cero. */
+export async function resumenEquipo(db: BaseKiosco): Promise<{ productos: number; ventas: number; clientes: number }> {
+  const [productos, ventas, clientes] = await Promise.all([db.productos.count(), db.ventas.count(), db.clientes.count()]);
+  return { productos, ventas, clientes };
+}
+
+/**
+ * Para el dueño que se olvidó la clave: borra todo lo guardado en este equipo
+ * (usuarios incluidos) y vuelve a la pantalla de crear el usuario. Se conservan
+ * el id del equipo y la clave de la nube, para que la copia siga andando.
+ */
+export async function empezarDeCero(db: BaseKiosco): Promise<void> {
+  await db.transaction('rw', db.tables, async () => {
+    const guardar = (await db.ajustes.toArray()).filter((x) => x.clave === 'dispositivo' || x.clave === 'nube.clave');
+    for (const t of db.tables) await t.clear();
+    if (guardar.length) await db.ajustes.bulkPut(guardar);
+  });
+}

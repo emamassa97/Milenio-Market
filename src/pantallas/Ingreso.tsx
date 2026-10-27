@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import logo from '../assets/logo-rojo.svg';
 import { db } from '../datos/db';
 import { recuperarDeLaNube } from '../datos/nube';
-import { crearUsuario, ingresar, leerUsuarios } from '../datos/usuarios';
+import { crearUsuario, empezarDeCero, ingresar, leerUsuarios, resumenEquipo, type Usuario } from '../datos/usuarios';
 import { errorATexto, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion, LLAVE_SIGUIENTE } from '../ui/sesion';
@@ -16,7 +16,7 @@ export function PantallaIngreso() {
         <img src={logo} alt="Milenio Market" />
         <p>Caja, stock, fiado y cierre de tu kiosco. Anda con o sin internet.</p>
       </div>
-      <div className="ingreso-lado">{usuarios.length === 0 ? <PrimerUsuario /> : <Entrar />}</div>
+      <div className="ingreso-lado">{usuarios.length === 0 ? <PrimerUsuario /> : <Entrar usuarios={usuarios} />}</div>
     </div>
   );
 }
@@ -31,8 +31,9 @@ function usuarioSiguiente(): string {
   }
 }
 
-function Entrar() {
+function Entrar({ usuarios }: { usuarios: Usuario[] }) {
   const { entrar } = useSesion();
+  const [olvide, setOlvide] = useState(false);
   const [usuario, setUsuario] = useState(usuarioSiguiente);
   const [sugerido] = useState(() => usuario !== '');
   useEffect(() => {
@@ -46,6 +47,7 @@ function Entrar() {
   const [recordar, setRecordar] = useState(true);
   const [error, setError] = useState('');
   const [enCurso, unaVez] = useUnaVez();
+  if (olvide) return <OlvideClave usuarios={usuarios} volver={() => setOlvide(false)} />;
   return (
     <form
       className="tarjeta formulario ingreso-tarjeta"
@@ -81,6 +83,76 @@ function Entrar() {
       )}
       <button className="boton boton-primario boton-grande" type="submit" disabled={enCurso} aria-busy={enCurso}>
         {enCurso ? 'Entrando…' : 'Entrar'}
+      </button>
+      <button type="button" className="boton-texto" onClick={() => setOlvide(true)}>
+        ¿Te olvidaste el usuario o la clave?
+      </button>
+    </form>
+  );
+}
+
+/**
+ * Sin servidor no hay mail para recuperar la clave: se muestran los usuarios
+ * de este equipo (por si el olvido es el nombre) y, si no hay forma de entrar,
+ * se puede empezar de cero en esta compu. Si hay datos cargados, se pide escribir BORRAR.
+ */
+function OlvideClave({ usuarios, volver }: { usuarios: Usuario[]; volver: () => void }) {
+  const avisar = useAvisar();
+  const resumen = useConsulta(() => resumenEquipo(db), [], null);
+  const [confirmacion, setConfirmacion] = useState('');
+  const [enCurso, unaVez] = useUnaVez();
+  if (resumen === null) return null;
+  const hayDatos = resumen.productos + resumen.ventas + resumen.clientes > 0;
+  const listo = !hayDatos || confirmacion.trim().toUpperCase() === 'BORRAR';
+  return (
+    <form
+      className="tarjeta formulario ingreso-tarjeta"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!listo) return;
+        unaVez(async () => {
+          try {
+            await empezarDeCero(db);
+            avisar({ texto: 'Listo: creá tu usuario de nuevo.', tipo: 'ok' });
+          } catch (err) {
+            avisar({ texto: errorATexto(err), tipo: 'error' });
+          }
+        });
+      }}
+    >
+      <h1>¿No podés entrar?</h1>
+      <p>
+        Usuarios de esta compu:{' '}
+        {usuarios.map((u, i) => (
+          <span key={u.usuario}>
+            {i > 0 && ', '}
+            <strong>{u.usuario}</strong>
+            {u.admin && ' (dueño)'}
+          </span>
+        ))}
+        .
+      </p>
+      <p className="texto-suave">
+        Si te olvidaste la clave de un empleado, entrá como dueño y cambiala desde Ajustes. Si te olvidaste la del dueño, se puede empezar de cero en esta compu y crear un usuario nuevo.
+      </p>
+      {hayDatos ? (
+        <>
+          <p className="texto-alerta">
+            Se borra todo lo guardado en esta compu: {resumen.productos} productos, {resumen.ventas} ventas y {resumen.clientes} clientes.
+          </p>
+          <label className="campo">
+            <span className="campo-etiqueta">Para confirmar, escribí BORRAR</span>
+            <input value={confirmacion} onChange={(e) => setConfirmacion(e.target.value)} autoComplete="off" autoCapitalize="characters" />
+          </label>
+        </>
+      ) : (
+        <p className="texto-suave">En esta compu no hay productos, ventas ni clientes cargados: no se pierde nada.</p>
+      )}
+      <button className="boton boton-primario boton-grande" type="submit" disabled={!listo || enCurso}>
+        Empezar de cero en esta compu
+      </button>
+      <button type="button" className="boton" onClick={volver}>
+        Volver
       </button>
     </form>
   );
