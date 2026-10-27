@@ -18,6 +18,8 @@ import {
 } from '../datos/operaciones';
 import { CampoPesos, copiarTexto, descargarArchivo, Desplegable, errorATexto, Icono, Modal, sinCortes, useAvisar, Vacio } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
+import { htmlListaPrecios, type FormatoLista } from '../ui/listaPrecios';
+import { imprimirHTML, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
 import { pitido, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
@@ -64,6 +66,7 @@ export function PantallaProductos() {
     | null
     | { tipo: 'editar'; producto?: Producto }
     | { tipo: 'aumento' }
+    | { tipo: 'lista'; reciénAumentados?: boolean }
     | { tipo: 'planilla' }
     | { tipo: 'stock'; producto: Producto }
     | { tipo: 'pedido' }
@@ -113,6 +116,7 @@ export function PantallaProductos() {
     { id: 'compra', texto: 'Llegó mercadería', icono: 'camion', deshabilitado: productos.length === 0 },
     { id: 'pedido', texto: 'Pedido al proveedor', icono: 'whatsapp', deshabilitado: productos.length === 0 },
     { id: 'aumento', texto: 'Aumentar precios', icono: 'porcentaje', deshabilitado: productos.length === 0 },
+    { id: 'lista', texto: 'Lista de precios', icono: 'impresora', deshabilitado: productos.length === 0 },
     { id: 'planilla', texto: 'Planilla Excel', icono: 'subir', deshabilitado: false },
   ] as const;
 
@@ -260,7 +264,18 @@ export function PantallaProductos() {
       )}
 
       {modal?.tipo === 'editar' && <EditarProducto producto={modal.producto} categorias={categorias} proveedores={proveedores} onCerrar={() => setModal(null)} />}
-      {modal?.tipo === 'aumento' && <AumentoPrecios productos={productos} visibles={visibles} categorias={categorias} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'aumento' && (
+        <AumentoPrecios
+          productos={productos}
+          visibles={visibles}
+          categorias={categorias}
+          onCerrar={() => setModal(null)}
+          onHecho={() => setModal({ tipo: 'lista', reciénAumentados: true })}
+        />
+      )}
+      {modal?.tipo === 'lista' && (
+        <ListaPrecios productos={productos} visibles={visibles} categorias={categorias} reciénAumentados={!!modal.reciénAumentados} onCerrar={() => setModal(null)} />
+      )}
       {modal?.tipo === 'planilla' && <Planilla productos={productos} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'stock' && <SumarStock producto={modal.producto} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'compra' && <IngresoMercaderia productos={productos} proveedores={proveedores} onCerrar={() => setModal(null)} />}
@@ -486,11 +501,14 @@ function AumentoPrecios({
   visibles,
   categorias,
   onCerrar,
+  onHecho,
 }: {
   productos: Producto[];
   visibles: Producto[];
   categorias: string[];
   onCerrar: () => void;
+  /** Con los precios ya cambiados: se ofrece imprimir la lista nueva. */
+  onHecho: () => void;
 }) {
   const avisar = useAvisar();
   const [alcance, setAlcance] = useState<string>(visibles.length < productos.length ? 'visibles' : 'todos');
@@ -514,7 +532,7 @@ function AumentoPrecios({
           try {
             const n = await aumentoMasivo(db, elegidos.map((p) => p.id!), pct, redondeo, costo);
             avisar({ texto: `Listo: ${n} precios ${pct > 0 ? 'aumentados' : 'bajados'} ${Math.abs(pct)}%.`, tipo: 'ok' });
-            onCerrar();
+            onHecho();
           } catch (err) {
             avisar({ texto: errorATexto(err), tipo: 'error' });
             setAplicando(false);
@@ -575,6 +593,78 @@ function AumentoPrecios({
         <button className="boton boton-primario boton-grande" type="submit" disabled={!valido || elegidos.length === 0 || aplicando}>
           {valido ? `${pct > 0 ? 'Aumentar' : 'Bajar'} ${Math.abs(pct)}% a ${elegidos.length} productos` : 'Aplicar a los precios'}
         </button>
+      </form>
+    </Modal>
+  );
+}
+
+/** Lista de precios o etiquetas para la góndola, para imprimir. */
+function ListaPrecios({
+  productos,
+  visibles,
+  categorias,
+  reciénAumentados,
+  onCerrar,
+}: {
+  productos: Producto[];
+  visibles: Producto[];
+  categorias: string[];
+  reciénAumentados: boolean;
+  onCerrar: () => void;
+}) {
+  const ticket = useConsulta(() => leerAjustesTicket(db), [], TICKET_INICIAL);
+  const [alcance, setAlcance] = useState<string>(visibles.length < productos.length ? 'visibles' : 'todos');
+  const [formato, setFormato] = useState<FormatoLista>('lista');
+  const elegidos =
+    alcance === 'todos' ? productos : alcance === 'visibles' ? visibles : productos.filter((p) => p.categoria === alcance);
+  const porHoja = formato === 'etiquetas' ? 24 : 90;
+  const hojas = Math.max(1, Math.ceil(elegidos.length / porHoja));
+  return (
+    <Modal titulo="Lista de precios" onCerrar={onCerrar}>
+      <form
+        className="formulario"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (elegidos.length === 0) return;
+          imprimirHTML(htmlListaPrecios(elegidos, ticket.encabezado.trim() || 'Lista de precios', formato));
+        }}
+      >
+        {reciénAumentados && <p className="texto-suave">Los precios ya cambiaron. Imprimí la lista nueva para la góndola, así nadie cobra con la vieja.</p>}
+        <label className="campo">
+          <span className="campo-etiqueta">¿Qué productos?</span>
+          <select value={alcance} onChange={(e) => setAlcance(e.target.value)}>
+            <option value="todos">Todos ({productos.length})</option>
+            {visibles.length < productos.length && <option value="visibles">Los que estoy viendo ({visibles.length})</option>}
+            {categorias.map((c) => (
+              <option key={c} value={c}>
+                Categoría {c}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="campo">
+          <span className="campo-etiqueta">¿Cómo?</span>
+          <div className="segmentos" role="group" aria-label="Formato">
+            <button type="button" className={formato === 'lista' ? 'activo' : ''} aria-pressed={formato === 'lista'} onClick={() => setFormato('lista')}>
+              Lista por categoría
+            </button>
+            <button type="button" className={formato === 'etiquetas' ? 'activo' : ''} aria-pressed={formato === 'etiquetas'} onClick={() => setFormato('etiquetas')}>
+              Etiquetas para la góndola
+            </button>
+          </div>
+          <small className="texto-suave">
+            {formato === 'etiquetas' ? 'Hoja A4 con 24 etiquetas de 7 × 3,5 cm, para recortar.' : 'Hoja A4 en dos columnas, con las promos.'} {elegidos.length}{' '}
+            {elegidos.length === 1 ? 'producto' : 'productos'}, {hojas === 1 ? '1 hoja' : `unas ${hojas} hojas`}.
+          </small>
+        </div>
+        <div className="botonera">
+          <button type="button" className="boton" onClick={onCerrar}>
+            Cerrar
+          </button>
+          <button type="submit" className="boton boton-primario" disabled={elegidos.length === 0}>
+            <Icono nombre="impresora" tam={18} /> Imprimir
+          </button>
+        </div>
       </form>
     </Modal>
   );

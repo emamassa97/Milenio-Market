@@ -596,8 +596,12 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
   /* Con menos ancho, la venta va antes que los rápidos para verla siempre (como en el celular). */
   .caja-izquierda .lista-venta { order: -1; }
   .caja-izquierda .buscador { order: -2; }
+  /* Los botones de la cabecera (Productos tiene seis) entran en una línea a 1366 px. */
+  .pagina-cabecera > .botonera .boton:not(.boton-primario) { min-height: 42px; padding: 0 12px; font-size: 0.93rem; }
 }
 @media (max-width: 1280px) {
+  /* Sin los íconos, los seis botones de Productos siguen en una línea. */
+  .pagina-cabecera > .botonera .boton:not(.boton-primario) svg { display: none; }
   :root { --lateral: 216px; }
   .caja { grid-template-columns: minmax(0, 1fr) 340px; }
   .total strong { font-size: 2.6rem; }
@@ -633,7 +637,7 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 }
 @media (max-width: 1100px) {
   .indicadores-4 { grid-template-columns: 1fr 1fr; }
-  .pagina-cabecera > .botonera .boton:not(.boton-primario) { min-height: 40px; padding: 0 12px; font-size: 0.93rem; }
+  .pagina-cabecera > .botonera .boton:not(.boton-primario) { min-height: 40px; }
 }
 @media (max-width: 1024px) {
   .cierre { grid-template-columns: minmax(0, 1fr); }
