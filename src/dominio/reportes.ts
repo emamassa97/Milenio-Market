@@ -87,22 +87,27 @@ export interface FilaDevuelto {
   motivo: string;
 }
 
-/** Qué productos vuelven más (por lo que se devolvió en el período), para detectar lo que viene fallado o vencido. */
 export interface FilaCajero {
-  /** El usuario que cobró; si la venta no lo tiene, quien abrió la caja. */
-  clave: string;
+  /** Nombre de quien cobró. */
+  nombre: string;
   cantidad: number;
   total: Pesos;
   devuelto: Pesos;
 }
 
-/** Ventas por quien cobró, de mayor a menor. Las anuladas no cuentan; lo devuelto va aparte y ya está fuera de `total`. */
-export function porCajero(ventas: Venta[]): FilaCajero[] {
+/**
+ * Ventas por quien cobró, de mayor a menor. `nombres` traduce usuario → nombre, así la misma persona no sale dos veces
+ * (ventas con usuario y ventas viejas sin usuario, que llevan el nombre de quien abrió la caja).
+ * Las anuladas no cuentan; lo devuelto va aparte y ya está fuera de `total`.
+ */
+export function porCajero(ventas: Venta[], nombres: ReadonlyMap<string, string> = new Map()): FilaCajero[] {
   const filas = new Map<string, FilaCajero>();
   for (const v of ventas) {
     if (v.anulada) continue;
-    const clave = v.usuario?.trim() || v.cajero.trim() || 'Sin nombre';
-    const fila = filas.get(clave) ?? { clave, cantidad: 0, total: 0, devuelto: 0 };
+    const usuario = v.usuario?.trim();
+    const nombre = (usuario ? (nombres.get(usuario) ?? usuario) : v.cajero.trim()) || 'Sin nombre';
+    const clave = nombre.toLowerCase();
+    const fila = filas.get(clave) ?? { nombre, cantidad: 0, total: 0, devuelto: 0 };
     const neto = totalNeto(v);
     fila.cantidad++;
     fila.total += neto;
@@ -112,6 +117,7 @@ export function porCajero(ventas: Venta[]): FilaCajero[] {
   return [...filas.values()].sort((a, b) => b.total - a.total);
 }
 
+/** Qué productos vuelven más (por lo que se devolvió en el período), para detectar lo que viene fallado o vencido. */
 export function masDevueltos(ventas: Venta[], desde = -Infinity, hasta = Infinity): FilaDevuelto[] {
   const filas = new Map<string, FilaDevuelto & { motivos: Map<string, number> }>();
   for (const v of ventas) {

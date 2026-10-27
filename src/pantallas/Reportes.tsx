@@ -92,13 +92,10 @@ export function PantallaReportes() {
   const r = useMemo(() => resumirVentas(ventas), [ventas]);
   // Quién cobró: sólo vale la pena cuando en el período cobró más de una persona.
   const usuarios = useConsulta(() => leerUsuarios(db), [], [] as { usuario: string; nombre: string }[]);
-  const cajeros = useMemo(() => {
-    const nombres = new Map(usuarios.map((u) => [u.usuario, u.nombre]));
-    return porCajero(ventas).map((c) => ({ ...c, nombre: nombres.get(c.clave) ?? c.clave }));
-  }, [ventas, usuarios]);
-  // Las devoluciones se cuentan por el día en que se hicieron: se miran también ventas de hasta 60 días antes del período.
+  const cajeros = useMemo(() => porCajero(ventas, new Map(usuarios.map((u) => [u.usuario, u.nombre]))), [ventas, usuarios]);
+  // Las devoluciones se cuentan por el día en que se hicieron, sea de cuándo sea la venta.
   const ventasParaDevoluciones = useConsulta(
-    () => db.ventas.where('fecha').between(desde - 60 * 86400000, hasta, true, false).filter((v) => !!v.devoluciones?.length).toArray(),
+    () => db.ventas.filter((v) => !!v.devoluciones?.some((d) => d.fecha >= desde && d.fecha < hasta)).toArray(),
     [desde, hasta],
     [] as Venta[],
   );
@@ -111,6 +108,24 @@ export function PantallaReportes() {
   const primera = Math.min(horasConVentas[0]?.h ?? 8, 8);
   const ultima = Math.max(horasConVentas[horasConVentas.length - 1]?.h ?? 22, 22);
   const pico = horasConVentas.reduce((a, b) => (b.v > a.v ? b : a), { v: 0, h: -1 });
+  const tarjetaDevueltos = devueltos.length > 0 && (
+    <section className="tarjeta">
+      <h2 className="titulo-chico">Lo que más se devolvió</h2>
+      <p className="texto-suave">Si un producto vuelve seguido, conviene revisarlo con el proveedor.</p>
+      <ol className="ranking">
+        {devueltos.slice(0, 8).map((p) => (
+          <li key={p.clave}>
+            <span>
+              {sinCortes(p.nombre)}
+              {p.motivo && <small className="texto-suave"> · {p.motivo}</small>}
+            </span>
+            <span className="texto-suave">{p.unidades} u.</span>
+            <span className="importe">{formatPesos(p.importe)}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
 
   return (
     <div className="pagina">
@@ -180,7 +195,10 @@ export function PantallaReportes() {
       </div>
 
       {r.cantidad === 0 ? (
-        <Vacio titulo={periodo === 'dia' ? `No hubo ventas el ${diaLargo(dia).toLowerCase()}` : 'No hay ventas en este período'} icono="reportes" />
+        <>
+          <Vacio titulo={periodo === 'dia' ? `No hubo ventas el ${diaLargo(dia).toLowerCase()}` : 'No hay ventas en este período'} icono="reportes" />
+          {tarjetaDevueltos && <div className="reportes">{tarjetaDevueltos}</div>}
+        </>
       ) : (
         <div className="reportes reportes-ventas">
           <section className="tarjeta">
@@ -226,7 +244,7 @@ export function PantallaReportes() {
               <h2 className="titulo-chico">Quién cobró</h2>
               <ol className="ranking">
                 {cajeros.map((c) => (
-                  <li key={c.clave}>
+                  <li key={c.nombre}>
                     <span>{sinCortes(c.nombre)}</span>
                     <span className="texto-suave">{c.cantidad === 1 ? '1 venta' : `${c.cantidad} ventas`}</span>
                     <span className="importe">{formatPesos(c.total)}</span>
@@ -235,24 +253,7 @@ export function PantallaReportes() {
               </ol>
             </section>
           )}
-          {devueltos.length > 0 && (
-            <section className="tarjeta">
-              <h2 className="titulo-chico">Lo que más se devolvió</h2>
-              <p className="texto-suave">Si un producto vuelve seguido, conviene revisarlo con el proveedor.</p>
-              <ol className="ranking">
-                {devueltos.slice(0, 8).map((p) => (
-                  <li key={p.clave}>
-                    <span>
-                      {sinCortes(p.nombre)}
-                      {p.motivo && <small className="texto-suave"> · {p.motivo}</small>}
-                    </span>
-                    <span className="texto-suave">{p.unidades} u.</span>
-                    <span className="importe">{formatPesos(p.importe)}</span>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          )}
+          {tarjetaDevueltos}
         </div>
       )}
 

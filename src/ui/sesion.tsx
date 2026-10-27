@@ -63,6 +63,11 @@ const Contexto = createContext<{ sesion: Sesion | null; entrar: (u: Sesion, reco
   salir: () => {},
 });
 
+/** Saca la sesión recordada del equipo sólo si es de este usuario: la de otra persona (en otra pestaña) no se toca. */
+function olvidarSiEsDe(usuario: string) {
+  if (leerLarga()?.usuario === usuario) localStorage.removeItem(LLAVE);
+}
+
 export function ProveedorSesion({ children }: { children: ReactNode }) {
   const [sesion, setSesion] = useState<Guardada | null>(leer);
   const entrar = (u: Sesion, recordar?: boolean) => {
@@ -79,7 +84,8 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     try {
       sessionStorage.setItem(LLAVE, JSON.stringify(s));
       if (larga) localStorage.setItem(LLAVE, JSON.stringify(s));
-      else localStorage.removeItem(LLAVE);
+      // Entrar sin "Recordarme" olvida la propia sesión recordada; la de otra persona queda.
+      else if (recordar === false) olvidarSiEsDe(u.usuario);
     } catch {
       /* sin almacenamiento: la sesión dura hasta recargar */
     }
@@ -89,22 +95,31 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     // La venta armada y las que están en espera son del kiosco, no del usuario: quedan para el que sigue.
     try {
       sessionStorage.removeItem(LLAVE);
-      localStorage.removeItem(LLAVE);
+      if (sesion) olvidarSiEsDe(sesion.usuario);
     } catch {
       /* nada */
     }
     setSesion(null);
   };
-  // Salir en una pestaña cierra la sesión recordada en todas las demás.
+  // Salir en una pestaña cierra la sesión recordada de esa misma persona en todas las demás.
   useEffect(() => {
     const cambio = (e: StorageEvent) => {
       if (e.key !== LLAVE || e.newValue !== null) return;
+      let quien: string | null = null;
       try {
-        sessionStorage.removeItem(LLAVE);
+        quien = e.oldValue ? (JSON.parse(e.oldValue) as Guardada).usuario : null;
       } catch {
-        /* nada */
+        quien = null;
       }
-      setSesion((s) => (s?.vence ? null : s));
+      setSesion((s) => {
+        if (!s?.vence || (quien !== null && quien !== s.usuario)) return s;
+        try {
+          sessionStorage.removeItem(LLAVE);
+        } catch {
+          /* nada */
+        }
+        return null;
+      });
     };
     window.addEventListener('storage', cambio);
     return () => window.removeEventListener('storage', cambio);

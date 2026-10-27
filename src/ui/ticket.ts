@@ -34,7 +34,7 @@ export async function leerAjustesTicket(db: BaseKiosco): Promise<AjustesTicket> 
   };
 }
 
-const escapar = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+export const escapar = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 export function htmlTicket(venta: Venta, a: AjustesTicket): string {
   const fecha = new Date(venta.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });

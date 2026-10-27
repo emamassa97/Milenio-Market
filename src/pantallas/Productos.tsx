@@ -627,7 +627,8 @@ function ListaPrecios({
         onSubmit={(e) => {
           e.preventDefault();
           if (elegidos.length === 0) return;
-          imprimirHTML(htmlListaPrecios(elegidos, ticket.encabezado.trim() || 'Lista de precios', formato));
+          // El encabezado del ticket puede tener varias líneas (dirección, teléfono): el título es la primera.
+          imprimirHTML(htmlListaPrecios(elegidos, ticket.encabezado.split('\n')[0]?.trim() || 'Lista de precios', formato));
         }}
       >
         {reciénAumentados && <p className="texto-suave">Los precios ya cambiaron. Imprimí la lista nueva para la góndola, así nadie cobra con la vieja.</p>}

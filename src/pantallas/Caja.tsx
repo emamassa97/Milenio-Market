@@ -206,8 +206,6 @@ function Caja() {
   modalRef.current = modal;
   const ultimoAgregado = useRef(0);
   const ultimoError = useRef(0);
-  // Si el dueño autorizó un descuento mayor al 10 %, vale aunque después se saquen productos.
-  const descuentoAutorizado = useRef(false);
 
   const total = totalCarrito(carrito);
   const vuelto = pagaCon === null ? 0 : calcularVuelto(total, pagaCon);
@@ -560,13 +558,10 @@ function Caja() {
   const sugeridos = pagosSugeridos(total);
 
   // Si el empleado hizo un descuento de hasta el 10 % y después saca productos, el mismo descuento puede pasar el tope: se saca y se avisa.
+  // El que autorizó el dueño viaja con el carrito (sobrevive a la espera y a recargar), así no se pide la clave dos veces.
   useEffect(() => {
     const d = carrito.descuento ?? 0;
-    if (!d) {
-      descuentoAutorizado.current = false;
-      return;
-    }
-    if (dueño || descuentoAutorizado.current) return;
+    if (!d || dueño || carrito.descuentoAutorizado) return;
     if (d > sumaCarrito(carrito) * 0.1) {
       setCarrito((c) => aplicarDescuento(c, 0));
       avisar({ texto: `Se sacó el descuento de ${formatPesos(d)}: con menos productos pasa el 10 %, y eso lo autoriza el dueño.`, tipo: 'error' });
@@ -1014,8 +1009,7 @@ function Caja() {
             enfocar();
           }}
           onAplicar={(d, autorizado) => {
-            descuentoAutorizado.current = autorizado;
-            setCarrito((c) => aplicarDescuento(c, d));
+            setCarrito((c) => aplicarDescuento(c, d, autorizado));
             setPagaCon(null);
             setModal(null);
             enfocar();

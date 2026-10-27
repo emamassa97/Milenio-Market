@@ -281,16 +281,21 @@ describe('quién cobró', () => {
       fecha: 0, turnoId: 1, cajero: 'Emanuel', total: 1000, medio: 'efectivo', pagaCon: null, vuelto: 0, clienteId: null, anulada: false,
       items: [{ productoId: 1, codigo: '1', nombre: 'P1', precioUnitario: 1000, costoUnitario: 0, cantidad: 1 }],
     };
-    const filas = porCajero([
-      { ...base, usuario: 'caro' },
-      { ...base, usuario: 'caro', devoluciones: [{ fecha: 1, turnoId: 1, items: [{ indice: 0, cantidad: 1 }], monto: 1000, medio: 'efectivo', motivo: '' }] },
-      { ...base },
-      { ...base, total: 3000 },
-      { ...base, anulada: true },
-    ]);
+    const filas = porCajero(
+      [
+        { ...base, usuario: 'caro' },
+        { ...base, usuario: 'caro', devoluciones: [{ fecha: 1, turnoId: 1, items: [{ indice: 0, cantidad: 1 }], monto: 1000, medio: 'efectivo', motivo: '' }] },
+        // Venta vieja sin usuario, con el nombre de quien abrió la caja: es la misma Caro.
+        { ...base, cajero: 'Caro' },
+        { ...base },
+        { ...base, total: 3000 },
+        { ...base, anulada: true },
+      ],
+      new Map([['caro', 'Caro']]),
+    );
     expect(filas).toEqual([
-      { clave: 'Emanuel', cantidad: 2, total: 4000, devuelto: 0 },
-      { clave: 'caro', cantidad: 2, total: 1000, devuelto: 1000 },
+      { nombre: 'Emanuel', cantidad: 2, total: 4000, devuelto: 0 },
+      { nombre: 'Caro', cantidad: 3, total: 2000, devuelto: 1000 },
     ]);
   });
 });

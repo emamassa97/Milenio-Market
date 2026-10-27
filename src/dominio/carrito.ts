@@ -12,6 +12,8 @@ export interface Carrito {
   items: ItemVenta[];
   /** Descuento sobre toda la venta ("dejámelo en 3.000"). Siempre menor que la suma de los renglones. */
   descuento?: Pesos;
+  /** El dueño (o su clave) autorizó el descuento: vale aunque después la venta se achique, se deje en espera o se recargue. */
+  descuentoAutorizado?: boolean;
 }
 
 export const carritoVacio: Carrito = { items: [] };
@@ -120,15 +122,15 @@ export function quitarItem(carrito: Carrito, indice: number): Carrito {
 }
 
 /** Pone (o saca, con 0) el descuento de toda la venta; nunca puede llegar a la suma de los renglones. */
-export function aplicarDescuento(carrito: Carrito, descuento: Pesos): Carrito {
+export function aplicarDescuento(carrito: Carrito, descuento: Pesos, autorizado = false): Carrito {
   const d = Math.floor(descuento);
-  const { descuento: _anterior, ...sinDescuento } = carrito;
-  return d > 0 && d < sumaCarrito(carrito) ? { ...sinDescuento, descuento: d } : sinDescuento;
+  const { descuento: _anterior, descuentoAutorizado: _autorizado, ...sinDescuento } = carrito;
+  return d > 0 && d < sumaCarrito(carrito) ? { ...sinDescuento, descuento: d, ...(autorizado ? { descuentoAutorizado: true } : {}) } : sinDescuento;
 }
 
 /** Si la venta se achicó y el descuento ya no entra, se saca: nunca se cobra cero o negativo. */
 function conDescuentoValido(carrito: Carrito): Carrito {
-  return carrito.descuento !== undefined ? aplicarDescuento(carrito, carrito.descuento) : carrito;
+  return carrito.descuento !== undefined ? aplicarDescuento(carrito, carrito.descuento, carrito.descuentoAutorizado) : carrito;
 }
 
 /** Con promo "N por $X" se cobran los grupos completos a precio de promo y el resto suelto. */
