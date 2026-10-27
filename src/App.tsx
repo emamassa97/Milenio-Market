@@ -1,3 +1,4 @@
+import { AVISO_SIN_SERVIDOR } from './datos/nube';
 import { useEffect, useState } from 'react';
 import logo from './assets/logo-oscuro.svg';
 import { db } from './datos/db';
@@ -64,7 +65,7 @@ function Sistema() {
   const [menuMas, setMenuMas] = useState(false);
   const online = useConexion();
   const estado = useEstadoNube();
-  const nube = estado.activa || estado.sinActivar ? { error: estado.sinActivar ? 'Nube sin activar' : estado.error, aviso: estado.aviso, pendientes: estado.pendientes } : null;
+  const nube = estado.activa || estado.sinActivar ? { error: estado.sinActivar ? (estado.aviso === AVISO_SIN_SERVIDOR ? 'Nube sin conexión' : 'Nube sin activar') : estado.error, aviso: estado.aviso, pendientes: estado.pendientes } : null;
   useCopiaEnLaNube(!import.meta.env.VITE_DEMO);
 
   // Si borraron al usuario o le sacaron el permiso de dueño, se corta la sesión.

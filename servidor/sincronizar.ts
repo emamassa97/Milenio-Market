@@ -147,13 +147,32 @@ async function darDeAlta(consulta: Consulta, claveFija: string | undefined): Pro
 }
 
 export async function manejar(pedido: Request, deps: Dependencias): Promise<Response> {
-  if (!deps.consulta) return json({ error: 'La copia en la nube no está configurada.' }, 503);
+  // ?estado=1: diagnóstico sin datos ni claves (siempre 200, para poder mirarlo desde un navegador).
+  const pideEstado = pedido.method === 'GET' && new URL(pedido.url).searchParams.get('estado') === '1';
+  if (!deps.consulta) {
+    return pideEstado ? json({ base: false, activada: false }) : json({ error: 'La copia en la nube no está configurada.' }, 503);
+  }
   const consulta = deps.consulta;
-  if (!tablasCreadas) {
-    await consulta(CREAR_TABLA, []);
-    await consulta(CREAR_CONFIG, []);
-    await consulta(CREAR_INTENTOS, []);
-    tablasCreadas = true;
+  try {
+    if (!tablasCreadas) {
+      await consulta(CREAR_TABLA, []);
+      await consulta(CREAR_CONFIG, []);
+      await consulta(CREAR_INTENTOS, []);
+      tablasCreadas = true;
+    }
+  } catch (e) {
+    const detalle = e instanceof Error ? e.message.slice(0, 200) : 'error';
+    return pideEstado ? json({ base: true, conecta: false, detalle }) : json({ error: 'No se pudo conectar con la base de la nube.' }, 503);
+  }
+  if (pideEstado) {
+    const [equipos] = await consulta(`select count(distinct dispositivo) as n from registros`, []);
+    return json({
+      base: true,
+      conecta: true,
+      activada: Boolean(deps.clave || (await claveGuardada(consulta))),
+      equipos: Number(equipos?.n) || 0,
+      usuarios: (await usuariosDeLaNube(consulta)).length,
+    });
   }
   if (pedido.method === 'POST' && pedido.headers.get('x-alta') === '1') return darDeAlta(consulta, deps.clave);
   const esperada = deps.clave || (await claveGuardada(consulta));
