@@ -6,7 +6,7 @@ import { saldoCliente } from '../dominio/fiado';
 import { paraReponer, porVencer, resumirVentas } from '../dominio/reportes';
 import type { Evento, MovimientoCaja, Producto, Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
-import { leerAjuste, turnoAbierto } from '../datos/operaciones';
+import { cajasDeOtrosEquipos, leerAjuste, turnoAbierto } from '../datos/operaciones';
 import { hora, Icono, sinCortes } from '../ui/componentes';
 import { useConsulta } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
@@ -97,14 +97,16 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
   );
   const caja = useConsulta(
     async () => {
-      const t = await turnoAbierto(db);
+      // La de este equipo; si no tiene, la que está abierta en otro (el dueño mira la PC desde el celular).
+      const propia = await turnoAbierto(db);
+      const t = propia ?? (await cajasDeOtrosEquipos(db)).sort((a, b) => b.apertura - a.apertura)[0];
       if (!t) return null;
       const [vs, movs, pagos] = await Promise.all([
         db.ventas.where('turnoId').equals(t.id!).toArray(),
         db.movimientosCaja.where('turnoId').equals(t.id!).toArray(),
         db.movimientosFiado.where('turnoId').equals(t.id!).toArray(),
       ]);
-      return { turno: t, resumen: resumirTurno(t.fondoInicial, vs, movs, pagos) };
+      return { turno: t, ajena: !propia, resumen: resumirTurno(t.fondoInicial, vs, movs, pagos) };
     },
     [],
     null,
@@ -228,6 +230,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
                 <dt>Abierta por</dt>
                 <dd>
                   {caja.turno.cajero} a las {hora(caja.turno.apertura)}
+                  {caja.ajena && <span className="texto-suave"> · en otro equipo</span>}
                 </dd>
               </div>
               <div>
@@ -248,8 +251,8 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
           ) : (
             <p className="texto-suave inicio-vacio">La caja está cerrada.</p>
           )}
-          <button type="button" className="boton boton-chico inicio-accion" onClick={() => ir(caja ? 'cierre' : 'caja')}>
-            {caja ? 'Ir al cierre' : 'Abrir la caja'}
+          <button type="button" className="boton boton-chico inicio-accion" onClick={() => ir(caja && !caja.ajena ? 'cierre' : 'caja')}>
+            {caja && !caja.ajena ? 'Ir al cierre' : 'Abrir la caja'}
           </button>
         </section>
 

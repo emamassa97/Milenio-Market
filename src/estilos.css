@@ -443,6 +443,9 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 .barra-cobro-movil { display: none; }
 .abrir-caja { display: flex; flex-direction: column; gap: 18px; margin-top: 24px; }
 .abrir-caja-pista { margin-top: -10px; font-size: 0.9rem; }
+.otras-cajas { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+.otras-cajas-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.otras-cajas-lista li { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .escaner { position: relative; display: flex; flex-direction: column; gap: 12px; }
 .escaner video { width: 100%; border-radius: var(--radio); background: #000; aspect-ratio: 4 / 3; object-fit: cover; }
 .escaner-guia { position: absolute; left: 12%; right: 12%; top: 32%; height: 22%; border: 3px solid var(--rojo); border-radius: 10px; }
@@ -1053,3 +1056,4 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
 /* Pantallas altas: las tres acciones del mostrador en dos renglones, no en tres. */
 .caja-pie-derecha .acciones-caja { font-size: 0.86rem; gap: 2px 10px; }
 .caja-pie-derecha .acciones-caja .boton-retiro { font-size: inherit; padding-inline: 6px; }
+.mostrar-mas { display: block; margin: 12px auto 4px; }

@@ -1,6 +1,6 @@
-import type { BaseKiosco } from './db';
+import { marcarRemota, type Ajuste, type BaseKiosco } from './db';
 import { estaVacia } from './copia';
-import { recuperarDeLaNube } from './nube';
+import { activarNube, recuperarDeLaNube } from './nube';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
 import { ingresar, leerUsuarios, type Usuario } from './usuarios';
 
@@ -12,7 +12,7 @@ const URL_NUBE = '/api/sincronizar';
 const ESPERA_MS = 6000;
 
 type RespuestaNube =
-  | { tipo: 'ok'; clave: string; usuarios: Usuario[]; dispositivo: string }
+  | { tipo: 'ok'; clave: string; usuarios: Usuario[]; nube: string }
   | { tipo: 'rechazado'; error: string; bloqueado: boolean; sinUsuarios: boolean }
   | { tipo: 'sin-nube' };
 
@@ -26,9 +26,9 @@ async function preguntarALaNube(usuario: string, clave: string, url: string): Pr
       body: JSON.stringify({ usuario, clave }),
       signal: corte.signal,
     });
-    const cuerpo = (await r.json().catch(() => ({}))) as { clave?: string; usuarios?: Usuario[]; dispositivo?: string; error?: string; sinUsuarios?: boolean };
+    const cuerpo = (await r.json().catch(() => ({}))) as { clave?: string; usuarios?: Usuario[]; nube?: string; error?: string; sinUsuarios?: boolean };
     if (r.ok && cuerpo.clave && Array.isArray(cuerpo.usuarios)) {
-      return { tipo: 'ok', clave: cuerpo.clave, usuarios: cuerpo.usuarios, dispositivo: cuerpo.dispositivo ?? '' };
+      return { tipo: 'ok', clave: cuerpo.clave, usuarios: cuerpo.usuarios, nube: cuerpo.nube ?? '' };
     }
     if (r.status === 401 || r.status === 429) {
       return { tipo: 'rechazado', error: cuerpo.error ?? 'Usuario o clave incorrectos.', bloqueado: r.status === 429, sinUsuarios: Boolean(cuerpo.sinUsuarios) };
@@ -46,6 +46,21 @@ async function usuariosSinSubir(db: BaseKiosco): Promise<boolean> {
   const fila = (await db.ajustes.get('usuarios')) as { _v?: number } | undefined;
   const marcas = await leerAjuste<Record<string, number>>(db, 'nube.marcas', {});
   return Number(fila?._v ?? 0) > (marcas.ajustes ?? 0);
+}
+
+/** Igual que idDeNube del servidor: para los equipos que se unieron antes de que la nube diera su id. */
+async function idDeNube(clave: string): Promise<string> {
+  if (!clave || clave.startsWith('e.') || !globalThis.crypto?.subtle) return '';
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`nube:${clave}`));
+  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+}
+
+/** La lista que vino de la nube se guarda como ya subida: este equipo no la vuelve a mandar (pisaría cambios de otro). */
+async function guardarUsuariosDeLaNube(db: BaseKiosco, usuarios: Usuario[]): Promise<void> {
+  await db.transaction('rw', db.ajustes, async (tx) => {
+    marcarRemota(tx);
+    await db.ajustes.put({ clave: 'usuarios', valor: usuarios, _v: 0 } as Ajuste);
+  });
 }
 
 /** Si ya hay usuarios en la nube: un equipo nuevo tiene que pedir ingresar, no crear otro dueño. */
@@ -76,16 +91,29 @@ export async function ingresarDondeSea(db: BaseKiosco, usuario: string, clave: s
   if (nube.tipo === 'ok') {
     const u = nube.usuarios.find((x) => x.usuario === nombre);
     if (!u) throw new ErrorKiosco('Usuario o clave incorrectos.');
-    if (claveLocal !== nube.clave) {
-      // Equipo nuevo (o con un usuario de prueba suelto): se trae los datos de la nube.
-      if (!(await estaVacia(db))) {
-        throw new ErrorKiosco('Esta compu tiene ventas propias que no están en la nube: entrá con el usuario que creaste acá.');
+    const idLocal = (await leerAjuste<string>(db, 'nube.id', '')) || (await idDeNube(claveLocal));
+    const mismaNube = (idLocal !== '' && idLocal === nube.nube) || claveLocal === nube.clave;
+    if (!mismaNube) {
+      if (await estaVacia(db)) {
+        // Equipo nuevo (la compu nueva, el celular): se une a la nube y se trae todo.
+        await recuperarDeLaNube(db, nube.clave, url, nube.nube);
+      } else {
+        // Equipo con datos propios y otra nube (la nube se rehízo o cambió de clave):
+        // entra igual, se une a la nueva y sube lo suyo sin pisar nada de acá.
+        await activarNube(db, nube.clave, nube.nube);
+        await guardarAjuste(db, 'nube.n', null);
+        await guardarAjuste(db, 'nube.cursor', 0);
+        await guardarAjuste(db, 'nube.v2', false);
       }
-      await recuperarDeLaNube(db, nube.clave, nube.dispositivo || undefined, url);
-      await guardarAjuste(db, 'usuarios', nube.usuarios);
-    } else if (!(await usuariosSinSubir(db)) && JSON.stringify(await leerUsuarios(db)) !== JSON.stringify(nube.usuarios)) {
-      // Una clave cambiada o un empleado nuevo en otro equipo llega a éste.
-      await guardarAjuste(db, 'usuarios', nube.usuarios);
+      await guardarUsuariosDeLaNube(db, nube.usuarios);
+    } else {
+      // Misma nube: el dueño deja en el equipo su clave (la de un empleado sirve para menos).
+      if (claveLocal !== nube.clave && (claveLocal === '' || claveLocal.startsWith('e.')) ) await activarNube(db, nube.clave, nube.nube);
+      else if (!(await leerAjuste<string>(db, 'nube.id', ''))) await guardarAjuste(db, 'nube.id', nube.nube);
+      if (!(await usuariosSinSubir(db)) && JSON.stringify(await leerUsuarios(db)) !== JSON.stringify(nube.usuarios)) {
+        // Una clave cambiada o un empleado nuevo en otro equipo llega a éste.
+        await guardarUsuariosDeLaNube(db, nube.usuarios);
+      }
     }
     return u;
   }

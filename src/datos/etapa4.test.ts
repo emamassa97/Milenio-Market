@@ -287,3 +287,18 @@ describe('mercadería con precio nuevo', () => {
     await expect(ingresarMercaderia(db, [{ productoId: id, cantidad: 1, costo: 800, precio: -5 }], { proveedor: '', pagadoDeCaja: false })).rejects.toThrow('precio nuevo');
   });
 });
+
+describe('devolver en efectivo (jurado 9)', () => {
+  it('una venta con tarjeta no se devuelve en efectivo sin la clave del dueño', async () => {
+    const id = await guardarProducto(db, { codigo: '', nombre: 'Fernet', precio: 15000, costo: 0, stock: 5, stockMinimo: 0, categoria: '', rapido: false });
+    if (!(await turnoAbierto(db))) await abrirTurno(db, 'Juan', 10000);
+    const p = (await db.productos.get(id))!;
+    const antes = (await resumenDeTurno(db, (await turnoAbierto(db))!)).resumen.efectivoEsperado;
+    const v = await registrarVenta(db, { items: [itemDeProducto(p, 1)], medio: 'tarjeta', pagaCon: null, clienteId: null });
+    await expect(devolverProductos(db, v.id!, [{ indice: 0, cantidad: 1 }], 'efectivo')).rejects.toThrow(/no se cobró en efectivo/);
+    await devolverProductos(db, v.id!, [{ indice: 0, cantidad: 1 }], 'tarjeta');
+    const v2 = await registrarVenta(db, { items: [itemDeProducto(p, 1)], medio: 'tarjeta', pagaCon: null, clienteId: null });
+    await devolverProductos(db, v2.id!, [{ indice: 0, cantidad: 1 }], 'efectivo', '', 'ema', true);
+    expect((await resumenDeTurno(db, (await turnoAbierto(db))!)).resumen.efectivoEsperado).toBe(antes - 15000);
+  });
+});

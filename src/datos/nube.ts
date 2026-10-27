@@ -1,10 +1,13 @@
-import { TABLAS_NUBE, type Ajuste, type BaseKiosco, type TablaNube } from './db';
-import { restaurarCopia, type CopiaDeSeguridad } from './copia';
+import { fijarRango, marcarRemota, TABLAS_NUBE, type Ajuste, type BaseKiosco, type TablaNube } from './db';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
 
-// Copia en la nube: la caja trabaja siempre con los datos del equipo y, cuando
-// hay internet, sube a la nube (Neon) lo que cambió. Nunca baja datos sola:
-// traer datos de la nube es un paso a mano y sólo en un equipo vacío.
+// La nube junta a todos los equipos (la PC del mostrador, el celular del
+// dueño…). Cada equipo trabaja siempre con sus datos, así vende sin internet,
+// y cuando hay internet sube lo que cambió y baja lo que cambiaron los otros.
+// - Cada equipo tiene un número (la nube se lo da) y sus filas nuevas usan
+//   ids de su rango: nunca pisa las de otro.
+// - El stock no se pisa: se suma lo que cada equipo vendió o cargó.
+// - Cada equipo tiene su propia caja; ve las de los otros en el panel.
 
 /**
  * Ajustes propios de este equipo: no se suben a la nube ni van en la copia
@@ -18,9 +21,20 @@ export const AJUSTES_LOCALES: ReadonlySet<string> = new Set([
   'nube.ultima',
   'nube.error',
   'nube.estado',
+  'nube.equipo',
+  'nube.n',
+  'nube.cursor',
+  'nube.v2',
+  'nube.id',
 ]);
 
 const LOTE = 400;
+/**
+ * Lo cambiado en los últimos 2 minutos se vuelve a mandar: con dos pestañas,
+ * una puede guardar con una marca apenas menor a la que la otra ya subió. La
+ * nube reconoce lo repetido (`_o`) y no lo aplica dos veces.
+ */
+const VENTANA = 120_000;
 
 export interface Registro {
   tabla: TablaNube | 'borrados';
@@ -30,6 +44,7 @@ export interface Registro {
 
 export interface Lote {
   dispositivo: string;
+  equipo: number;
   registros: Registro[];
   borrados: { tabla: string; id: string }[];
 }
@@ -37,10 +52,10 @@ export interface Lote {
 export type Enviar = (lote: Lote) => Promise<void>;
 
 export async function idDispositivo(db: BaseKiosco): Promise<string> {
-  const actual = await leerAjuste<string | null>(db, 'dispositivo', null);
+  const actual = await leerAjuste<string | null>(db, 'nube.equipo', null);
   if (actual) return actual;
   const nuevo = crypto.randomUUID();
-  await guardarAjuste(db, 'dispositivo', nuevo);
+  await guardarAjuste(db, 'nube.equipo', nuevo);
   return nuevo;
 }
 
@@ -67,44 +82,108 @@ export async function pendientes(db: BaseKiosco): Promise<number> {
 
 /**
  * Sube todo lo que cambió desde la última vez, de a lotes. Si un envío falla,
- * no se avanza la marca: lo mismo se vuelve a mandar la próxima vez (en la
- * nube cada fila se reemplaza, así que mandar dos veces no duplica nada).
+ * no se avanza la marca: lo mismo se vuelve a mandar la próxima vez.
  * Devuelve cuántas filas subió.
  */
 export async function subirCambios(db: BaseKiosco, enviar: Enviar): Promise<number> {
   const dispositivo = await idDispositivo(db);
+  const equipo = (await leerAjuste<number | null>(db, 'nube.n', null)) ?? 0;
   let subidas = 0;
   for (const t of TABLAS_NUBE) {
+    const marcas0 = await leerAjuste<Record<string, number>>(db, 'nube.marcas', {});
+    let desde = Math.max(0, (marcas0[t] ?? 0) - VENTANA);
     for (;;) {
-      const marcas = await leerAjuste<Record<string, number>>(db, 'nube.marcas', {});
-      const desde = marcas[t] ?? 0;
       const filas = (await db.table(t).where('_v').above(desde).limit(LOTE).toArray()) as Record<string, unknown>[];
       if (filas.length === 0) break;
       const hasta = Math.max(...filas.map((f) => Number(f._v) || 0));
       const registros = filas
         .filter((f) => t !== 'ajustes' || !AJUSTES_LOCALES.has(String(f.clave)))
-        .map((f) => ({ tabla: t, id: idDe(t, f), datos: f }));
-      if (registros.length > 0) await enviar({ dispositivo, registros, borrados: [] });
+        .map((f) => ({ tabla: t, id: idDe(t, f), datos: { ...f, _o: `${dispositivo}:${String(f._v)}` } }));
+      if (registros.length > 0) await enviar({ dispositivo, equipo, registros, borrados: [] });
       subidas += registros.length;
-      await guardarAjuste(db, 'nube.marcas', { ...marcas, [t]: hasta });
+      if (t === 'productos') await anotarStockSubido(db, filas);
+      const marcas = await leerAjuste<Record<string, number>>(db, 'nube.marcas', {});
+      await guardarAjuste(db, 'nube.marcas', { ...marcas, [t]: Math.max(marcas[t] ?? 0, hasta) });
+      desde = hasta;
       if (filas.length < LOTE) break;
     }
   }
   const ultimoBorrado = await leerAjuste<number>(db, 'nube.borrado', 0);
   const borrados = await db.borrados.where('n').above(ultimoBorrado).limit(LOTE).toArray();
   if (borrados.length > 0) {
-    await enviar({ dispositivo, registros: [], borrados: borrados.map((b) => ({ tabla: b.tabla, id: b.id })) });
+    await enviar({ dispositivo, equipo, registros: [], borrados: borrados.map((b) => ({ tabla: b.tabla, id: b.id })) });
     await guardarAjuste(db, 'nube.borrado', Math.max(...borrados.map((b) => b.n!)));
     subidas += borrados.length;
   }
   return subidas;
 }
 
+/** El stock que se acaba de subir pasa a ser la base: lo que se venda después es la diferencia a mandar. */
+async function anotarStockSubido(db: BaseKiosco, filas: Record<string, unknown>[]): Promise<void> {
+  await db.transaction('rw', db.productos, async (tx) => {
+    marcarRemota(tx); // no cambia la marca: si se vendió algo mientras tanto, igual se sube
+    for (const f of filas) {
+      if (typeof f.stock === 'number') await db.productos.update(Number(f.id), { _s: f.stock } as never);
+    }
+  });
+}
+
+const redondearStock = (n: number) => Math.round(n * 1000) / 1000;
+
+interface FilaRemota {
+  tabla: string;
+  id: string;
+  datos: Record<string, unknown> | null;
+  borrado: boolean;
+}
+
+/**
+ * Aplica lo que bajó de la nube. Lo que este equipo cambió y todavía no subió
+ * se respeta (salvo el stock, que suma lo de los dos). En la primera vez
+ * (`migracion`), gana el cambio más nuevo de cada fila.
+ */
+export async function aplicarRemotas(db: BaseKiosco, filas: FilaRemota[], migracion = false): Promise<number> {
+  const marcas = await leerAjuste<Record<string, number>>(db, 'nube.marcas', {});
+  let aplicadas = 0;
+  await db.transaction('rw', TABLAS_NUBE.map((t) => db.table(t)), async (tx) => {
+    marcarRemota(tx);
+    for (const f of filas) {
+      if (!(TABLAS_NUBE as readonly string[]).includes(f.tabla)) continue;
+      const t = f.tabla as TablaNube;
+      if (t === 'ajustes' && AJUSTES_LOCALES.has(f.id)) continue;
+      const clave = t === 'ajustes' ? f.id : Number(f.id);
+      if (typeof clave === 'number' && !Number.isSafeInteger(clave)) continue;
+      const tabla = db.table(t);
+      const local = (await tabla.get(clave)) as Record<string, unknown> | undefined;
+      const pendiente = local !== undefined && Number(local._v) > (marcas[t] ?? 0);
+      const remotaGana = !pendiente || (migracion && Number(f.datos?._v) >= Number(local?._v));
+      if (f.borrado || !f.datos) {
+        if (local && remotaGana) {
+          await tabla.delete(clave);
+          aplicadas++;
+        }
+        continue;
+      }
+      const { _o, ...datos } = f.datos;
+      void _o;
+      if (remotaGana) {
+        await tabla.put({ ...datos, ...(t === 'productos' && typeof datos.stock === 'number' ? { _s: datos.stock } : {}), _v: 0 });
+        aplicadas++;
+      } else if (t === 'productos' && typeof datos.stock === 'number' && typeof local!.stock === 'number' && typeof local!._s === 'number') {
+        // Lo vendido acá y todavía no subido se suma a lo que dice la nube.
+        await tabla.put({ ...local, stock: redondearStock(datos.stock + (local!.stock as number) - (local!._s as number)), _s: datos.stock });
+        aplicadas++;
+      }
+    }
+  });
+  return aplicadas;
+}
+
 // ---------- Conexión con el servidor ----------
 
 export function enviarAlServidor(clave: string, url = '/api/sincronizar'): Enviar {
   return async (lote) => {
-    const r = await fetch(url, {
+    const r = await fetch(`${url}?v=2`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-clave': clave },
       body: JSON.stringify(lote),
@@ -146,12 +225,15 @@ export async function pedirAlta(db: BaseKiosco, url = '/api/sincronizar'): Promi
   const { clave } = (await r.json()) as { clave?: string };
   if (!clave) return false;
   await activarNube(db, clave);
+  // La primera caja es la que ya tiene los datos: no hay nada que bajar antes de subir todo.
+  await guardarAjuste(db, 'nube.v2', 'subir');
   return true;
 }
 
 /** Guarda la clave de la nube en este equipo y limpia los avisos anteriores. */
-export async function activarNube(db: BaseKiosco, clave: string): Promise<void> {
+export async function activarNube(db: BaseKiosco, clave: string, nube?: string): Promise<void> {
   await guardarAjuste(db, 'nube.clave', clave.trim());
+  if (nube) await guardarAjuste(db, 'nube.id', nube);
   await guardarAjuste(db, 'nube.estado', null);
   await guardarAjuste(db, 'nube.error', null);
 }
@@ -196,99 +278,111 @@ export async function estadoNube(db: BaseKiosco): Promise<EstadoNube> {
   };
 }
 
-let enCurso: Promise<{ subidas: number } | null> | null = null;
+let enCurso: Promise<{ subidas: number; bajadas: number } | null> | null = null;
+
+/** Una sola sincronización a la vez, también entre pestañas (si el navegador lo permite). */
+function conCerrojo<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = (globalThis.navigator as Navigator | undefined)?.locks;
+  return locks ? (locks.request('milenio-nube', fn) as Promise<T>) : fn();
+}
 
 /**
- * Una vuelta de sincronización con la clave guardada; anota cómo salió.
- * Si ya hay una en curso, espera esa en vez de arrancar otra.
+ * Una vuelta de sincronización con la clave guardada: sube lo de este equipo y
+ * baja lo de los otros; anota cómo salió. Si ya hay una en curso, espera esa.
  */
-export function sincronizarAhora(db: BaseKiosco): Promise<{ subidas: number } | null> {
-  enCurso ??= unaVuelta(db).finally(() => {
+export function sincronizarAhora(db: BaseKiosco, url = '/api/sincronizar'): Promise<{ subidas: number; bajadas: number } | null> {
+  enCurso ??= conCerrojo(() => unaVuelta(db, url)).finally(() => {
     enCurso = null;
   });
   return enCurso;
 }
 
-async function unaVuelta(db: BaseKiosco): Promise<{ subidas: number } | null> {
+async function unaVuelta(db: BaseKiosco, url: string): Promise<{ subidas: number; bajadas: number } | null> {
   const clave = await leerAjuste<string>(db, 'nube.clave', '');
   if (!clave) return null;
   try {
-    const subidas = await subirCambios(db, enviarAlServidor(clave));
+    await asegurarNumero(db, clave, url);
+    const migracion = await leerAjuste<string | boolean>(db, 'nube.v2', false);
+    let bajadas = 0;
+    if (migracion !== true) {
+      // Primera vez con la sincronización entre equipos: se baja lo que ya hay
+      // en la nube (gana lo más nuevo de cada fila) y después se sube todo lo propio.
+      if (migracion !== 'subir') bajadas += await bajarCambios(db, clave, url, true);
+      await adoptarCajasAbiertas(db);
+      await guardarAjuste(db, 'nube.marcas', {});
+      await guardarAjuste(db, 'nube.borrado', Number((await db.borrados.orderBy('n').last())?.n) || 0);
+      await guardarAjuste(db, 'nube.v2', true);
+    }
+    const subidas = await subirCambios(db, enviarAlServidor(clave, url));
+    bajadas += await bajarCambios(db, clave, url);
     await guardarAjuste(db, 'nube.ultima', Date.now());
     await guardarAjuste(db, 'nube.error', null);
     await guardarAjuste(db, 'nube.estado', null);
-    return { subidas };
+    return { subidas, bajadas };
   } catch (e) {
-    await guardarAjuste(db, 'nube.error', e instanceof Error ? e.message : 'No se pudo subir.');
+    await guardarAjuste(db, 'nube.error', e instanceof Error ? e.message : 'No se pudo sincronizar.');
     throw e;
   }
 }
 
-interface RespuestaDescarga {
-  dispositivo: string;
-  registros: { tabla: string; id: string; datos: unknown }[];
-  siguiente: string | null;
+/** Le pide a la nube el número de este equipo (una sola vez) y desde ahí usa ids de su rango. */
+async function asegurarNumero(db: BaseKiosco, clave: string, url: string): Promise<number> {
+  const actual = await leerAjuste<number | null>(db, 'nube.n', null);
+  if (typeof actual === 'number') return actual;
+  const dispositivo = await idDispositivo(db);
+  const r = await fetch(`${url}?v=2&equipo=1`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-clave': clave },
+    body: JSON.stringify({ dispositivo }),
+  });
+  if (!r.ok) throw new Error(await mensajeServidor(r));
+  const { n } = (await r.json()) as { n?: number };
+  if (typeof n !== 'number' || !Number.isSafeInteger(n) || n <= 0) throw new Error('La nube no dio un número de equipo.');
+  await guardarAjuste(db, 'nube.n', n);
+  await fijarRango(db, n);
+  return n;
 }
 
-/** Un equipo que subió datos a la nube. */
-export interface EquipoNube {
-  dispositivo: string;
-  /** Cuántos registros (no borrados) tiene guardados. */
-  registros: number;
-  /** Cuándo subió por última vez (ms). */
-  ultima: number | null;
+/** Las cajas abiertas de antes de tener número pasan a ser de este equipo (la nube ya trajo las que eran de otro). */
+async function adoptarCajasAbiertas(db: BaseKiosco): Promise<void> {
+  const n = await leerAjuste<number | null>(db, 'nube.n', null);
+  if (typeof n !== 'number') return;
+  await db.turnos.filter((t) => t.cierre === null && t.equipo === undefined).modify({ equipo: n });
 }
 
-/** Los equipos que tienen datos en la nube, el más reciente primero. */
-export async function listarEquipos(clave: string, url = '/api/sincronizar'): Promise<EquipoNube[]> {
-  const r = await fetch(`${url}?equipos=1`, { headers: { 'x-clave': clave } });
-  if (!r.ok) throw new ErrorKiosco(await mensajeServidor(r));
-  const { equipos } = (await r.json()) as { equipos?: EquipoNube[] };
-  return Array.isArray(equipos) ? equipos : [];
+/** Baja de la nube todo lo que cambió desde la última vez y lo aplica. Devuelve cuántas filas cambiaron acá. */
+export async function bajarCambios(db: BaseKiosco, clave: string, url = '/api/sincronizar', migracion = false): Promise<number> {
+  let cursor = await leerAjuste<number>(db, 'nube.cursor', 0);
+  let aplicadas = 0;
+  for (;;) {
+    const r = await fetch(`${url}?v=2&cambios=${cursor}`, { headers: { 'x-clave': clave } });
+    if (!r.ok) throw new Error(await mensajeServidor(r));
+    const pagina = (await r.json()) as { filas?: FilaRemota[]; hasta?: number; mas?: boolean };
+    const filas = Array.isArray(pagina.filas) ? pagina.filas : [];
+    if (filas.length > 0) aplicadas += await aplicarRemotas(db, filas, migracion);
+    if (typeof pagina.hasta === 'number' && pagina.hasta > cursor) {
+      cursor = pagina.hasta;
+      await guardarAjuste(db, 'nube.cursor', cursor);
+    }
+    if (!pagina.mas || filas.length === 0) break;
+  }
+  return aplicadas;
 }
 
 /**
- * Trae la copia de la nube a un equipo vacío (por ejemplo, una compu nueva).
- * Sin `dispositivo`, toma el equipo que subió datos más recientemente; con
- * él (ver `listarEquipos`), ese equipo.
+ * Une a la nube un equipo vacío (una compu nueva, el celular) y se trae todo.
+ * Devuelve cuántos registros bajó.
  */
-export async function recuperarDeLaNube(
-  db: BaseKiosco,
-  clave: string,
-  dispositivo?: string,
-  url = '/api/sincronizar',
-): Promise<number> {
-  const tablas = Object.fromEntries(TABLAS_NUBE.map((t) => [t, [] as unknown[]])) as Record<TablaNube, unknown[]>;
-  let cursor: string | null = '';
-  let elegido = dispositivo ?? '';
-  let total = 0;
-  while (cursor !== null) {
-    // Desde la segunda página se pide siempre el mismo equipo, aunque otro suba datos mientras tanto.
-    const filtro = elegido ? `&dispositivo=${encodeURIComponent(elegido)}` : '';
-    const r = await fetch(`${url}?desde=${encodeURIComponent(cursor)}${filtro}`, { headers: { 'x-clave': clave } });
-    if (!r.ok) throw new ErrorKiosco(await mensajeServidor(r));
-    const pagina = (await r.json()) as RespuestaDescarga;
-    elegido = pagina.dispositivo;
-    if (!elegido) break;
-    for (const reg of pagina.registros) {
-      if ((TABLAS_NUBE as readonly string[]).includes(reg.tabla) && reg.datos) {
-        tablas[reg.tabla as TablaNube].push(reg.datos);
-        total++;
-      }
-    }
-    cursor = pagina.siguiente;
+export async function recuperarDeLaNube(db: BaseKiosco, clave: string, url = '/api/sincronizar', nube?: string): Promise<number> {
+  await activarNube(db, clave, nube);
+  try {
+    await asegurarNumero(db, clave, url);
+  } catch (e) {
+    await guardarAjuste(db, 'nube.clave', '');
+    throw new ErrorKiosco(e instanceof Error ? e.message : 'No se pudo conectar con la nube.');
   }
-  if (!elegido || total === 0) throw new ErrorKiosco('La nube no tiene datos para recuperar.');
-  const copia: CopiaDeSeguridad = { app: 'milenio-market', formato: 1, fecha: new Date().toISOString(), tablas };
-  await restaurarCopia(db, copia);
-  // Este equipo sigue la copia del que se recuperó, y no vuelve a subir lo que bajó.
-  const marcas: Record<string, number> = {};
-  for (const t of TABLAS_NUBE) {
-    const ultima = await db.table(t).orderBy('_v').last();
-    marcas[t] = Number(ultima?._v) || 0;
-  }
-  await guardarAjuste(db, 'dispositivo', elegido);
-  await activarNube(db, clave);
-  await guardarAjuste(db, 'nube.marcas', marcas);
+  await guardarAjuste(db, 'nube.cursor', 0);
+  const total = await bajarCambios(db, clave, url);
+  await guardarAjuste(db, 'nube.v2', true);
   return total;
 }

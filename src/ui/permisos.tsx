@@ -47,6 +47,15 @@ export function ProveedorPermisos({ children }: { children: ReactNode }) {
   );
 }
 
+// Probar claves de 4 cifras a mano no tiene que ser fácil: después de 5 fallos
+// seguidos hay que esperar un minuto (y otro más por cada fallo siguiente).
+const fallos: number[] = [];
+const anotarFallo = () => fallos.push(Date.now());
+function esperaPorFallos(): number {
+  if (fallos.length < 5) return 0;
+  return Math.max(0, fallos[fallos.length - 1]! + 60_000 - Date.now());
+}
+
 function ClaveDelDueño({ motivo, onListo }: { motivo: string; onListo: (u: string | null) => void }) {
   const [usuario, setUsuario] = useState('');
   const [clave, setClave] = useState('');
@@ -59,14 +68,18 @@ function ClaveDelDueño({ motivo, onListo }: { motivo: string; onListo: (u: stri
         className="formulario"
         onSubmit={async (e) => {
           e.preventDefault();
+          const espera = esperaPorFallos();
+          if (espera > 0) return setError(`Demasiadas claves mal seguidas: esperá ${Math.ceil(espera / 1000)} segundos.`);
           setEnCurso(true);
           const u = await ingresar(db, usuario.trim().toLowerCase(), clave).catch(() => null);
           setEnCurso(false);
           if (!u || !u.admin) {
+            if (!u) anotarFallo();
             setError(u ? 'Ese usuario no tiene permiso de dueño.' : 'Usuario o clave incorrectos.');
             setClave('');
             return;
           }
+          fallos.length = 0;
           onListo(u.usuario);
         }}
       >

@@ -2,7 +2,7 @@ import { formatoPeso, pagosDeVenta, subtotal } from '../dominio/carrito';
 import { cantidadDevuelta, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { nombreMedio, type Venta } from '../dominio/tipos';
-import type { BaseKiosco } from '../datos/db';
+import { numeroVisible, type BaseKiosco } from '../datos/db';
 import { leerAjuste } from '../datos/operaciones';
 
 // Ticket de venta para impresoras térmicas de 58 u 80 mm. No es factura:
@@ -81,7 +81,7 @@ td { vertical-align: top; padding: 1px 0; }
 .sub { font-size: 0.9em; }
 .total td { font-weight: 700; font-size: 1.25em; padding-top: 4px; }
 </style></head><body>
-<div class="centro">${encabezado}<div>${fecha}</div><div>Venta N° ${venta.id ?? ''}</div></div>
+<div class="centro">${encabezado}<div>${fecha}</div><div>Venta N° ${numeroVisible(venta.id)}</div></div>
 <hr><table>${renglones}</table><hr>
 <table>${descuento}${devuelto > 0 ? `<tr><td>Cobrado</td><td class="der">${formatPesos(venta.total)}</td></tr><tr><td>Devuelto${volvio}</td><td class="der">-${formatPesos(devuelto)}</td></tr>` : ''}<tr class="total"><td>TOTAL</td><td class="der">${formatPesos(venta.total - devuelto)}</td></tr>${pagos}${vuelto}</table>
 <hr><div class="centro">${escapar(a.pie)}</div><div class="centro sub">Comprobante no válido como factura</div>

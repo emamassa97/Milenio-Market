@@ -2,7 +2,7 @@ import { resumirTurno, totalConteo } from '../dominio/caja';
 import { CANTIDAD_MAXIMA, COMPRA_MAXIMA, RENGLON_MAXIMO, stockQueUsa, subtotal, VUELTO_MAXIMO } from '../dominio/carrito';
 import { formatPesos } from '../dominio/dinero';
 import type { FilaImportada } from '../dominio/csv';
-import { cantidadDevuelta, describirItems, detalleDevolucion, fiadoDisponible, montoDevolucion, stockQueVuelve, type RenglonDevuelto } from '../dominio/devoluciones';
+import { cantidadDevuelta, describirItems, detalleDevolucion, efectivoDisponible, fiadoDisponible, montoDevolucion, stockQueVuelve, type RenglonDevuelto } from '../dominio/devoluciones';
 import { saldoCliente, superaLimite } from '../dominio/fiado';
 import { aplicarAumento, type Redondeo } from '../dominio/precios';
 import { MEDIOS } from '../dominio/tipos';
@@ -19,7 +19,7 @@ import type {
   Turno,
   Venta,
 } from '../dominio/tipos';
-import type { BaseKiosco } from './db';
+import { equipoDe, type BaseKiosco } from './db';
 
 /** Error con un mensaje pensado para mostrarle a quien atiende. */
 export class ErrorKiosco extends Error {}
@@ -37,18 +37,44 @@ function quien<K extends string>(campo: K, usuario: string | undefined): Partial
 
 // ---------- Turnos ----------
 
+/**
+ * La caja abierta de ESTE equipo. Con la nube cada equipo ve las cajas de los
+ * otros, pero sólo vende en la suya (las de antes de tener número son de todos).
+ */
 export async function turnoAbierto(db: BaseKiosco): Promise<Turno | undefined> {
-  const abiertos = await db.turnos.filter((t) => t.cierre === null).toArray();
+  // Sin await antes de leer la base: dentro de un liveQuery, esperar otra promesa le hace perder el rastro.
+  const n = equipoDe(db);
+  const abiertos = await db.turnos.filter((t) => t.cierre === null && (t.equipo === undefined || t.equipo === n)).toArray();
   return abiertos.sort((a, b) => b.apertura - a.apertura)[0];
+}
+
+/** Cajas abiertas en otros equipos (para mostrarlas en el panel, sin vender en ellas). */
+export async function cajasDeOtrosEquipos(db: BaseKiosco): Promise<Turno[]> {
+  const n = equipoDe(db);
+  return db.turnos.filter((t) => t.cierre === null && t.equipo !== undefined && t.equipo !== n).toArray();
+}
+
+/** Seguir acá una caja que quedó abierta a nombre de otro equipo (por ejemplo, si se cambió de compu). */
+export async function traerCajaAEsteEquipo(db: BaseKiosco, turnoId: number): Promise<void> {
+  const n = equipoDe(db);
+  if (n === null) throw new ErrorKiosco('Este equipo todavía no está unido a la nube.');
+  await db.transaction('rw', db.turnos, db.ajustes, async () => {
+    if (await turnoAbierto(db)) throw new ErrorKiosco('Este equipo ya tiene una caja abierta.');
+    const t = await db.turnos.get(turnoId);
+    if (!t || t.cierre !== null) throw new ErrorKiosco('Esa caja ya se cerró.');
+    await db.turnos.update(turnoId, { equipo: n });
+  });
 }
 
 /** `usuario`: quién inició sesión y abre la caja (opcional). */
 export async function abrirTurno(db: BaseKiosco, cajero: string, fondoInicial: Pesos, usuario?: string): Promise<number> {
   if (fondoInicial < 0) throw new ErrorKiosco('El fondo inicial no puede ser negativo.');
   if (fondoInicial > RENGLON_MAXIMO) throw new ErrorKiosco('Ese cambio es demasiado alto: parece un código de barras.');
-  return db.transaction('rw', db.turnos, async () => {
+  return db.transaction('rw', db.turnos, db.ajustes, async () => {
     if (await turnoAbierto(db)) throw new ErrorKiosco('Ya hay una caja abierta.');
+    const equipo = equipoDe(db);
     return db.turnos.add({
+      ...(equipo !== null ? { equipo } : {}),
       apertura: ahora(),
       cierre: null,
       cajero: cajero.trim() || 'Sin nombre',
@@ -316,6 +342,8 @@ export async function devolverProductos(
   medio: MedioPago,
   motivo = '',
   usuario?: string,
+  /** El dueño autorizó devolver en efectivo más de lo que entró en efectivo en esa venta. */
+  autorizado = false,
 ): Promise<Devolucion> {
   const pedidos = renglones.filter((r) => r.cantidad > 0);
   if (pedidos.length === 0) throw new ErrorKiosco('Marcá qué se devuelve.');
@@ -347,6 +375,14 @@ export async function devolverProductos(
           disponible <= 0 ? 'De esta venta no queda nada anotado en la cuenta: devolvé la plata por otro medio.' : `En la cuenta sólo quedan ${formatPesos(disponible)} de esta venta: el resto devolvelo por otro medio.`,
         );
       }
+    }
+    if (medio === 'efectivo' && !autorizado && monto > efectivoDisponible(venta)) {
+      const disponible = efectivoDisponible(venta);
+      throw new ErrorKiosco(
+        disponible <= 0
+          ? 'Esta venta no se cobró en efectivo: devolvé por el mismo medio, o pedí la clave del dueño para dar efectivo.'
+          : `En efectivo entraron ${formatPesos(disponible)} de esta venta: el resto devolvelo por el otro medio, o con la clave del dueño.`,
+      );
     }
     const detalle = detalleDevolucion(venta, pedidos);
     const devolucion: Devolucion = {
@@ -414,7 +450,9 @@ export async function registrarCancelacion(db: BaseKiosco, items: ItemVenta[], u
 
 /** Con cuánto cambio conviene abrir: lo que se contó al cerrar la última caja. */
 export async function fondoSugerido(db: BaseKiosco): Promise<{ monto: Pesos; fecha: number } | null> {
-  const ultimo = (await db.turnos.orderBy('apertura').reverse().limit(5).toArray()).find((t) => t.cierre !== null);
+  // La última caja cerrada de este equipo (cada equipo tiene su propio cajón).
+  const n = equipoDe(db);
+  const ultimo = (await db.turnos.orderBy('apertura').reverse().limit(30).toArray()).find((t) => t.cierre !== null && (t.equipo === undefined || t.equipo === n));
   if (!ultimo) return null;
   const monto = ultimo.contado ?? ultimo.esperado;
   return monto === null || monto < 0 ? null : { monto, fecha: ultimo.cierre! };

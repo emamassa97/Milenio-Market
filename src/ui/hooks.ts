@@ -97,25 +97,28 @@ export function useUnaVez(): [boolean, (accion: () => Promise<void>) => Promise<
 }
 
 /**
- * Sube los cambios a la nube cada minuto y apenas vuelve internet. La primera
- * vez, si la nube todavía no tiene dueño, este equipo recibe la clave solo.
- * Los errores quedan anotados para mostrarlos.
+ * Sincroniza con la nube cada medio minuto, apenas vuelve internet y al volver
+ * a la pantalla (el celular que se saca del bolsillo se pone al día). La
+ * primera vez, si la nube todavía no tiene dueño, este equipo recibe la clave
+ * solo. Los errores quedan anotados para mostrarlos.
  */
 export function useCopiaEnLaNube(activa: boolean) {
   useEffect(() => {
     if (!activa) return;
-    const subir = () => {
+    const sincronizar = () => {
       if (!navigator.onLine) return;
       pedirAlta(db)
         .then((conClave) => (conClave ? sincronizarAhora(db) : null))
         .catch(() => {});
     };
-    subir();
-    const reloj = window.setInterval(subir, 60_000);
-    window.addEventListener('online', subir);
+    sincronizar();
+    const reloj = window.setInterval(sincronizar, 30_000);
+    window.addEventListener('online', sincronizar);
+    document.addEventListener('visibilitychange', sincronizar);
     return () => {
       window.clearInterval(reloj);
-      window.removeEventListener('online', subir);
+      window.removeEventListener('online', sincronizar);
+      document.removeEventListener('visibilitychange', sincronizar);
     };
   }, [activa]);
 }

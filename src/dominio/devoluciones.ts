@@ -77,6 +77,17 @@ export function fiadoDisponible(venta: Pick<Venta, 'medio' | 'total' | 'pagos' |
   return Math.max(0, fiado - descontado);
 }
 
+/**
+ * Cuánto efectivo se puede devolver de una venta sin clave del dueño: lo que
+ * entró en efectivo menos lo ya devuelto en efectivo. Así una venta con
+ * tarjeta no se "devuelve" sacando billetes del cajón.
+ */
+export function efectivoDisponible(venta: Pick<Venta, 'medio' | 'total' | 'pagos' | 'devoluciones'>): Pesos {
+  const cobrado = pagosDeVenta(venta).filter((p) => p.medio === 'efectivo').reduce((s, p) => s + p.monto, 0);
+  const devuelto = (venta.devoluciones ?? []).filter((d) => d.medio === 'efectivo').reduce((s, d) => s + d.monto, 0);
+  return Math.max(0, cobrado - devuelto);
+}
+
 /** Stock que vuelve a cada producto (unidades, o kilos si es por peso). */
 export function stockQueVuelve(venta: Pick<Venta, 'items'>, renglones: RenglonDevuelto[]): { productoId: number; cantidad: number }[] {
   const salida: { productoId: number; cantidad: number }[] = [];

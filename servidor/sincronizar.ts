@@ -1,4 +1,4 @@
-import { createHash, pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto';
 
 // Recibe la copia de la caja y la guarda en Postgres (Neon).
 // Una fila por registro de la caja: (equipo, tabla, id) -> datos.
@@ -43,6 +43,27 @@ const CREAR_CONFIG = `create table if not exists config_nube (
   valor text not null
 )`;
 
+// Versión 2 (sincronización entre equipos): una sola copia por (tabla, id), sin
+// separar por equipo, y un número de cambio global (seq) para que cada equipo
+// baje sólo lo que cambió desde la última vez.
+const CREAR_SECUENCIA = `create sequence if not exists filas_cambios`;
+const CREAR_FILAS = `create table if not exists filas (
+  tabla text not null,
+  id text not null,
+  datos jsonb,
+  borrado boolean not null default false,
+  equipo integer,
+  seq bigint not null default nextval('filas_cambios'),
+  actualizado timestamptz not null default now(),
+  primary key (tabla, id)
+)`;
+const CREAR_INDICE_SEQ = `create index if not exists filas_por_seq on filas (seq)`;
+const CREAR_EQUIPOS = `create table if not exists equipos (
+  n serial primary key,
+  dispositivo text not null unique,
+  creado timestamptz not null default now()
+)`;
+
 const CREAR_INTENTOS = `create table if not exists intentos_ingreso (
   usuario text primary key,
   fallos integer not null default 0,
@@ -85,7 +106,9 @@ interface UsuarioGuardado {
 
 /** La lista de usuarios más nueva de la nube (cada equipo sube la suya) y el equipo que subió datos más recientemente. */
 async function usuariosDeLaNube(consulta: Consulta): Promise<UsuarioGuardado[]> {
-  const filas = await consulta(
+  // Primero la copia compartida (versión 2): manda el último cambio que llegó al servidor, no el reloj de cada equipo.
+  const nuevas = await consulta(`select datos from filas where tabla = 'ajustes' and id = 'usuarios' and not borrado`, []);
+  const filas = nuevas.length > 0 ? nuevas : await consulta(
     `select datos from registros where tabla = 'ajustes' and id = 'usuarios' and not borrado
      order by coalesce((datos->>'_v')::numeric, 0) desc, actualizado desc limit 1`,
     [],
@@ -126,7 +149,31 @@ async function ingresar(pedido: Request, consulta: Consulta, esperada: string | 
   }
   await consulta(`delete from intentos_ingreso where usuario = $1`, [usuario]);
   const ultimo = await consulta(`select dispositivo from registros group by dispositivo order by max(actualizado) desc limit 1`, []);
-  return json({ clave: esperada, usuarios, dispositivo: (ultimo[0]?.dispositivo as string | undefined) ?? '' });
+  // El dueño se lleva la clave de la nube; un empleado, una clave propia que no deja tocar los usuarios.
+  const clave = u.admin ? esperada : claveDeEmpleado(esperada, usuario);
+  return json({ clave, usuarios, nube: idDeNube(esperada), dispositivo: (ultimo[0]?.dispositivo as string | undefined) ?? '' });
+}
+
+/** Un id de la nube que no revela la clave: dos equipos con el mismo id están en la misma nube. */
+export function idDeNube(clave: string): string {
+  return createHash('sha256').update(`nube:${clave}`).digest('hex').slice(0, 16);
+}
+
+/** Clave de un empleado: `e.<usuario>.<firma>`. Deja de valer si el usuario se borra o se vuelve dueño. */
+export function claveDeEmpleado(clave: string, usuario: string): string {
+  return `e.${usuario}.${createHmac('sha256', clave).update(`empleado:${usuario}`).digest('base64url')}`;
+}
+
+type Rol = 'dueño' | 'empleado';
+
+/** Quién manda el pedido: el dueño (clave de la nube) o un empleado (su clave propia, si sigue existiendo). */
+async function rolDelPedido(recibida: string | null, esperada: string, consulta: Consulta): Promise<Rol | null> {
+  if (!recibida) return null;
+  if (claveCorrecta(recibida, esperada)) return 'dueño';
+  const m = /^e\.([^.]{1,60})\.[A-Za-z0-9_-]+$/.exec(recibida);
+  if (!m || !claveCorrecta(recibida, claveDeEmpleado(esperada, m[1]!))) return null;
+  const u = (await usuariosDeLaNube(consulta)).find((x) => x.usuario === m[1]);
+  return u && !u.admin ? 'empleado' : null;
 }
 
 async function claveGuardada(consulta: Consulta): Promise<string | undefined> {
@@ -158,14 +205,19 @@ export async function manejar(pedido: Request, deps: Dependencias): Promise<Resp
       await consulta(CREAR_TABLA, []);
       await consulta(CREAR_CONFIG, []);
       await consulta(CREAR_INTENTOS, []);
+      await consulta(CREAR_SECUENCIA, []);
+      await consulta(CREAR_FILAS, []);
+      await consulta(CREAR_INDICE_SEQ, []);
+      await consulta(CREAR_EQUIPOS, []);
       tablasCreadas = true;
     }
   } catch (e) {
-    const detalle = e instanceof Error ? e.message.slice(0, 200) : 'error';
-    return pideEstado ? json({ base: true, conecta: false, detalle }) : json({ error: 'No se pudo conectar con la base de la nube.' }, 503);
+    // El detalle del error queda en el registro de Vercel, no en una página pública.
+    console.error('nube: no conecta con la base', e);
+    return pideEstado ? json({ base: true, conecta: false }) : json({ error: 'No se pudo conectar con la base de la nube.' }, 503);
   }
   if (pideEstado) {
-    const [equipos] = await consulta(`select count(distinct dispositivo) as n from registros`, []);
+    const [equipos] = await consulta(`select greatest((select count(*) from equipos), (select count(distinct dispositivo) from registros)) as n`, []);
     return json({
       base: true,
       conecta: true,
@@ -181,7 +233,12 @@ export async function manejar(pedido: Request, deps: Dependencias): Promise<Resp
   if (pedido.method === 'GET' && new URL(pedido.url).searchParams.get('usuarios') === '1') {
     return json({ hay: (await usuariosDeLaNube(consulta)).length > 0 });
   }
-  if (!esperada || !claveCorrecta(pedido.headers.get('x-clave'), esperada)) return json({ error: 'Clave incorrecta.' }, 401);
+  const rol = esperada ? await rolDelPedido(pedido.headers.get('x-clave'), esperada, consulta) : null;
+  if (!esperada || !rol) return json({ error: 'Clave incorrecta.' }, 401);
+  const parametros = new URL(pedido.url).searchParams;
+  if (parametros.get('v') === '2') return sincronizarV2(pedido, consulta, rol, parametros);
+  // Lo de abajo es la copia vieja (versión 1), para las cajas que todavía no se actualizaron. Sólo el dueño.
+  if (rol !== 'dueño') return json({ error: 'Clave incorrecta.' }, 401);
 
   if (pedido.method === 'POST') {
     let cuerpo: { dispositivo?: unknown; registros?: unknown; borrados?: unknown };
@@ -266,4 +323,86 @@ export async function manejar(pedido: Request, deps: Dependencias): Promise<Resp
   }
 
   return json({ error: 'Método no permitido.' }, 405);
+}
+
+// ---------- Versión 2: sincronización entre equipos ----------
+
+const PAGINA_CAMBIOS = 1000;
+
+/**
+ * - POST ?v=2&equipo=1 `{ dispositivo }` → `{ n }`: el número del equipo (siempre el mismo para ese dispositivo).
+ * - POST ?v=2 `{ equipo, registros, borrados }`: guarda. En productos, si llega `_s` (el stock que el equipo
+ *   conocía), suma la diferencia al stock de la nube en vez de pisarlo: dos equipos que venden la misma
+ *   Coca descuentan los dos. `_o` (equipo y marca) evita aplicar dos veces el mismo cambio.
+ * - GET ?v=2&cambios=<seq> → `{ filas, hasta, mas }`: lo cambiado después de seq, en orden.
+ */
+async function sincronizarV2(pedido: Request, consulta: Consulta, rol: Rol, parametros: URLSearchParams): Promise<Response> {
+  if (pedido.method === 'GET') {
+    const desde = Number(parametros.get('cambios') ?? '0');
+    if (!Number.isSafeInteger(desde) || desde < 0) return json({ error: 'El cursor no es válido.' }, 400);
+    const filas = await consulta(
+      `select tabla, id, datos, borrado, seq from filas where seq > $1 order by seq limit ${PAGINA_CAMBIOS}`,
+      [desde],
+    );
+    const hasta = filas.reduce((m, f) => Math.max(m, Number(f.seq) || 0), desde);
+    return json({
+      filas: filas.map((f) => ({ tabla: f.tabla, id: f.id, datos: f.borrado ? null : f.datos, borrado: Boolean(f.borrado), seq: Number(f.seq) })),
+      hasta,
+      mas: filas.length === PAGINA_CAMBIOS,
+    });
+  }
+  if (pedido.method !== 'POST') return json({ error: 'Método no permitido.' }, 405);
+  let cuerpo: { dispositivo?: unknown; equipo?: unknown; registros?: unknown; borrados?: unknown };
+  try {
+    cuerpo = (await pedido.json()) as typeof cuerpo;
+  } catch {
+    return json({ error: 'El pedido no es JSON.' }, 400);
+  }
+  if (parametros.get('equipo') === '1') {
+    if (!esTexto(cuerpo.dispositivo, 100)) return json({ error: 'Falta el equipo.' }, 400);
+    const [fila] = await consulta(
+      `insert into equipos (dispositivo) values ($1) on conflict (dispositivo) do update set dispositivo = excluded.dispositivo returning n`,
+      [cuerpo.dispositivo],
+    );
+    return json({ n: Number(fila?.n) });
+  }
+  const equipo = Number(cuerpo.equipo);
+  if (!Number.isSafeInteger(equipo) || equipo <= 0) return json({ error: 'Falta el número de equipo.' }, 400);
+  const registros = Array.isArray(cuerpo.registros) ? (cuerpo.registros as Record<string, unknown>[]) : [];
+  const borrados = Array.isArray(cuerpo.borrados) ? (cuerpo.borrados as Record<string, unknown>[]) : [];
+  if (registros.length + borrados.length > MAX_REGISTROS) return json({ error: 'Demasiados registros juntos.' }, 413);
+  for (const r of [...registros, ...borrados]) {
+    if (!r || !esTexto(r.tabla, 40) || !TABLAS.has(r.tabla) || !esTexto(r.id, 200)) {
+      return json({ error: 'Hay un registro con tabla o id no válidos.' }, 400);
+    }
+    // La lista de usuarios (y sus claves) sólo la cambia el dueño.
+    if (rol !== 'dueño' && r.tabla === 'ajustes' && r.id === 'usuarios') {
+      return json({ error: 'Sólo el dueño puede cambiar los usuarios.' }, 403);
+    }
+  }
+  if (registros.length > 0) {
+    await consulta(
+      `insert into filas (tabla, id, datos, borrado, equipo)
+       select r->>'tabla', r->>'id', r->'datos', false, $1 from jsonb_array_elements($2::jsonb) r
+       on conflict (tabla, id) do update set
+         datos = case
+           when filas.tabla = 'productos' and not filas.borrado
+             and jsonb_typeof(excluded.datos->'_s') = 'number' and jsonb_typeof(excluded.datos->'stock') = 'number'
+             and jsonb_typeof(filas.datos->'stock') = 'number'
+           then jsonb_set(excluded.datos, '{stock}', to_jsonb(round(
+             ((filas.datos->>'stock')::numeric + (excluded.datos->>'stock')::numeric - (excluded.datos->>'_s')::numeric) * 1000) / 1000))
+           else excluded.datos end,
+         borrado = false, equipo = excluded.equipo, seq = nextval('filas_cambios'), actualizado = now()
+       where filas.borrado or (filas.datos->>'_o') is distinct from (excluded.datos->>'_o')`,
+      [equipo, JSON.stringify(registros.map((r) => ({ tabla: r.tabla, id: r.id, datos: r.datos })))],
+    );
+  }
+  if (borrados.length > 0) {
+    await consulta(
+      `update filas set borrado = true, seq = nextval('filas_cambios'), actualizado = now()
+       where not borrado and (tabla, id) in (select r->>'tabla', r->>'id' from jsonb_array_elements($1::jsonb) r)`,
+      [JSON.stringify(borrados.map((b) => ({ tabla: b.tabla, id: b.id })))],
+    );
+  }
+  return json({ ok: true, guardados: registros.length, borrados: borrados.length });
 }
