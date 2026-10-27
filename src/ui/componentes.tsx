@@ -188,6 +188,7 @@ const TRAZOS: Record<string, ReactNode> = {
   whatsapp: <path d="M5 19l1.2-3.6A7.5 7.5 0 1 1 9 18.6zM9.5 9.5c0 3 2 5 5 5l1-1.5-2-1-1 1c-1 0-2.5-1.5-2.5-2.5l1-1-1-2z" />,
   descargar: <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />,
   subir: <path d="M12 16V5M7 10l5-5 5 5M5 20h14" />,
+  nube: <path d="M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6 9.5 4.25 4.25 0 0 0 7 18Z" />,
   porcentaje: (
     <>
       <path d="M6 18L18 6" />

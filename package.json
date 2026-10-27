@@ -10,11 +10,13 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
+    "@neondatabase/serverless": "1.0.2",
     "dexie": "4.0.11",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
+    "@types/node": "22.15.30",
     "@types/react": "18.3.23",
     "@types/react-dom": "18.3.7",
     "@vitejs/plugin-react": "4.5.2",

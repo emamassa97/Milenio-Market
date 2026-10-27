@@ -377,3 +377,8 @@ input[type='file'] { padding: 10px; }
   .modal-cuerpo { padding: 12px 16px 20px; }
   .modal-cabecera { padding-left: 16px; }
 }
+
+/* Estado de la copia en la nube, en la barra roja */
+.barra-nube { display: inline-flex; align-items: center; gap: 6px; color: #fff; text-decoration: none; padding: 4px 8px; border-radius: 8px; }
+.barra-nube:hover { background: rgba(255, 255, 255, 0.15); }
+.estado-nube { display: grid; gap: 4px; margin: 0; }

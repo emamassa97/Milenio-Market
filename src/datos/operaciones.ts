@@ -263,7 +263,10 @@ export async function guardarProducto(
 
 export async function borrarProducto(db: BaseKiosco, id: number): Promise<void> {
   // Las ventas viejas guardan nombre y precio propios, así que no se pierden.
-  await db.productos.delete(id);
+  await db.transaction('rw', db.productos, db.borrados, async () => {
+    await db.productos.delete(id);
+    await db.borrados.add({ tabla: 'productos', id: String(id), fecha: Date.now() });
+  });
 }
 
 export async function aumentoMasivo(

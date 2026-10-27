@@ -5,6 +5,7 @@ import { borrarTodo, cargarEjemplo } from '../datos/ejemplo';
 import { guardarAjuste, leerAjuste } from '../datos/operaciones';
 import { descargarArchivo, errorATexto, fechaCorta, Icono, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
+import { pendientes, recuperarDeLaNube, sincronizarAhora } from '../datos/nube';
 
 export function PantallaAjustes() {
   const avisar = useAvisar();
@@ -59,7 +60,7 @@ export function PantallaAjustes() {
         <h2 className="titulo-chico">Copia de seguridad</h2>
         <p className="texto-suave">
           Todo se guarda en este equipo y funciona sin internet. Descargá una copia cada tanto: si la compu se rompe, con ese archivo recuperás productos, ventas y fiados en otra.
-          {ultimaCopia ? ` Última copia: ${fechaCorta(ultimaCopia)}.` : ' Todavía no hiciste ninguna.'}
+          {ultimaCopia ? ` Última copia: ${fechaCorta(ultimaCopia)}` : ' Todavía no hiciste ninguna.'}
         </p>
         <div className="botonera">
           <button type="button" className="boton boton-primario" onClick={descargarCopia}>
@@ -88,6 +89,8 @@ export function PantallaAjustes() {
         </div>
         {!vacia && <p className="texto-suave">Restaurar sólo se puede en un equipo sin datos, para no pisar nada de lo cargado.</p>}
       </section>
+
+      <CopiaEnLaNube vacia={vacia} />
 
       {(vacia || (modoPrueba && cierres === 0)) && (
         <section className="tarjeta formulario">
@@ -142,5 +145,123 @@ export function PantallaAjustes() {
         </section>
       )}
     </div>
+  );
+}
+
+function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
+  const avisar = useAvisar();
+  const [enCurso, unaVez] = useUnaVez();
+  const [clave, setClave] = useState('');
+  const estado = useConsulta(
+    async () => ({
+      clave: await leerAjuste<string>(db, 'nube.clave', ''),
+      ultima: await leerAjuste<number | null>(db, 'nube.ultima', null),
+      error: await leerAjuste<string | null>(db, 'nube.error', null),
+      pendientes: await pendientes(db),
+    }),
+    [],
+    { clave: '', ultima: null, error: null, pendientes: 0 },
+  );
+
+  const subir = () =>
+    unaVez(async () => {
+      try {
+        const r = await sincronizarAhora(db);
+        avisar({ texto: r && r.subidas > 0 ? `Listo: se subieron ${r.subidas} cambios.` : 'La copia en la nube ya estaba al día.', tipo: 'ok' });
+      } catch (e) {
+        avisar({ texto: errorATexto(e), tipo: 'error' });
+      }
+    });
+
+  if (import.meta.env.VITE_DEMO) return null;
+
+  return (
+    <section className="tarjeta formulario">
+      <h2 className="titulo-chico">Copia en la nube</h2>
+      {estado.clave ? (
+        <>
+          <p className="texto-suave estado-nube">
+            <span>
+              {estado.error
+                ? `No se pudo subir: ${estado.error}`
+                : estado.pendientes > 0
+                  ? `Faltan subir ${estado.pendientes} cambios. Se suben solos cada minuto cuando hay internet.`
+                  : 'Todo lo cargado en este equipo ya está copiado en la nube.'}
+            </span>
+            <span>{estado.ultima ? `Última vez: ${fechaCorta(estado.ultima)}` : 'Todavía no se subió nada.'}</span>
+          </p>
+          <div className="botonera">
+            <button type="button" className="boton boton-primario" disabled={enCurso || !navigator.onLine} onClick={subir}>
+              <Icono nombre="nube" tam={18} /> Subir ahora
+            </button>
+            <button
+              type="button"
+              className="boton"
+              disabled={enCurso}
+              onClick={async () => {
+                await guardarAjuste(db, 'nube.clave', '');
+                await guardarAjuste(db, 'nube.error', null);
+                avisar({ texto: 'Copia en la nube desactivada en este equipo.', tipo: 'info' });
+              }}
+            >
+              Desactivar
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="texto-suave">
+            Con la copia en la nube, cada venta, producto y fiado se guarda también en internet. La caja sigue andando igual sin conexión y sube lo pendiente cuando vuelve. Escribí la clave de la nube una sola vez.
+          </p>
+          <label className="campo">
+            <span className="campo-etiqueta">Clave de la nube</span>
+            <input value={clave} onChange={(e) => setClave(e.target.value)} type="password" autoComplete="off" />
+          </label>
+          <div className="botonera">
+            <button
+              type="button"
+              className="boton boton-primario"
+              disabled={!clave.trim() || enCurso}
+              onClick={() =>
+                unaVez(async () => {
+                  await guardarAjuste(db, 'nube.clave', clave.trim());
+                  try {
+                    const r = await sincronizarAhora(db);
+                    setClave('');
+                    avisar({ texto: `Copia en la nube activada. Se subieron ${r?.subidas ?? 0} registros.`, tipo: 'ok' });
+                  } catch (e) {
+                    await guardarAjuste(db, 'nube.clave', '');
+                    avisar({ texto: errorATexto(e), tipo: 'error' });
+                  }
+                })
+              }
+            >
+              Activar
+            </button>
+            {vacia && (
+              <button
+                type="button"
+                className="boton"
+                disabled={!clave.trim() || enCurso}
+                onClick={() =>
+                  unaVez(async () => {
+                    try {
+                      const total = await recuperarDeLaNube(db, clave.trim());
+                      setClave('');
+                      avisar({ texto: `Recuperados ${total} registros desde la nube.`, tipo: 'ok' });
+                    } catch (e) {
+                      avisar({ texto: errorATexto(e), tipo: 'error' });
+                    }
+                  })
+                }
+              >
+                <Icono nombre="descargar" tam={18} /> Recuperar desde la nube
+              </button>
+            )}
+          </div>
+          {vacia && <p className="texto-suave">¿Compu nueva? Con la misma clave podés traer todo lo que estaba guardado en la nube.</p>}
+        </>
+      )}
+    </section>
   );
 }

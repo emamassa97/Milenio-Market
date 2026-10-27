@@ -3,7 +3,6 @@ import logo from './assets/logo-rojo.svg';
 import { db } from './datos/db';
 import { estaVacia } from './datos/copia';
 import { cargarEjemplo } from './datos/ejemplo';
-import { turnoAbierto } from './datos/operaciones';
 import { PantallaAjustes } from './pantallas/Ajustes';
 import { PantallaCaja } from './pantallas/Caja';
 import { PantallaCierre } from './pantallas/Cierre';
@@ -11,7 +10,9 @@ import { PantallaClientes } from './pantallas/Clientes';
 import { PantallaProductos } from './pantallas/Productos';
 import { PantallaReportes } from './pantallas/Reportes';
 import { Icono, ProveedorAvisos } from './ui/componentes';
-import { useConexion, useConsulta } from './ui/hooks';
+import { useConexion, useConsulta, useCopiaEnLaNube } from './ui/hooks';
+import { leerAjuste, turnoAbierto } from './datos/operaciones';
+import { pendientes } from './datos/nube';
 
 const PANTALLAS = [
   { id: 'caja', nombre: 'Caja' },
@@ -32,6 +33,16 @@ export function App() {
   const [pantalla, setPantalla] = useState<IdPantalla>(leerHash);
   const online = useConexion();
   const turno = useConsulta(() => turnoAbierto(db), [], undefined);
+  const nube = useConsulta(
+    async () => {
+      const clave = await leerAjuste<string>(db, 'nube.clave', '');
+      if (!clave) return null;
+      return { error: await leerAjuste<string | null>(db, 'nube.error', null), pendientes: await pendientes(db) };
+    },
+    [],
+    null,
+  );
+  useCopiaEnLaNube(!import.meta.env.VITE_DEMO && nube !== null);
 
   // Versión de prueba publicada: arranca con productos de ejemplo.
   useEffect(() => {
@@ -71,6 +82,13 @@ export function App() {
             {online ? 'Conectado' : 'Sin internet: se sigue cobrando'}
             {turno ? ` · ${turno.cajero}` : ''}
           </span>
+          {nube && (
+            <a href="#ajustes" className="barra-nube" title={nube.error ?? (nube.pendientes ? `${nube.pendientes} cambios por subir` : 'Copia en la nube al día')}>
+              <Icono nombre="nube" tam={18} />
+              <span className="barra-estado-texto">{nube.error ? 'Nube: revisar' : nube.pendientes ? 'Nube: subiendo' : 'Nube al día'}</span>
+              {nube.error && <span className="punto punto-sin" aria-hidden="true" />}
+            </a>
+          )}
           <a href="#ajustes" className={`boton-icono barra-ajustes ${pantalla === 'ajustes' ? 'activo' : ''}`} aria-label="Ajustes y copia de seguridad">
             <Icono nombre="ajustes" />
           </a>
