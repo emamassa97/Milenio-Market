@@ -469,6 +469,8 @@ function validarProducto(p: DatosProducto) {
   if (p.codigo && !/^[0-9A-Za-z-]{1,30}$/.test(p.codigo)) {
     throw new ErrorKiosco('El código sólo puede tener números y letras.');
   }
+  // Dos códigos de barras pegados (el lector pasó dos veces) no son un código: el más largo usado es de 14 cifras.
+  if (/^\d{15,}$/.test(p.codigo ?? '')) throw new ErrorKiosco('Ese código tiene demasiados números: parece que el lector pasó dos veces. Borralo y pasalo una sola vez.');
   const pr = p.promo;
   if (pr && (!Number.isInteger(pr.cantidad) || pr.cantidad < 2 || !Number.isInteger(pr.precio) || pr.precio <= 0 || pr.precio >= p.precio * pr.cantidad)) {
     throw new ErrorKiosco('La promo tiene que ser de 2 o más unidades y más barata que comprarlas sueltas.');

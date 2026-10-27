@@ -2,7 +2,7 @@ import { marcarRemota, type Ajuste, type BaseKiosco } from './db';
 import { estaVacia } from './copia';
 import { activarNube, recuperarDeLaNube } from './nube';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
-import { ingresar, leerUsuarios, type Usuario } from './usuarios';
+import { combinarUsuarios, ingresar, leerUsuarios, type Usuario } from './usuarios';
 
 // Un solo usuario para todos los equipos: con internet, la clave la controla
 // la nube (donde viaja la lista de usuarios con la clave hasheada) y un equipo
@@ -63,16 +63,18 @@ async function guardarUsuariosDeLaNube(db: BaseKiosco, usuarios: Usuario[]): Pro
   });
 }
 
-/** Si ya hay usuarios en la nube: un equipo nuevo tiene que pedir ingresar, no crear otro dueño. */
-export async function hayUsuariosEnLaNube(url = URL_NUBE): Promise<boolean> {
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+/** Si ya hay usuarios en la nube: un equipo nuevo tiene que pedir ingresar, no crear otro dueño. null: no se sabe (sin internet o la nube no responde). */
+export async function hayUsuariosEnLaNube(url = URL_NUBE): Promise<boolean | null> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
   const corte = new AbortController();
-  const reloj = setTimeout(() => corte.abort(), ESPERA_MS);
+  // La pantalla espera esta respuesta: con la nube lenta, mejor decidir rápido.
+  const reloj = setTimeout(() => corte.abort(), 2500);
   try {
     const r = await fetch(`${url}?usuarios=1`, { signal: corte.signal });
-    return r.ok && ((await r.json()) as { hay?: boolean }).hay === true;
+    if (!r.ok) return null;
+    return ((await r.json()) as { hay?: boolean }).hay === true;
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(reloj);
   }
@@ -84,9 +86,16 @@ export async function hayUsuariosEnLaNube(url = URL_NUBE): Promise<boolean> {
  */
 export async function ingresarDondeSea(db: BaseKiosco, usuario: string, clave: string, url = URL_NUBE): Promise<Usuario> {
   const nombre = usuario.trim().toLowerCase();
+  const claveLocal = await leerAjuste<string>(db, 'nube.clave', '');
+  // Equipo ya unido a la nube: los usuarios llegan solos cada medio minuto, así que se
+  // comprueba acá primero (entra al instante aunque la nube esté lenta). Si acá no
+  // coincide (una clave cambiada recién en otro equipo), se pregunta a la nube.
+  if (claveLocal && (await leerAjuste<string | boolean>(db, 'nube.v2', false)) === true) {
+    const local = await ingresar(db, nombre, clave);
+    if (local) return local;
+  }
   const enLinea = typeof navigator === 'undefined' || navigator.onLine !== false;
   const nube = enLinea ? await preguntarALaNube(nombre, clave, url) : ({ tipo: 'sin-nube' } as const);
-  const claveLocal = await leerAjuste<string>(db, 'nube.clave', '');
 
   if (nube.tipo === 'ok') {
     const u = nube.usuarios.find((x) => x.usuario === nombre);
@@ -104,6 +113,9 @@ export async function ingresarDondeSea(db: BaseKiosco, usuario: string, clave: s
         await guardarAjuste(db, 'nube.n', null);
         await guardarAjuste(db, 'nube.cursor', 0);
         await guardarAjuste(db, 'nube.v2', false);
+        // Sus usuarios se juntan con los de la nube (nadie desaparece); se suben en la próxima vuelta.
+        await guardarAjuste(db, 'usuarios', combinarUsuarios(nube.usuarios, await leerUsuarios(db)));
+        return u;
       }
       await guardarUsuariosDeLaNube(db, nube.usuarios);
     } else {
@@ -125,6 +137,9 @@ export async function ingresarDondeSea(db: BaseKiosco, usuario: string, clave: s
     throw new ErrorKiosco(nube.error);
   }
   const local = await ingresar(db, nombre, clave);
+  if (!local && nube.tipo === 'sin-nube' && (await leerUsuarios(db)).length === 0) {
+    throw new ErrorKiosco('No hay conexión con la nube. Para entrar por primera vez en este equipo hace falta internet.');
+  }
   if (!local) throw new ErrorKiosco(nube.tipo === 'rechazado' ? nube.error : 'Usuario o clave incorrectos.');
   return local;
 }

@@ -5,7 +5,7 @@ import { BaseKiosco, RANGO } from './db';
 import { abrirTurno, borrarProducto, guardarProducto, registrarVenta, turnoAbierto } from './operaciones';
 import { pedirAlta, sincronizarAhora } from './nube';
 import { ingresarDondeSea } from './ingreso';
-import { cambiarClave, crearUsuario, leerUsuarios } from './usuarios';
+import { cambiarClave, crearUsuario, empezarDeCero, leerUsuarios } from './usuarios';
 
 // Dos equipos (la PC del kiosco y el celular del dueño) contra una nube falsa
 // en memoria que responde las consultas reales del servidor.
@@ -153,5 +153,33 @@ describe('sincronización entre equipos', () => {
     expect((await cel.productos.get(coca))!.stock).toBe(8);
     expect(await turnoAbierto(cel)).toBeUndefined();
     expect((await leerUsuarios(cel)).map((u) => u.usuario)).toEqual(['ema']);
+  });
+
+  it('un equipo armado sin nube que se une no borra los usuarios de la nube (se juntan)', async () => {
+    const { nube, pc } = await escenario();
+    const otra = await nueva();
+    await crearUsuario(otra, { usuario: 'ema', nombre: 'Ema', clave: '9157', admin: true });
+    await crearUsuario(otra, { usuario: 'lucia', nombre: 'Lucía', clave: '2468', admin: false });
+    await guardarProducto(otra, prod('Del otro'));
+    await ingresarDondeSea(otra, 'ema', '4826');
+    await sincronizarAhora(otra);
+    await sincronizarAhora(pc);
+    const nombres = (await leerUsuarios(pc)).map((u) => u.usuario).sort();
+    expect(nombres).toEqual(['ema', 'juan', 'lucia']);
+    await expect(ingresarDondeSea(pc, 'ema', '4826')).resolves.toBeTruthy();
+    expect([...nube.v2.values()].some((f) => f.tabla === 'productos' && f.datos.nombre === 'Del otro')).toBe(true);
+  });
+
+  it('empezar de cero trae todo de vuelta de la nube y la clave nueva del dueño vale en todos lados', async () => {
+    const { pc, cel, coca } = await escenario();
+    await empezarDeCero(cel);
+    expect(await cel.ventas.count()).toBe(0);
+    await crearUsuario(cel, { usuario: 'ema', nombre: 'Ema', clave: '5931', admin: true });
+    await sincronizarAhora(cel);
+    expect(await cel.ventas.count()).toBe(1);
+    expect((await cel.productos.get(coca))!.stock).toBe(9);
+    await sincronizarAhora(pc);
+    await expect(ingresarDondeSea(pc, 'ema', '5931')).resolves.toBeTruthy();
+    expect((await leerUsuarios(pc)).map((u) => u.usuario).sort()).toEqual(['ema', 'juan']);
   });
 });

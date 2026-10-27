@@ -1,5 +1,6 @@
-import { fijarRango, marcarRemota, TABLAS_NUBE, type Ajuste, type BaseKiosco, type TablaNube } from './db';
+import { fijarRango, marcarRemota, nuevaMarca, TABLAS_NUBE, type Ajuste, type BaseKiosco, type TablaNube } from './db';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
+import { combinarUsuarios, type Usuario } from './usuarios';
 
 // La nube junta a todos los equipos (la PC del mostrador, el celular del
 // dueño…). Cada equipo trabaja siempre con sus datos, así vende sin internet,
@@ -166,6 +167,14 @@ export async function aplicarRemotas(db: BaseKiosco, filas: FilaRemota[], migrac
       }
       const { _o, ...datos } = f.datos;
       void _o;
+      if (migracion && t === 'ajustes' && f.id === 'usuarios' && local && Array.isArray(local.valor) && Array.isArray(datos.valor)) {
+        // Un equipo que se une con sus propios usuarios no borra los de la nube (ni al revés):
+        // se juntan, y en el mismo usuario gana la lista más nueva. Queda para subir.
+        const [nueva, vieja] = remotaGana ? [datos.valor, local.valor] : [local.valor, datos.valor];
+        await tabla.put({ clave: 'usuarios', valor: combinarUsuarios(nueva as Usuario[], vieja as Usuario[]), _v: nuevaMarca() });
+        aplicadas++;
+        continue;
+      }
       if (remotaGana) {
         await tabla.put({ ...datos, ...(t === 'productos' && typeof datos.stock === 'number' ? { _s: datos.stock } : {}), _v: 0 });
         aplicadas++;
@@ -193,8 +202,8 @@ export function enviarAlServidor(clave: string, url = '/api/sincronizar'): Envia
 }
 
 async function mensajeServidor(r: Response): Promise<string> {
-  if (r.status === 401) return 'La clave de la copia en la nube no es correcta.';
-  if (r.status === 503) return 'La copia en la nube todavía no está configurada en el servidor.';
+  if (r.status === 401) return 'La clave de la nube no es correcta: entrá de nuevo con tu usuario.';
+  if (r.status >= 500) return SIN_RESPUESTA;
   try {
     const cuerpo = (await r.json()) as { error?: string };
     return cuerpo.error ?? `Error ${r.status}`;
@@ -210,19 +219,25 @@ async function mensajeServidor(r: Response): Promise<string> {
  */
 export async function pedirAlta(db: BaseKiosco, url = '/api/sincronizar'): Promise<boolean> {
   if (await leerAjuste<string>(db, 'nube.clave', '')) return true;
-  const r = await fetch(url, { method: 'POST', headers: { 'x-alta': '1' } });
+  let r: Response;
+  try {
+    r = await fetch(url, { method: 'POST', headers: { 'x-alta': '1' } });
+  } catch {
+    // Sin conexión con el servidor (o se cayó): se avisa en pantalla en vez de callar.
+    await guardarAjuste(db, 'nube.estado', 'sin-servidor');
+    return false;
+  }
   if (r.status === 409) {
     // La nube ya es de otra caja (o tiene SYNC_CLAVE): hay que escribir la clave a mano.
     await guardarAjuste(db, 'nube.estado', 'sin-activar');
     return false;
   }
-  if (r.status === 503) {
-    // El servidor no tiene base de datos (o no conecta): se avisa en pantalla en vez de callar.
+  if (!r.ok) {
+    // El servidor no tiene base de datos, no conecta o falla al cargar (500, 404…): se avisa en pantalla.
     await guardarAjuste(db, 'nube.estado', 'sin-servidor');
     return false;
   }
-  if (!r.ok) return false;
-  const { clave } = (await r.json()) as { clave?: string };
+  const { clave } = (await r.json().catch(() => ({}))) as { clave?: string };
   if (!clave) return false;
   await activarNube(db, clave);
   // La primera caja es la que ya tiene los datos: no hay nada que bajar antes de subir todo.
@@ -237,6 +252,8 @@ export async function activarNube(db: BaseKiosco, clave: string, nube?: string):
   await guardarAjuste(db, 'nube.estado', null);
   await guardarAjuste(db, 'nube.error', null);
 }
+
+const SIN_RESPUESTA = 'La nube no responde ahora. Lo cargado queda guardado en este equipo y se sube solo cuando vuelva.';
 
 export const AVISO_SIN_ACTIVAR = 'Nube sin activar: escribí la clave en Ajustes.';
 export const AVISO_SIN_SERVIDOR = 'La nube no responde: lo cargado queda sólo en este equipo.';
@@ -320,8 +337,10 @@ async function unaVuelta(db: BaseKiosco, url: string): Promise<{ subidas: number
     await guardarAjuste(db, 'nube.estado', null);
     return { subidas, bajadas };
   } catch (e) {
-    await guardarAjuste(db, 'nube.error', e instanceof Error ? e.message : 'No se pudo sincronizar.');
-    throw e;
+    // Un error de red ("Failed to fetch") se cuenta como lo que es: la nube no responde.
+    const texto = e instanceof TypeError || !(e instanceof Error) ? SIN_RESPUESTA : e.message;
+    await guardarAjuste(db, 'nube.error', texto);
+    throw new ErrorKiosco(texto);
   }
 }
 
