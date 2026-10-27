@@ -137,6 +137,11 @@ export async function pedirAlta(db: BaseKiosco, url = '/api/sincronizar'): Promi
     await guardarAjuste(db, 'nube.estado', 'sin-activar');
     return false;
   }
+  if (r.status === 503) {
+    // El servidor no tiene base de datos (o no conecta): se avisa en pantalla en vez de callar.
+    await guardarAjuste(db, 'nube.estado', 'sin-servidor');
+    return false;
+  }
   if (!r.ok) return false;
   const { clave } = (await r.json()) as { clave?: string };
   if (!clave) return false;
@@ -152,6 +157,7 @@ export async function activarNube(db: BaseKiosco, clave: string): Promise<void> 
 }
 
 export const AVISO_SIN_ACTIVAR = 'Nube sin activar: escribí la clave en Ajustes.';
+export const AVISO_SIN_SERVIDOR = 'La nube no responde: lo cargado queda sólo en este equipo.';
 
 export interface EstadoNube {
   /** Este equipo tiene clave y sube sus cambios. */
@@ -179,14 +185,14 @@ export async function estadoNube(db: BaseKiosco): Promise<EstadoNube> {
     leerAjuste<string>(db, 'nube.clave', '').then((c) => (c ? pendientes(db) : 0)),
   ]);
   const activa = Boolean(clave);
-  const sinActivar = !activa && estado === 'sin-activar';
+  const sinActivar = !activa && (estado === 'sin-activar' || estado === 'sin-servidor');
   return {
     activa,
     sinActivar,
     error: activa ? error : null,
     pendientes: cuantos,
     ultima,
-    aviso: sinActivar ? AVISO_SIN_ACTIVAR : activa && error ? error : null,
+    aviso: sinActivar ? (estado === 'sin-servidor' ? AVISO_SIN_SERVIDOR : AVISO_SIN_ACTIVAR) : activa && error ? error : null,
   };
 }
 
