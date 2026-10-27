@@ -52,6 +52,29 @@ export function pitido(tipo: 'ok' | 'error' = 'ok') {
 }
 
 
+/** `true` mientras se va bajando por la página (para esconder el botón redondo del celular y que no tape la lista). */
+export function useBajando(): boolean {
+  const [bajando, setBajando] = useState(false);
+  useEffect(() => {
+    let ultimo = window.scrollY;
+    const mirar = () => {
+      const y = window.scrollY;
+      // Cerca del tope siempre se ve; si no, se esconde al bajar y vuelve al subir. El punto de referencia
+      // sólo se mueve cuando se pasó el umbral, así un arrastre lento también cuenta.
+      if (y < 80) {
+        setBajando(false);
+        ultimo = y;
+      } else if (Math.abs(y - ultimo) > 12) {
+        setBajando(y > ultimo);
+        ultimo = y;
+      }
+    };
+    window.addEventListener('scroll', mirar, { passive: true });
+    return () => window.removeEventListener('scroll', mirar);
+  }, []);
+  return bajando;
+}
+
 /**
  * Evita guardar dos veces por un doble clic o doble Enter:
  * mientras una acción está en curso, las siguientes se ignoran.

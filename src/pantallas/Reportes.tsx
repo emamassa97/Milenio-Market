@@ -2,13 +2,14 @@ import { useMemo, useState } from 'react';
 import { esGastoDelLocal } from '../dominio/caja';
 import { formatPesos } from '../dominio/dinero';
 import { saldoCliente } from '../dominio/fiado';
-import { masDevueltos, paraReponer, resumirVentas, sinMovimiento } from '../dominio/reportes';
+import { masDevueltos, paraReponer, porCajero, resumirVentas, sinMovimiento } from '../dominio/reportes';
 import { MEDIOS, type Producto, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
+import { leerUsuarios } from '../datos/usuarios';
 import { sinCortes, Vacio } from '../ui/componentes';
 import { useConsulta } from '../ui/hooks';
 
-type Periodo = 'hoy' | 'ayer' | '7' | '30' | 'mes';
+type Periodo = 'hoy' | 'ayer' | '7' | '30' | 'mes' | 'dia';
 
 const PERIODOS: { id: Periodo; nombre: string }[] = [
   { id: 'hoy', nombre: 'Hoy' },
@@ -18,13 +19,32 @@ const PERIODOS: { id: Periodo; nombre: string }[] = [
   { id: 'mes', nombre: 'Este mes' },
 ];
 
-function rango(p: Periodo): [number, number] {
+/** "2026-10-27" del día de hoy, en la hora local. */
+function diaISO(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** "martes 27 de octubre" (o con el año, si no es el de hoy). */
+function diaLargo(iso: string): string {
+  const [a, m, d] = iso.split('-').map(Number);
+  const fecha = new Date(a!, m! - 1, d!);
+  const texto = fecha.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', ...(a !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+  // "martes, 27 de octubre" → "Martes 27 de octubre".
+  return (texto.charAt(0).toUpperCase() + texto.slice(1)).replace(',', '');
+}
+
+function rango(p: Periodo, dia: string): [number, number] {
   const hoy = new Date();
   hoy.setHours(0, 0, 0, 0);
   const inicio = new Date(hoy);
   const fin = new Date(hoy);
   fin.setDate(fin.getDate() + 1);
-  if (p === 'ayer') {
+  if (p === 'dia') {
+    // Un día puntual del calendario ("¿cuánto vendí el 12?").
+    const [a, m, d] = dia.split('-').map(Number);
+    inicio.setFullYear(a!, m! - 1, d!);
+    fin.setFullYear(a!, m! - 1, d! + 1);
+  } else if (p === 'ayer') {
     inicio.setDate(inicio.getDate() - 1);
     fin.setDate(fin.getDate() - 1);
   } else if (p === '7') inicio.setDate(inicio.getDate() - 6);
@@ -35,7 +55,8 @@ function rango(p: Periodo): [number, number] {
 
 export function PantallaReportes() {
   const [periodo, setPeriodo] = useState<Periodo>('hoy');
-  const [desde, hasta] = rango(periodo);
+  const [dia, setDia] = useState(diaISO);
+  const [desde, hasta] = rango(periodo, dia);
   const ventas = useConsulta(() => db.ventas.where('fecha').between(desde, hasta, true, false).toArray(), [desde, hasta], [] as Venta[]);
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
   const gastos = useConsulta(
@@ -69,7 +90,16 @@ export function PantallaReportes() {
   );
 
   const r = useMemo(() => resumirVentas(ventas), [ventas]);
-  const devueltos = useMemo(() => masDevueltos(ventas), [ventas]);
+  // Quién cobró: sólo vale la pena cuando en el período cobró más de una persona.
+  const usuarios = useConsulta(() => leerUsuarios(db), [], [] as { usuario: string; nombre: string }[]);
+  const cajeros = useMemo(() => porCajero(ventas, new Map(usuarios.map((u) => [u.usuario, u.nombre]))), [ventas, usuarios]);
+  // Las devoluciones se cuentan por el día en que se hicieron, sea de cuándo sea la venta.
+  const ventasParaDevoluciones = useConsulta(
+    () => db.ventas.filter((v) => !!v.devoluciones?.some((d) => d.fecha >= desde && d.fecha < hasta)).toArray(),
+    [desde, hasta],
+    [] as Venta[],
+  );
+  const devueltos = useMemo(() => masDevueltos(ventasParaDevoluciones, desde, hasta), [ventasParaDevoluciones, desde, hasta]);
   const cobradoBruto = Math.max(1, Object.values(r.porMedio).reduce((a, b) => a + b, 0));
   const reponer = useMemo(() => paraReponer(productos), [productos]);
   const quietos = useMemo(() => sinMovimiento(productos, ventas30).slice(0, 10), [productos, ventas30]);
@@ -78,19 +108,53 @@ export function PantallaReportes() {
   const primera = Math.min(horasConVentas[0]?.h ?? 8, 8);
   const ultima = Math.max(horasConVentas[horasConVentas.length - 1]?.h ?? 22, 22);
   const pico = horasConVentas.reduce((a, b) => (b.v > a.v ? b : a), { v: 0, h: -1 });
+  const tarjetaDevueltos = devueltos.length > 0 && (
+    <section className="tarjeta">
+      <h2 className="titulo-chico">Lo que más se devolvió</h2>
+      <p className="texto-suave">Si un producto vuelve seguido, conviene revisarlo con el proveedor.</p>
+      <ol className="ranking">
+        {devueltos.slice(0, 8).map((p) => (
+          <li key={p.clave}>
+            <span>
+              {sinCortes(p.nombre)}
+              {p.motivo && <small className="texto-suave"> · {p.motivo}</small>}
+            </span>
+            <span className="texto-suave">{p.unidades} u.</span>
+            <span className="importe">{formatPesos(p.importe)}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
 
   return (
     <div className="pagina">
       <div className="pagina-cabecera">
         <h1>Reportes</h1>
-        <div className="segmentos" role="group" aria-label="Período">
-          {PERIODOS.map((p) => (
-            <button key={p.id} type="button" className={periodo === p.id ? 'activo' : ''} aria-pressed={periodo === p.id} onClick={() => setPeriodo(p.id)}>
-              {p.nombre}
-            </button>
-          ))}
+        <div className="filtros-periodo">
+          <div className="segmentos" role="group" aria-label="Período">
+            {PERIODOS.map((p) => (
+              <button key={p.id} type="button" className={periodo === p.id ? 'activo' : ''} aria-pressed={periodo === p.id} onClick={() => setPeriodo(p.id)}>
+                {p.nombre}
+              </button>
+            ))}
+          </div>
+          <label className={`filtro-dia ${periodo === 'dia' ? 'activo' : ''}`} title="Un día puntual">
+            <input
+              type="date"
+              value={dia}
+              max={diaISO()}
+              aria-label="Un día puntual"
+              onChange={(e) => {
+                if (!e.target.value) return;
+                setDia(e.target.value);
+                setPeriodo('dia');
+              }}
+            />
+          </label>
         </div>
       </div>
+      {periodo === 'dia' && <p className="texto-suave periodo-elegido">{diaLargo(dia)}</p>}
 
       <div className="indicadores indicadores-4">
         <div className="tarjeta indicador">
@@ -131,7 +195,10 @@ export function PantallaReportes() {
       </div>
 
       {r.cantidad === 0 ? (
-        <Vacio titulo="No hay ventas en este período" icono="reportes" />
+        <>
+          <Vacio titulo={periodo === 'dia' ? `No hubo ventas el ${diaLargo(dia).toLowerCase()}` : 'No hay ventas en este período'} icono="reportes" />
+          {tarjetaDevueltos && <div className="reportes">{tarjetaDevueltos}</div>}
+        </>
       ) : (
         <div className="reportes reportes-ventas">
           <section className="tarjeta">
@@ -172,24 +239,21 @@ export function PantallaReportes() {
               ))}
             </ol>
           </section>
-          {devueltos.length > 0 && (
+          {cajeros.length > 1 && (
             <section className="tarjeta">
-              <h2 className="titulo-chico">Lo que más se devolvió</h2>
-              <p className="texto-suave">Si un producto vuelve seguido, conviene revisarlo con el proveedor.</p>
+              <h2 className="titulo-chico">Quién cobró</h2>
               <ol className="ranking">
-                {devueltos.slice(0, 8).map((p) => (
-                  <li key={p.clave}>
-                    <span>
-                      {sinCortes(p.nombre)}
-                      {p.motivo && <small className="texto-suave"> · {p.motivo}</small>}
-                    </span>
-                    <span className="texto-suave">{p.unidades} u.</span>
-                    <span className="importe">{formatPesos(p.importe)}</span>
+                {cajeros.map((c) => (
+                  <li key={c.nombre}>
+                    <span>{sinCortes(c.nombre)}</span>
+                    <span className="texto-suave">{c.cantidad === 1 ? '1 venta' : `${c.cantidad} ventas`}</span>
+                    <span className="importe">{formatPesos(c.total)}</span>
                   </li>
                 ))}
               </ol>
             </section>
           )}
+          {tarjetaDevueltos}
         </div>
       )}
 

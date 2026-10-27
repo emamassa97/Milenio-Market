@@ -44,10 +44,11 @@ export function resumirVentas(ventas: Venta[]): ResumenVentas {
     devuelto += v.total - neto;
     for (const p of pagosDeVenta(v)) porMedio[p.medio] += p.monto;
     porHora[new Date(v.fecha).getHours()]! += neto;
-    // El descuento de la venta sale de la ganancia (los renglones siguen a precio de lista).
-    if (v.descuento) {
-      if (v.items.some((it) => it.costoUnitario > 0)) ganancia -= v.descuento;
-      else ventasSinCosto -= v.descuento;
+    // El descuento de la venta sale de la ganancia (los renglones siguen a precio de lista), en proporción a lo que quedó vendido.
+    if (v.descuento && v.total > 0) {
+      const descuento = Math.round((v.descuento * neto) / v.total);
+      if (v.items.some((it) => it.costoUnitario > 0)) ganancia -= descuento;
+      else ventasSinCosto -= descuento;
     }
     for (const it of itemsNetos(v)) {
       const sub = subtotal(it);
@@ -86,12 +87,46 @@ export interface FilaDevuelto {
   motivo: string;
 }
 
+export interface FilaCajero {
+  /** Nombre de quien cobró. */
+  nombre: string;
+  cantidad: number;
+  total: Pesos;
+  devuelto: Pesos;
+}
+
+/**
+ * Ventas por quien cobró, de mayor a menor. `nombres` traduce usuario → nombre, así la misma persona no sale dos veces
+ * (ventas con usuario y ventas viejas sin usuario, que llevan el nombre de quien abrió la caja).
+ * Las anuladas no cuentan; lo devuelto va aparte y ya está fuera de `total`.
+ */
+export function porCajero(ventas: Venta[], nombres: ReadonlyMap<string, string> = new Map()): FilaCajero[] {
+  const filas = new Map<string, FilaCajero>();
+  for (const v of ventas) {
+    if (v.anulada) continue;
+    const usuario = v.usuario?.trim();
+    const nombre = (usuario ? (nombres.get(usuario) ?? usuario) : v.cajero.trim()) || 'Sin nombre';
+    const clave = nombre.toLowerCase();
+    const fila = filas.get(clave) ?? { nombre, cantidad: 0, total: 0, devuelto: 0 };
+    const neto = totalNeto(v);
+    fila.cantidad++;
+    fila.total += neto;
+    fila.devuelto += v.total - neto;
+    filas.set(clave, fila);
+  }
+  return [...filas.values()].sort((a, b) => b.total - a.total);
+}
+
 /** Qué productos vuelven más (por lo que se devolvió en el período), para detectar lo que viene fallado o vencido. */
-export function masDevueltos(ventas: Venta[]): FilaDevuelto[] {
+export function masDevueltos(ventas: Venta[], desde = -Infinity, hasta = Infinity): FilaDevuelto[] {
   const filas = new Map<string, FilaDevuelto & { motivos: Map<string, number> }>();
   for (const v of ventas) {
     if (v.anulada) continue;
     for (const d of v.devoluciones ?? []) {
+      // Cuenta la fecha en que se devolvió, no la de la venta.
+      if (d.fecha < desde || d.fecha >= hasta) continue;
+      // Lo devuelto de verdad (puede ser menos que el precio de lista, por promo o descuento), repartido entre los renglones.
+      const lista = d.items.reduce((s, { indice, cantidad }) => s + cantidad * (v.items[indice]?.precioUnitario ?? 0), 0);
       for (const { indice, cantidad } of d.items) {
         const it = v.items[indice];
         if (!it || cantidad <= 0) continue;
@@ -99,7 +134,7 @@ export function masDevueltos(ventas: Venta[]): FilaDevuelto[] {
         const nombre = it.gramos ? it.nombre.replace(/ \([\d.,]+ k?g\)$/, '') : it.nombre;
         const fila = filas.get(clave) ?? { clave, nombre, unidades: 0, importe: 0, motivo: '', motivos: new Map<string, number>() };
         fila.unidades += cantidad;
-        fila.importe += Math.round(cantidad * it.precioUnitario);
+        fila.importe += lista > 0 ? Math.round((d.monto * cantidad * it.precioUnitario) / lista) : 0;
         const motivo = d.motivo.trim();
         if (motivo) fila.motivos.set(motivo, (fila.motivos.get(motivo) ?? 0) + cantidad);
         filas.set(clave, fila);

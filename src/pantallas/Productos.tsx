@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/csv';
 import { formatPesos } from '../dominio/dinero';
-import { cantidadDeTexto, codigoEscaneado } from '../dominio/entrada';
+import { cantidadDeTexto, codigoEscaneado, normalizarTexto as normalizar } from '../dominio/entrada';
 import { aplicarAumento, margen, precioParaMargen, type Redondeo } from '../dominio/precios';
 import type { Producto } from '../dominio/tipos';
 import { diasParaVencer } from '../dominio/reportes';
@@ -14,11 +14,15 @@ import {
   cargarPlanilla,
   guardarProducto,
   ingresarMercaderia,
+  resumenDeTurno,
+  turnoAbierto,
   type DatosProducto,
 } from '../datos/operaciones';
 import { CampoPesos, copiarTexto, descargarArchivo, Desplegable, errorATexto, Icono, Modal, sinCortes, useAvisar, Vacio } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
-import { pitido, useConsulta, useUnaVez } from '../ui/hooks';
+import { htmlListaPrecios, type FormatoLista } from '../ui/listaPrecios';
+import { imprimirHTML, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
+import { pitido, useBajando, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 
@@ -33,10 +37,6 @@ const FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'sinCodigo', nombre: 'Sin código' },
   { id: 'sinCosto', nombre: 'Sin costo' },
 ];
-
-function normalizar(t: string) {
-  return t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-}
 
 const necesitaReponer = (p: Producto) => p.stockMinimo > 0 && p.stock <= p.stockMinimo;
 const vencePronto = (p: Producto) => !!p.vence && diasParaVencer(p.vence) <= 15;
@@ -68,12 +68,14 @@ export function PantallaProductos() {
     | null
     | { tipo: 'editar'; producto?: Producto }
     | { tipo: 'aumento' }
+    | { tipo: 'lista'; reciénAumentados?: boolean }
     | { tipo: 'planilla' }
     | { tipo: 'stock'; producto: Producto }
     | { tipo: 'pedido' }
     | { tipo: 'compra' }
   >(null);
   const [menuAcciones, setMenuAcciones] = useState(false);
+  const bajando = useBajando();
 
   const categorias = useMemo(
     () => [...new Set(productos.map((p) => p.categoria).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
@@ -117,6 +119,7 @@ export function PantallaProductos() {
     { id: 'compra', texto: 'Llegó mercadería', icono: 'camion', deshabilitado: productos.length === 0 },
     { id: 'pedido', texto: 'Pedido al proveedor', icono: 'whatsapp', deshabilitado: productos.length === 0 },
     { id: 'aumento', texto: 'Aumentar precios', icono: 'porcentaje', deshabilitado: productos.length === 0 },
+    { id: 'lista', texto: 'Lista de precios', icono: 'impresora', deshabilitado: productos.length === 0 },
     { id: 'planilla', texto: 'Planilla Excel', icono: 'subir', deshabilitado: false },
   ] as const;
 
@@ -156,7 +159,7 @@ export function PantallaProductos() {
           </button>
         </div>
       </div>
-      <button type="button" className="fab" onClick={() => setModal({ tipo: 'editar' })} aria-label="Nuevo producto" title="Nuevo producto">
+      <button type="button" className={`fab ${bajando ? 'fab-oculto' : ''}`} onClick={() => setModal({ tipo: 'editar' })} aria-label="Nuevo producto" title="Nuevo producto">
         <Icono nombre="mas" tam={26} />
       </button>
       {menuAcciones && (
@@ -264,7 +267,18 @@ export function PantallaProductos() {
       )}
 
       {modal?.tipo === 'editar' && <EditarProducto producto={modal.producto} categorias={categorias} proveedores={proveedores} onCerrar={() => setModal(null)} />}
-      {modal?.tipo === 'aumento' && <AumentoPrecios productos={productos} visibles={visibles} categorias={categorias} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'aumento' && (
+        <AumentoPrecios
+          productos={productos}
+          visibles={visibles}
+          categorias={categorias}
+          onCerrar={() => setModal(null)}
+          onHecho={() => setModal({ tipo: 'lista', reciénAumentados: true })}
+        />
+      )}
+      {modal?.tipo === 'lista' && (
+        <ListaPrecios productos={productos} visibles={visibles} categorias={categorias} reciénAumentados={!!modal.reciénAumentados} onCerrar={() => setModal(null)} />
+      )}
       {modal?.tipo === 'planilla' && <Planilla productos={productos} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'stock' && <SumarStock producto={modal.producto} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'compra' && <IngresoMercaderia productos={productos} proveedores={proveedores} onCerrar={() => setModal(null)} />}
@@ -490,11 +504,14 @@ function AumentoPrecios({
   visibles,
   categorias,
   onCerrar,
+  onHecho,
 }: {
   productos: Producto[];
   visibles: Producto[];
   categorias: string[];
   onCerrar: () => void;
+  /** Con los precios ya cambiados: se ofrece imprimir la lista nueva. */
+  onHecho: () => void;
 }) {
   const avisar = useAvisar();
   const [alcance, setAlcance] = useState<string>(visibles.length < productos.length ? 'visibles' : 'todos');
@@ -518,7 +535,7 @@ function AumentoPrecios({
           try {
             const n = await aumentoMasivo(db, elegidos.map((p) => p.id!), pct, redondeo, costo);
             avisar({ texto: `Listo: ${n} precios ${pct > 0 ? 'aumentados' : 'bajados'} ${Math.abs(pct)}%.`, tipo: 'ok' });
-            onCerrar();
+            onHecho();
           } catch (err) {
             avisar({ texto: errorATexto(err), tipo: 'error' });
             setAplicando(false);
@@ -579,6 +596,79 @@ function AumentoPrecios({
         <button className="boton boton-primario boton-grande" type="submit" disabled={!valido || elegidos.length === 0 || aplicando}>
           {valido ? `${pct > 0 ? 'Aumentar' : 'Bajar'} ${Math.abs(pct)}% a ${elegidos.length} productos` : 'Aplicar a los precios'}
         </button>
+      </form>
+    </Modal>
+  );
+}
+
+/** Lista de precios o etiquetas para la góndola, para imprimir. */
+function ListaPrecios({
+  productos,
+  visibles,
+  categorias,
+  reciénAumentados,
+  onCerrar,
+}: {
+  productos: Producto[];
+  visibles: Producto[];
+  categorias: string[];
+  reciénAumentados: boolean;
+  onCerrar: () => void;
+}) {
+  const ticket = useConsulta(() => leerAjustesTicket(db), [], TICKET_INICIAL);
+  const [alcance, setAlcance] = useState<string>(visibles.length < productos.length ? 'visibles' : 'todos');
+  const [formato, setFormato] = useState<FormatoLista>('lista');
+  const elegidos =
+    alcance === 'todos' ? productos : alcance === 'visibles' ? visibles : productos.filter((p) => p.categoria === alcance);
+  const porHoja = formato === 'etiquetas' ? 24 : 90;
+  const hojas = Math.max(1, Math.ceil(elegidos.length / porHoja));
+  return (
+    <Modal titulo="Lista de precios" onCerrar={onCerrar}>
+      <form
+        className="formulario"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (elegidos.length === 0) return;
+          // El encabezado del ticket puede tener varias líneas (dirección, teléfono): el título es la primera.
+          imprimirHTML(htmlListaPrecios(elegidos, ticket.encabezado.split('\n')[0]?.trim() || 'Lista de precios', formato));
+        }}
+      >
+        {reciénAumentados && <p className="texto-suave">Los precios ya cambiaron. Imprimí la lista nueva para la góndola, así nadie cobra con la vieja.</p>}
+        <label className="campo">
+          <span className="campo-etiqueta">¿Qué productos?</span>
+          <select value={alcance} onChange={(e) => setAlcance(e.target.value)}>
+            <option value="todos">Todos ({productos.length})</option>
+            {visibles.length < productos.length && <option value="visibles">Los que estoy viendo ({visibles.length})</option>}
+            {categorias.map((c) => (
+              <option key={c} value={c}>
+                Categoría {c}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="campo">
+          <span className="campo-etiqueta">¿Cómo?</span>
+          <div className="segmentos" role="group" aria-label="Formato">
+            <button type="button" className={formato === 'lista' ? 'activo' : ''} aria-pressed={formato === 'lista'} onClick={() => setFormato('lista')}>
+              Lista por categoría
+            </button>
+            <button type="button" className={formato === 'etiquetas' ? 'activo' : ''} aria-pressed={formato === 'etiquetas'} onClick={() => setFormato('etiquetas')}>
+              Etiquetas para la góndola
+            </button>
+          </div>
+          <small className="texto-suave">
+            {formato === 'etiquetas' ? 'Hoja A4 con 24 etiquetas de 7 × 3,5 cm, para recortar.' : 'Hoja A4 en dos columnas, con las promos.'} {elegidos.length}{' '}
+            {elegidos.length === 1 ? 'producto' : 'productos'}, {hojas === 1 ? '1 hoja' : `unas ${hojas} hojas`}.
+          </small>
+        </div>
+        <div className="botonera">
+          <button type="button" className="boton" onClick={onCerrar}>
+            Cerrar
+          </button>
+          <button type="submit" className="boton boton-primario" disabled={elegidos.length === 0}>
+            <Icono nombre="impresora" tam={18} /> Imprimir
+          </button>
+        </div>
       </form>
     </Modal>
   );
@@ -860,6 +950,16 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
   const [pagado, setPagado] = useState<number | null>(null);
   const [enCurso, unaVez] = useUnaVez();
   const buscador = useRef<HTMLInputElement>(null);
+  // Lo que debería haber en la caja: pagar más que eso casi siempre es un cero de más (26.400 por 2.640).
+  const enCaja = useConsulta(
+    async () => {
+      const t = await turnoAbierto(db);
+      return t ? (await resumenDeTurno(db, t)).resumen.efectivoEsperado : null;
+    },
+    [],
+    null as number | null,
+  );
+  const [confirmarPasado, setConfirmarPasado] = useState(false);
   const encontrados = useMemo(() => {
     const t = normalizar(q.trim());
     if (t.length < 2) return [];
@@ -902,6 +1002,8 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
   const cant = (r: { cantidad: string; p: Producto }) => cantidadDeTexto(r.cantidad, !!r.p.porPeso);
   const total = renglones.reduce((s, r) => s + Math.round(cant(r) * (r.costo ?? 0)), 0);
   const montoCaja = pagado ?? total;
+  const sePasa = deCaja && !soloStock && enCaja !== null && montoCaja > enCaja;
+  useEffect(() => setConfirmarPasado(false), [montoCaja, deCaja]);
   const subidas = renglones.filter((r) => r.mantenerMargen && precioNuevo(r)).length;
   return (
     <Modal titulo="Llegó mercadería" onCerrar={onCerrar} ancho="ancho">
@@ -918,6 +1020,10 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
           e.preventDefault();
           if (deCaja && montoCaja <= 0) {
             avisar({ texto: 'Poné cuánto pagaste de la caja (o cargá el costo de cada producto).', tipo: 'error' });
+            return;
+          }
+          if (sePasa && !confirmarPasado) {
+            setConfirmarPasado(true);
             return;
           }
           unaVez(async () => {
@@ -1068,6 +1174,11 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
         {deCaja && (
           <div className="fila-campos">
             <CampoPesos etiqueta="Cuánto pagaste de la caja" valor={pagado ?? (total || null)} onCambio={setPagado} placeholder={String(total)} />
+            {sePasa && (
+              <p className="texto-alerta" role="alert">
+                {dueño ? `En la caja debería haber ${formatPesos(Math.max(0, enCaja))}: con eso queda en negativo.` : 'Es más de lo que hay en la caja.'} Si está bien, anotalo igual.
+              </p>
+            )}
           </div>
         )}
         <div className="vuelto">
@@ -1076,8 +1187,16 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
         </div>
         </>
         )}
-        <button type="submit" className="boton boton-primario boton-grande" disabled={enCurso || !renglones.some((r) => cant(r) > 0)}>
-          {soloStock ? 'Sumar al stock' : subidas > 0 ? `Guardar ingreso y subir ${subidas === 1 ? '1 precio' : `${subidas} precios`}` : 'Guardar ingreso'}
+        <button type="submit" className={`boton boton-grande ${sePasa && confirmarPasado ? 'boton-peligro' : 'boton-primario'}`} disabled={enCurso || !renglones.some((r) => cant(r) > 0)}>
+          {sePasa && confirmarPasado
+            ? 'Sí, anotar igual'
+            : sePasa
+              ? '¿Anotar igual?'
+              : soloStock
+                ? 'Sumar al stock'
+                : subidas > 0
+                  ? `Guardar ingreso y subir ${subidas === 1 ? '1 precio' : `${subidas} precios`}`
+                  : 'Guardar ingreso'}
         </button>
       </form>
     </Modal>

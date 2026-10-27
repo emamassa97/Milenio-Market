@@ -10,6 +10,8 @@ export type Sesion = Pick<Usuario, 'usuario' | 'nombre' | 'admin'>;
 type Guardada = Sesion & { vence?: number };
 
 const LLAVE = 'milenio.sesion';
+// Marca de "en esta pestaña entra otra persona": no se toma la sesión recordada del equipo hasta que alguien entre.
+const LLAVE_OTRA = 'milenio.sesion.otra';
 const HORA = 3_600_000;
 const DURACION_EMPLEADO = 30 * 24 * HORA;
 const DURACION_DUEÑO = 12 * HORA;
@@ -41,8 +43,11 @@ function leer(): Guardada | null {
         sessionStorage.removeItem(LLAVE);
         return null;
       }
+      // Si en otra pestaña entró otra persona con "Recordarme", esta pestaña sigue siendo de quien era (hasta su vencimiento).
+      if (larga.usuario !== s.usuario) return s.vence > Date.now() ? s : null;
       return larga;
     }
+    if (sessionStorage.getItem(LLAVE_OTRA)) return null;
     const larga = leerLarga();
     if (!larga) return null;
     // El empleado renueva el plazo cada vez que abre; el dueño no.
@@ -55,29 +60,37 @@ function leer(): Guardada | null {
   }
 }
 
-const Contexto = createContext<{ sesion: Sesion | null; entrar: (u: Sesion, recordar?: boolean) => void; salir: () => void }>({
+const Contexto = createContext<{ sesion: Sesion | null; entrar: (u: Sesion, recordar?: boolean) => void; salir: () => void; cambiar: () => void }>({
   sesion: null,
   entrar: () => {},
   salir: () => {},
+  cambiar: () => {},
 });
+
+/** Saca la sesión recordada del equipo sólo si es de este usuario: la de otra persona (en otra pestaña) no se toca. */
+function olvidarSiEsDe(usuario: string) {
+  if (leerLarga()?.usuario === usuario) localStorage.removeItem(LLAVE);
+}
 
 export function ProveedorSesion({ children }: { children: ReactNode }) {
   const [sesion, setSesion] = useState<Guardada | null>(leer);
   const entrar = (u: Sesion, recordar?: boolean) => {
-    // Si no se dice, se mantiene lo que había (p. ej. cuando se refresca el nombre): recordada sólo si sigue guardada en el equipo.
+    // Si no se dice, se mantiene lo que había (p. ej. cuando se refresca el nombre): recordada sólo si el guardado en el equipo es este mismo usuario.
     let larga = recordar;
     if (larga === undefined) {
       try {
-        larga = localStorage.getItem(LLAVE) !== null;
+        larga = leerLarga()?.usuario === u.usuario;
       } catch {
         larga = false;
       }
     }
     const s: Guardada = { usuario: u.usuario, nombre: u.nombre, admin: u.admin, ...(larga ? { vence: vencimiento(u.admin) } : {}) };
     try {
+      sessionStorage.removeItem(LLAVE_OTRA);
       sessionStorage.setItem(LLAVE, JSON.stringify(s));
       if (larga) localStorage.setItem(LLAVE, JSON.stringify(s));
-      else localStorage.removeItem(LLAVE);
+      // Entrar sin "Recordarme" olvida la propia sesión recordada; la de otra persona queda.
+      else if (recordar === false) olvidarSiEsDe(u.usuario);
     } catch {
       /* sin almacenamiento: la sesión dura hasta recargar */
     }
@@ -87,27 +100,46 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     // La venta armada y las que están en espera son del kiosco, no del usuario: quedan para el que sigue.
     try {
       sessionStorage.removeItem(LLAVE);
-      localStorage.removeItem(LLAVE);
+      if (sesion) olvidarSiEsDe(sesion.usuario);
     } catch {
       /* nada */
     }
     setSesion(null);
   };
-  // Salir en una pestaña cierra la sesión recordada en todas las demás.
+  // "Cambiar de usuario": esta pestaña pasa a la pantalla de ingreso sin tocar la sesión recordada del equipo (la otra persona sigue en su pestaña).
+  const cambiar = () => {
+    try {
+      sessionStorage.removeItem(LLAVE);
+      sessionStorage.setItem(LLAVE_OTRA, '1');
+    } catch {
+      /* nada */
+    }
+    setSesion(null);
+  };
+  // Salir en una pestaña cierra la sesión recordada de esa misma persona en todas las demás.
   useEffect(() => {
     const cambio = (e: StorageEvent) => {
       if (e.key !== LLAVE || e.newValue !== null) return;
+      let quien: string | null = null;
       try {
-        sessionStorage.removeItem(LLAVE);
+        quien = e.oldValue ? (JSON.parse(e.oldValue) as Guardada).usuario : null;
       } catch {
-        /* nada */
+        quien = null;
       }
-      setSesion((s) => (s?.vence ? null : s));
+      setSesion((s) => {
+        if (!s?.vence || (quien !== null && quien !== s.usuario)) return s;
+        try {
+          sessionStorage.removeItem(LLAVE);
+        } catch {
+          /* nada */
+        }
+        return null;
+      });
     };
     window.addEventListener('storage', cambio);
     return () => window.removeEventListener('storage', cambio);
   }, []);
-  return <Contexto.Provider value={{ sesion, entrar, salir }}>{children}</Contexto.Provider>;
+  return <Contexto.Provider value={{ sesion, entrar, salir, cambiar }}>{children}</Contexto.Provider>;
 }
 
 export const useSesion = () => useContext(Contexto);

@@ -34,7 +34,7 @@ export async function leerAjustesTicket(db: BaseKiosco): Promise<AjustesTicket> 
   };
 }
 
-const escapar = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+export const escapar = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 export function htmlTicket(venta: Venta, a: AjustesTicket): string {
   const fecha = new Date(venta.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -83,6 +83,11 @@ td { vertical-align: top; padding: 1px 0; }
 }
 
 export function imprimirTicket(venta: Venta, a: AjustesTicket) {
+  imprimirHTML(htmlTicket(venta, a));
+}
+
+/** Imprime un HTML completo desde un iframe escondido (sin scripts). Sirve para el ticket y para la lista de precios. */
+export function imprimirHTML(html: string) {
   const marco = document.createElement('iframe');
   marco.setAttribute('aria-hidden', 'true');
   // Sin scripts: aunque algún texto viniera con HTML, no se ejecuta nada.
@@ -91,7 +96,7 @@ export function imprimirTicket(venta: Venta, a: AjustesTicket) {
   document.body.appendChild(marco);
   const doc = marco.contentDocument!;
   doc.open();
-  doc.write(htmlTicket(venta, a));
+  doc.write(html);
   doc.close();
   const imprimir = () => {
     const quitar = () => marco.remove();

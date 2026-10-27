@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { pagosDeVenta } from '../dominio/carrito';
 import { describirItems, describirPagos, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
-import { telefonoWhatsApp } from '../dominio/entrada';
+import { telefonoWhatsApp, normalizarTexto as normalizar } from '../dominio/entrada';
 import { deudaDesde, saldoCliente } from '../dominio/fiado';
 import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type MovimientoFiado, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { anularPagoFiado, anularVenta, guardarCliente, registrarPagoFiado, turnoAbierto } from '../datos/operaciones';
 import { CampoPesos, errorATexto, fechaCorta, ICONO_MEDIO, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
-import { useConsulta, useUnaVez } from '../ui/hooks';
+import { useBajando, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 
 interface Fila {
@@ -21,10 +21,6 @@ interface Fila {
 function desdeCuando(desde: number): string {
   const d = Math.floor((Date.now() - desde) / 86400000);
   return d <= 0 ? 'desde hoy' : d === 1 ? 'desde ayer' : `desde hace ${d} días`;
-}
-
-function normalizar(t: string) {
-  return t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
 export function PantallaClientes() {
@@ -55,6 +51,7 @@ export function PantallaClientes() {
     new Map<number, Venta>(),
   );
   const [modal, setModal] = useState<null | { tipo: 'cliente'; cliente?: Cliente } | { tipo: 'pago'; fila: Fila }>(null);
+  const bajando = useBajando();
   const visibles = useMemo(() => filas.filter((f) => normalizar(f.cliente.nombre).includes(normalizar(q.trim()))), [filas, q]);
   const total = filas.reduce((s, f) => s + Math.max(0, f.saldo), 0);
   const deudores = filas.filter((f) => f.saldo > 0).length;
@@ -87,7 +84,7 @@ export function PantallaClientes() {
           <Icono nombre="mas" tam={18} /> Nuevo cliente
         </button>
       </div>
-      <button type="button" className="fab" onClick={() => setModal({ tipo: 'cliente' })} aria-label="Nuevo cliente" title="Nuevo cliente">
+      <button type="button" className={`fab ${bajando ? 'fab-oculto' : ''}`} onClick={() => setModal({ tipo: 'cliente' })} aria-label="Nuevo cliente" title="Nuevo cliente">
         <Icono nombre="mas" tam={26} />
       </button>
 
@@ -281,7 +278,18 @@ function EditarCliente({ cliente, onCerrar, onGuardado }: { cliente?: Cliente; o
 }
 
 /** Un cliente paga (todo o parte de) lo que debe. Se usa acá y desde la caja ("Cobrar un fiado"). */
-export function RegistrarPago({ cliente, saldo, onCerrar }: { cliente: Cliente; saldo: number; onCerrar: () => void }) {
+export function RegistrarPago({
+  cliente,
+  saldo,
+  onCerrar,
+  onHecho,
+}: {
+  cliente: Cliente;
+  saldo: number;
+  onCerrar: () => void;
+  /** Con el pago anotado: cuánto, por dónde y cuánto le queda (negativo si quedó a favor). */
+  onHecho?: (r: { monto: number; medio: Exclude<MedioPago, 'fiado'>; resto: number }) => void;
+}) {
   const avisar = useAvisar();
   const [monto, setMonto] = useState<number | null>(saldo > 0 ? saldo : null);
   const [medio, setMedio] = useState<Exclude<MedioPago, 'fiado'>>('efectivo');
@@ -297,6 +305,7 @@ export function RegistrarPago({ cliente, saldo, onCerrar }: { cliente: Cliente; 
             await registrarPagoFiado(db, cliente.id!, monto ?? 0, medio);
             const resto = saldo - (monto ?? 0);
             avisar({ texto: resto > 0 ? `Anotado. Le quedan ${formatPesos(resto)}.` : 'Anotado. ¡Quedó al día!', tipo: 'ok' });
+            onHecho?.({ monto: monto ?? 0, medio, resto });
             onCerrar();
           } catch (err) {
             avisar({ texto: errorATexto(err), tipo: 'error' });

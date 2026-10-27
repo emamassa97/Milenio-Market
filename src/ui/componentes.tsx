@@ -62,7 +62,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { CANTIDAD_MAXIMA } from '../dominio/carrito';
+import { CANTIDAD_MAXIMA, RENGLON_MAXIMO } from '../dominio/carrito';
 import { formatPesos, parsePesos, textoTecleado } from '../dominio/dinero';
 import { codigoEscaneado } from '../dominio/entrada';
 import { ErrorKiosco } from '../datos/operaciones';
@@ -189,6 +189,8 @@ export function CampoPesos({
   id,
   ariaLabel,
   onKeyDown,
+  maximo = RENGLON_MAXIMO,
+  onEscaneo,
 }: {
   valor: number | null;
   onCambio: (v: number | null) => void;
@@ -199,15 +201,48 @@ export function CampoPesos({
   id?: string;
   ariaLabel?: string;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  /** Más que esto no se aplica: casi siempre es el lector de códigos con el cursor acá. */
+  maximo?: number;
+  /** Qué hacer con un código del lector; devuelve true si se hizo cargo. */
+  onEscaneo?: (codigo: string) => boolean | void;
 }) {
+  const avisar = useAvisar();
   const [texto, setTexto] = useState(valor === null ? '' : formatearEdicion(valor));
   const ultimo = useRef(valor);
+  // Lo que había al entrar al campo: si lo tecleado rebota, se vuelve a eso (no a un parcial de lo que tipeó el lector).
+  const alEntrar = useRef(valor);
   useEffect(() => {
     if (valor !== ultimo.current) {
       setTexto(valor === null ? '' : formatearEdicion(valor));
       ultimo.current = valor;
     }
   }, [valor]);
+  const pasado = (t: string) => {
+    const v = parsePesos(textoTecleado(t));
+    return v !== null && v > maximo;
+  };
+  // Un monto imposible vuelve al valor de antes; si era un código de barras, se suma como producto o se avisa.
+  const rebotar = (t: string) => {
+    const digitos = t.replace(/\D/g, '');
+    let antes = alEntrar.current;
+    let codigo = codigoEscaneado(digitos);
+    // El lector tipeó a continuación de un monto ya escrito ("5.000" + código de 13 cifras): el monto queda y el código se suma aparte.
+    if (!codigo && !t.includes(',') && digitos.length > 13) {
+      const cola = codigoEscaneado(digitos.slice(-13));
+      const cabeza = Number(digitos.slice(0, -13));
+      if (cola && cabeza <= maximo) {
+        codigo = cola;
+        antes = cabeza;
+      }
+    }
+    ultimo.current = antes;
+    setTexto(antes === null ? '' : formatearEdicion(antes));
+    onCambio(antes);
+    if (codigo) {
+      if (onEscaneo && onEscaneo(codigo) !== false) return;
+      avisar({ texto: 'Eso fue el lector, no un monto: escaneá el producto en el buscador de la caja.', tipo: 'error' });
+    } else avisar({ texto: `Como mucho ${formatPesos(maximo)}.`, tipo: 'error' });
+  };
   const input = (
     <div className={`campo-pesos ${grande ? 'campo-pesos-grande' : ''}`}>
       <span aria-hidden="true">$</span>
@@ -219,14 +254,36 @@ export function CampoPesos({
         placeholder={placeholder ?? '0'}
         aria-label={ariaLabel ?? etiqueta}
         value={texto}
-        onFocus={(e) => e.currentTarget.select()}
-        onKeyDown={onKeyDown}
+        onFocus={(e) => {
+          alEntrar.current = valor;
+          e.currentTarget.select();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && pasado(e.currentTarget.value)) {
+            e.preventDefault();
+            e.stopPropagation();
+            rebotar(e.currentTarget.value);
+            return;
+          }
+          onKeyDown?.(e);
+        }}
+        onBlur={(e) => {
+          if (pasado(e.currentTarget.value)) rebotar(e.currentTarget.value);
+        }}
         onChange={(e) => {
           const crudo = e.target.value;
+          // Pasado el máximo (el lector tipeando su código) se muestra lo escrito pero no se aplica: al Enter o al salir rebota.
+          if (pasado(crudo)) {
+            setTexto(crudo);
+            return;
+          }
+          const conComa = crudo.includes(',');
+          // Al borrar ("15.000" → "15.00") el punto era de miles: se saca y queda 1.500.
+          const borrando = crudo.length < texto.length;
           // Los puntos de miles que puso el campo no cuentan al interpretar: "1.500" + "0" es 15.000.
-          const v = parsePesos(textoTecleado(crudo));
+          const v = parsePesos(borrando && !conComa ? crudo.replace(/\./g, '') : textoTecleado(crudo));
           // Los miles se separan mientras se escribe ("2000" → "2.000"); con coma, o con un punto recién tipeado, se deja tal cual.
-          setTexto(v !== null && !crudo.includes(',') && !/\.\d{0,2}$/.test(crudo) ? formatearEdicion(v) : crudo);
+          setTexto(v !== null && !conComa && (borrando || !/\.\d{0,2}$/.test(crudo)) ? formatearEdicion(v) : crudo);
           ultimo.current = v;
           onCambio(v);
         }}
@@ -261,6 +318,7 @@ export function CampoCantidad({
   minimo = 0,
   vacioEnCero = false,
   onEscaneo,
+  enVivo = true,
 }: {
   valor: number;
   onCambio: (n: number) => void;
@@ -272,6 +330,8 @@ export function CampoCantidad({
   vacioEnCero?: boolean;
   /** Qué hacer con un código del lector; devuelve true si se hizo cargo. */
   onEscaneo?: (texto: string) => boolean;
+  /** Con `false`, la cantidad se aplica recién al Enter o al salir del campo (así "1" de "12" no toca la venta). */
+  enVivo?: boolean;
 }) {
   const avisar = useAvisar();
   const mostrar = (n: number) => (n === 0 && vacioEnCero ? '' : String(n));
@@ -285,11 +345,25 @@ export function CampoCantidad({
   const terminar = (crudo: string) => {
     setConFoco(false);
     if (crudo.length > largo) {
+      // "12" y enseguida el lector: la cantidad va adelante y el código (13 cifras) atrás; se aplican las dos cosas.
+      if (onEscaneo && crudo.length > 13 && crudo.length - 13 <= largo) {
+        const cantidad = Number(crudo.slice(0, -13));
+        const codigo = crudo.slice(-13);
+        if (cantidad >= Math.max(1, minimo) && cantidad <= max) {
+          // Primero la cantidad de este renglón; después lo escaneado (que puede reacomodar los renglones).
+          onCambio(cantidad);
+          setTexto(mostrar(cantidad));
+          if (onEscaneo(codigo)) {
+            avisar({ texto: `Quedaron ${cantidad}, y lo que pasó el lector se sumó aparte.`, tipo: 'ok' });
+            return;
+          }
+        }
+      }
       onCambio(antes.current);
       setTexto(mostrar(antes.current));
       if (onEscaneo && onEscaneo(crudo)) return;
       avisar({
-        texto: codigoEscaneado(crudo) ? 'Eso fue el lector, no una cantidad: acá va cuántos hay.' : `Como mucho ${max}.`,
+        texto: codigoEscaneado(crudo) ? 'Pasaste el lector con el cursor acá: en este campo va cuántos hay.' : `Como mucho ${max}.`,
         tipo: 'error',
       });
       return;
@@ -315,7 +389,7 @@ export function CampoCantidad({
         const t = e.target.value.replace(/\D/g, '');
         setTexto(t);
         const n = Number(t);
-        if (t.length <= largo && n >= minimo) onCambio(Math.min(n, max));
+        if (enVivo && t.length <= largo && n >= minimo) onCambio(Math.min(n, max));
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {

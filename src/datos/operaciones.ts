@@ -45,6 +45,7 @@ export async function turnoAbierto(db: BaseKiosco): Promise<Turno | undefined> {
 /** `usuario`: quién inició sesión y abre la caja (opcional). */
 export async function abrirTurno(db: BaseKiosco, cajero: string, fondoInicial: Pesos, usuario?: string): Promise<number> {
   if (fondoInicial < 0) throw new ErrorKiosco('El fondo inicial no puede ser negativo.');
+  if (fondoInicial > RENGLON_MAXIMO) throw new ErrorKiosco('Ese cambio es demasiado alto: parece un código de barras.');
   return db.transaction('rw', db.turnos, async () => {
     if (await turnoAbierto(db)) throw new ErrorKiosco('Ya hay una caja abierta.');
     return db.turnos.add({
@@ -670,6 +671,7 @@ export async function registrarPagoFiado(
   nota = '',
 ): Promise<number> {
   if (!(monto > 0)) throw new ErrorKiosco('Poné un monto mayor a cero.');
+  if (monto > RENGLON_MAXIMO) throw new ErrorKiosco('Ese monto es demasiado alto: parece un código de barras.');
   return db.transaction('rw', [db.turnos, db.clientes, db.movimientosFiado], async () => {
     if (!(await db.clientes.get(clienteId))) throw new ErrorKiosco('Ese cliente ya no existe.');
     const turno = await turnoAbierto(db);

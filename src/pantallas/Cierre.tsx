@@ -7,7 +7,8 @@ import { normalizarTexto } from '../dominio/entrada';
 import { nombreMedio, type Cliente, type MovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
 import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
 import { db } from '../datos/db';
-import { anularVenta, cerrarTurno, registrarMovimientoCaja, resumenDeTurno, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
+import { abrirTurno, anularVenta, cerrarTurno, registrarMovimientoCaja, resumenDeTurno, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
+import { leerUsuarios, type Usuario } from '../datos/usuarios';
 import { CampoCantidad, CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
@@ -110,7 +111,12 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
 // Encontrar una venta de cualquier día por producto o por importe exacto (ticket, devolución).
 function BuscarVentas() {
   const [q, setQ] = useState('');
-  const t = q.trim();
+  // Se busca recién cuando se deja de tipear un momento: recorre las ventas de la más nueva a la más vieja.
+  const [t, setT] = useState('');
+  useEffect(() => {
+    const id = window.setTimeout(() => setT(q.trim()), 300);
+    return () => window.clearTimeout(id);
+  }, [q]);
   const resultados = useConsulta(
     async () => {
       if (t.length < 2) return [] as Venta[];
@@ -147,7 +153,9 @@ function BuscarVentas() {
 function ventasSinCobrar(): string | null {
   const espera = resumenEspera(leerGuardado<unknown>(LLAVE_ESPERA, []));
   const guardado = leerGuardado<Partial<Carrito>>(LLAVE_CARRITO, carritoVacio);
-  const carrito: Carrito = Array.isArray(guardado?.items) ? { items: guardado.items } : carritoVacio;
+  const carrito: Carrito = Array.isArray(guardado?.items)
+    ? { items: guardado.items, ...(typeof guardado.descuento === 'number' ? { descuento: guardado.descuento } : {}) }
+    : carritoVacio;
   if (espera.cantidad === 0 && carrito.items.length === 0) return null;
   const partes = [espera.cantidad > 0 && `${espera.texto.charAt(0).toLowerCase()}${espera.texto.slice(1)} (${formatPesos(espera.total)})`, carrito.items.length > 0 && `una venta sin cobrar (${formatPesos(totalCarrito(carrito))})`].filter(Boolean);
   return `Hay ${partes.join(' y ')}.`;
@@ -170,13 +178,16 @@ function useVentasSinCobrar(): string | null {
   return texto;
 }
 
-function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado: (r: Resultado) => void; irACaja: () => void }) {
+function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado: (r: Resultado | null) => void; irACaja: () => void }) {
   const avisar = useAvisar();
   const { turno, ventas, movimientos, resumen } = datos;
   const [conteo, setConteo] = useState<Record<string, number>>({});
   const [nota, setNota] = useState('');
   const [movimiento, setMovimiento] = useState(false);
+  const [pasar, setPasar] = useState(false);
   const [confirmar, setConfirmar] = useState(false);
+  // Para "pasarle la caja a otro" hace falta que haya otra persona cargada.
+  const usuarios = useConsulta(() => leerUsuarios(db), [], [] as Usuario[]);
   const [cerrando, unaVez] = useUnaVez();
   const { sesion } = useSesion();
   // El empleado cuenta a ciegas: si viera cuánto debería haber, podría acomodar el número.
@@ -221,6 +232,8 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
       });
       await cerrarTurno(db, conteo, nota, sesion?.usuario);
     } catch (e) {
+      // El resultado se había mostrado por adelantado para que no parpadee "caja cerrada"; si falló, se saca.
+      onCerrado(null);
       avisar({ texto: errorATexto(e), tipo: 'error' });
     }
     });
@@ -371,7 +384,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
               ))}
               <div className="billete">
                 <span>Monedas</span>
-                <CampoPesos valor={conteo['monedas'] || null} onCambio={(v) => setConteo({ ...conteo, monedas: Math.max(0, v ?? 0) })} ariaLabel="Monedas y otros" />
+                <CampoPesos valor={conteo['monedas'] || null} onCambio={(v) => setConteo({ ...conteo, monedas: Math.max(0, v ?? 0) })} ariaLabel="Monedas y otros" maximo={1_000_000} />
                 <span />
               </div>
             </div>
@@ -394,11 +407,105 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
             <button type="button" className="boton boton-texto boton-retiro" onClick={() => setMovimiento(true)}>
               <Icono nombre="billetera" tam={16} /> Anotar un retiro o gasto
             </button>
+            {usuarios.some((u) => u.usuario !== sesion?.usuario) && (
+              <button type="button" className="boton boton-texto boton-retiro" onClick={() => setPasar(true)} title="Cambio de turno: se cierra esta caja y se abre la siguiente con lo contado">
+                <Icono nombre="usuario" tam={16} /> Cerrar y pasarle la caja a otro
+              </button>
+            )}
           </div>
         </aside>
       </div>
       {movimiento && <NuevoMovimiento onCerrar={() => setMovimiento(false)} />}
+      {pasar && (
+        <PasarCaja
+          turno={turno}
+          usuarios={usuarios}
+          conteo={conteo}
+          nota={nota}
+          contado={contoAlgo ? contado : null}
+          esperado={resumen.efectivoEsperado}
+          onCerrar={() => setPasar(false)}
+          onHecho={irACaja}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * Cambio de turno en un paso: se cierra la caja con lo contado y se abre la siguiente enseguida, con ese mismo
+ * efectivo como cambio y a nombre de quien sigue, sin volver a tipear nada.
+ */
+function PasarCaja({
+  turno,
+  usuarios,
+  conteo,
+  nota,
+  contado,
+  esperado,
+  onCerrar,
+  onHecho,
+}: {
+  turno: Turno;
+  usuarios: Usuario[];
+  conteo: Record<string, number>;
+  nota: string;
+  contado: number | null;
+  esperado: number;
+  onCerrar: () => void;
+  onHecho: () => void;
+}) {
+  const avisar = useAvisar();
+  const { sesion } = useSesion();
+  const dueño = useEsDueño();
+  const otros = usuarios.filter((u) => u.usuario !== sesion?.usuario);
+  const [quien, setQuien] = useState(otros[0]?.usuario ?? '');
+  // Arranca con lo que quedó en la caja: lo contado o, sin conteo, lo que debería haber.
+  const [fondo, setFondo] = useState<number | null>(Math.max(0, contado ?? esperado));
+  const [enCurso, unaVez] = useUnaVez();
+  const elegido = usuarios.find((u) => u.usuario === quien);
+  return (
+    <Modal titulo="Pasar la caja" onCerrar={onCerrar}>
+      <form
+        className="formulario"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!elegido) return;
+          unaVez(async () => {
+            try {
+              const cerrado = await cerrarTurno(db, conteo, nota, sesion?.usuario);
+              await abrirTurno(db, elegido.nombre, fondo ?? 0, elegido.usuario);
+              const dif = cerrado.contado !== null && cerrado.esperado !== null ? cerrado.contado - cerrado.esperado : null;
+              // La diferencia sólo se le dice al dueño: el empleado cuenta a ciegas.
+              const comoCerro = dif === null ? ' sin contar' : !dueño ? '' : dif === 0 ? ' (dio justo)' : dif > 0 ? ` (sobraron ${formatPesos(dif)})` : ` (faltaron ${formatPesos(-dif)})`;
+              avisar({ texto: `Caja de ${turno.cajero} cerrada${comoCerro}. Abierta para ${elegido.nombre} con ${formatPesos(fondo ?? 0)}.`, tipo: 'ok' });
+              onCerrar();
+              onHecho();
+            } catch (err) {
+              avisar({ texto: errorATexto(err), tipo: 'error' });
+            }
+          });
+        }}
+      >
+        <p className="texto-suave">
+          Se cierra la caja de {turno.cajero} {contado === null ? 'sin contar' : `con los ${formatPesos(contado)} contados`} y se abre una nueva enseguida, sin volver a tipear el cambio.
+        </p>
+        <label className="campo">
+          <span className="campo-etiqueta">¿Quién sigue?</span>
+          <select value={quien} onChange={(e) => setQuien(e.target.value)}>
+            {otros.map((u) => (
+              <option key={u.usuario} value={u.usuario}>
+                {u.nombre}
+              </option>
+            ))}
+          </select>
+        </label>
+        <CampoPesos etiqueta="Cambio con el que arranca" valor={fondo} onCambio={setFondo} grande />
+        <button type="submit" className="boton boton-primario boton-grande" disabled={!elegido || enCurso || fondo === null || fondo < 0}>
+          {elegido ? `Cerrar y abrir para ${elegido.nombre}` : 'Cerrar y abrir'}
+        </button>
+      </form>
+    </Modal>
   );
 }
 
