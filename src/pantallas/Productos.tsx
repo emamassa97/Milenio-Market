@@ -147,9 +147,14 @@ export function PantallaProductos() {
             <Icono nombre="mas" tam={18} /> Nuevo producto
           </button>
         </div>
-        <button type="button" className="boton boton-chico solo-movil" aria-expanded={menuAcciones} onClick={() => setMenuAcciones(true)}>
-          <Icono nombre="menu" tam={18} /> Más acciones
-        </button>
+        <div className="botonera solo-movil">
+          <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'compra' })} disabled={productos.length === 0}>
+            <Icono nombre="camion" tam={18} /> Llegó mercadería
+          </button>
+          <button type="button" className="boton boton-chico" aria-expanded={menuAcciones} onClick={() => setMenuAcciones(true)}>
+            <Icono nombre="menu" tam={18} /> Más acciones
+          </button>
+        </div>
       </div>
       <button type="button" className="fab" onClick={() => setModal({ tipo: 'editar' })} aria-label="Nuevo producto" title="Nuevo producto">
         <Icono nombre="mas" tam={26} />
@@ -471,8 +476,9 @@ function SumarStock({ producto, onCerrar }: { producto: Producto; onCerrar: () =
             </button>
           ))}
         </div>
+        <p className="texto-suave texto-centrado">{n ? `Van a quedar ${quedan}${unidad}.` : `Quedan ${textoStock(producto)}.`}</p>
         <button className="boton boton-primario boton-grande" type="submit" disabled={!n || enCurso || Math.abs(n) > 99999}>
-          {n >= 0 ? `Sumar ${n}${unidad}` : `Restar ${-n}${unidad}`}: quedan {quedan}{unidad}
+          {!n ? 'Sumar al stock' : n > 0 ? `Sumar ${n}${unidad}` : `Restar ${-n}${unidad}`}
         </button>
       </form>
     </Modal>
@@ -569,8 +575,9 @@ function AumentoPrecios({
             {elegidos.length > 6 && <p className="texto-suave">y {elegidos.length - 6} más.</p>}
           </div>
         )}
+        {!valido && <p className="texto-suave texto-centrado">Poné el porcentaje para ver cómo quedan los precios.</p>}
         <button className="boton boton-primario boton-grande" type="submit" disabled={!valido || elegidos.length === 0 || aplicando}>
-          {valido ? `${pct > 0 ? 'Aumentar' : 'Bajar'} ${Math.abs(pct)}% a ${elegidos.length} productos` : 'Poné el porcentaje'}
+          {valido ? `${pct > 0 ? 'Aumentar' : 'Bajar'} ${Math.abs(pct)}% a ${elegidos.length} productos` : 'Aplicar a los precios'}
         </button>
       </form>
     </Modal>
@@ -607,16 +614,19 @@ function Planilla({ productos, onCerrar }: { productos: Producto[]; onCerrar: ()
             <p className="texto-suave">
               En Excel, <em>Guardar como → CSV</em>. Columnas: <strong>nombre</strong> y <strong>precio</strong> (obligatorias), y si querés código, costo, stock, categoría y proveedor. Si el código ya existe, se actualiza el precio y no se toca el stock.
             </p>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              aria-label="Elegir planilla CSV"
-              onChange={async (e) => {
-                const archivo = e.target.files?.[0];
-                if (!archivo) return;
-                setResultado(importarCsv(await archivo.text()));
-              }}
-            />
+            <label className="boton">
+              <Icono nombre="subir" tam={18} /> Elegir planilla CSV
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                hidden
+                onChange={async (e) => {
+                  const archivo = e.target.files?.[0];
+                  if (!archivo) return;
+                  setResultado(importarCsv(await archivo.text()));
+                }}
+              />
+            </label>
           </div>
         </div>
         {resultado && (

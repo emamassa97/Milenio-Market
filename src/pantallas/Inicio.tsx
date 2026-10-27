@@ -6,7 +6,8 @@ import { saldoCliente } from '../dominio/fiado';
 import { paraReponer, porVencer, resumirVentas } from '../dominio/reportes';
 import type { Evento, MovimientoCaja, Producto, Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
-import { turnoAbierto } from '../datos/operaciones';
+import { leerAjuste, turnoAbierto } from '../datos/operaciones';
+import { estadoNube } from '../datos/nube';
 import { hora, Icono, sinCortes } from '../ui/componentes';
 import { useConsulta } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
@@ -39,7 +40,7 @@ function variacion(hoy: number, antes: number): { texto: string; tono: 'sube' | 
   return { texto: `${pct > 0 ? '+' : ''}${pct}%`, tono: pct > 0 ? 'sube' : 'baja' };
 }
 
-export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre' | 'clientes' | 'reportes') => void }) {
+export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre' | 'clientes' | 'reportes' | 'ajustes') => void }) {
   const { sesion } = useSesion();
   const hace7 = inicioDelDia(-6);
   const ventas = useConsulta(() => db.ventas.where('fecha').aboveOrEqual(inicioDelDia(-7)).toArray(), [], [] as Venta[]);
@@ -68,6 +69,17 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
     { cantidad: 0, monto: 0, porUsuario: [] as [string, number][], lista: [] as Evento[] },
   );
   const [verCanceladas, setVerCanceladas] = useState(false);
+  // Sin copia en la nube, que no pasen más de 7 días sin bajar una copia (si ya hubo algún turno).
+  const copia = useConsulta<{ dias: number | null } | null>(
+    async () => {
+      const [ultima, nube, turnos] = await Promise.all([leerAjuste<number | null>(db, 'ultimaCopia', null), estadoNube(db), db.turnos.count()]);
+      if (nube.activa || turnos === 0) return null;
+      const dias = ultima ? Math.floor((Date.now() - ultima) / DIA) : null;
+      return dias === null || dias > 7 ? { dias } : null;
+    },
+    [],
+    null,
+  );
   // Productos abre ya filtrado con lo que se tocó acá.
   const irAProductos = (filtro: 'reponer' | 'vencen') => {
     try {
@@ -339,6 +351,19 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
                     ))}
                   </ul>
                 )}
+              </li>
+            )}
+            {copia && (
+              <li>
+                <button type="button" onClick={() => ir('ajustes')}>
+                  <span className="alerta-icono alerta-aviso">
+                    <Icono nombre="descargar" tam={18} />
+                  </span>
+                  <span>
+                    <strong>{copia.dias === null ? 'Todavía no bajaste ninguna copia de seguridad' : `Hace ${copia.dias} días que no bajás una copia de seguridad`}</strong>
+                    <small>Si la compu se rompe, con la copia recuperás todo. Se descarga desde Ajustes</small>
+                  </span>
+                </button>
               </li>
             )}
             {devueltoHoy > 0 && (

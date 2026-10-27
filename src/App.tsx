@@ -17,6 +17,7 @@ import { PantallaIngreso } from './pantallas/Ingreso';
 import { ProveedorSesion, useSesion } from './ui/sesion';
 import { useConexion, useCopiaEnLaNube, useEstadoNube } from './ui/hooks';
 import { revalidarSesion } from './datos/usuarios';
+import { turnoAbierto } from './datos/operaciones';
 
 const PANTALLAS = [
   { id: 'caja', nombre: 'Caja', corto: 'Caja', icono: 'caja', dueño: false },
@@ -91,6 +92,7 @@ function Sistema() {
     const cambio = () => {
       setHash(leerHash());
       setMenuMas(false);
+      window.scrollTo(0, 0);
     };
     window.addEventListener('hashchange', cambio);
     return () => window.removeEventListener('hashchange', cambio);
@@ -104,11 +106,23 @@ function Sistema() {
   const ir = (id: IdPantalla) => {
     window.location.hash = id;
     setHash(id);
+    window.scrollTo(0, 0);
   };
 
-  // En el celular entran cuatro pestañas; el resto va en "Más".
-  const pestañas = visibles.length <= 5 ? visibles : visibles.slice(0, 4);
-  const enMas = visibles.length <= 5 ? [] : visibles.slice(4);
+  // Sin enlace, el dueño arranca en el panel cuando la caja está cerrada; con la caja abierta, en la caja.
+  useEffect(() => {
+    if (window.location.hash || !dueño) return;
+    turnoAbierto(db)
+      .then((t) => {
+        if (!t && !window.location.hash) ir('inicio');
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // En el celular entran cuatro pestañas; el resto, los estados y "Salir" van en "Más".
+  const pestañas = visibles.slice(0, 4);
+  const enMas = visibles.slice(4);
 
   const estadoNube = nube && (
     <a href="#ajustes" className={`estado-chip ${nube.error ? 'estado-chip-aviso' : ''}`} title={nube.aviso ?? (nube.pendientes ? `${nube.pendientes} cambios por subir` : 'Copia en la nube al día')}>
@@ -164,9 +178,9 @@ function Sistema() {
         <strong className="cabecera-movil-titulo">{actual.nombre}</strong>
         <span className={`punto-red ${online ? '' : 'punto-red-sin'}`} title={online ? 'Con internet' : 'Sin internet: se sigue cobrando'} />
         {sesion && (
-          <button type="button" className="boton-icono" onClick={salir} aria-label={`Salir (${sesion.nombre})`}>
-            <Icono nombre="salir" tam={20} />
-          </button>
+          <span className="avatar" title={`${sesion.nombre} (${sesion.admin ? 'dueño' : 'empleado'})`} aria-label={`Atiende ${sesion.nombre}`}>
+            {sesion.nombre.trim().charAt(0).toUpperCase() || '?'}
+          </span>
         )}
       </header>
 
@@ -195,12 +209,10 @@ function Sistema() {
             <span>{p.corto}</span>
           </a>
         ))}
-        {enMas.length > 0 && (
-          <button type="button" className={enMas.some((p) => p.id === pantalla) ? 'activo' : ''} aria-expanded={menuMas} onClick={() => setMenuMas(!menuMas)}>
-            <Icono nombre="menu" tam={22} />
-            <span>Más</span>
-          </button>
-        )}
+        <button type="button" className={enMas.some((p) => p.id === pantalla) ? 'activo' : ''} aria-expanded={menuMas} onClick={() => setMenuMas(!menuMas)}>
+          <Icono nombre="menu" tam={22} />
+          <span>Más</span>
+        </button>
       </nav>
       {menuMas && (
         <>
@@ -212,6 +224,20 @@ function Sistema() {
                 {p.nombre}
               </a>
             ))}
+            {sesion && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuMas(false);
+                  salir();
+                }}
+              >
+                <Icono nombre="salir" tam={22} />
+                Salir
+                <small className="texto-suave">{sesion.nombre}</small>
+              </button>
+            )}
             <div className="hoja-estados">
               {estadoRed}
               {estadoNube}

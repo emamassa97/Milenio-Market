@@ -122,7 +122,7 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
           <span className="campo-etiqueta">Cómo se devuelve la plata</span>
           <div className="medios">
             {medios.map((m) => (
-              <button key={m.id} type="button" className={`medio ${medio === m.id ? 'activo' : ''}`} aria-pressed={medio === m.id} onClick={() => setMedio(m.id)}>
+              <button key={m.id} type="button" className={`medio ${medio === m.id ? 'activo' : ''} ${m.id === 'fiado' ? 'medio-ancho' : ''}`} aria-pressed={medio === m.id} onClick={() => setMedio(m.id)}>
                 <Icono nombre={ICONO_MEDIO[m.id]} tam={18} /> {m.id === 'fiado' ? 'Descontar de su cuenta' : m.nombre}
               </button>
             ))}

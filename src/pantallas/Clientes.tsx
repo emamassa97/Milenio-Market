@@ -7,7 +7,7 @@ import { deudaDesde, saldoCliente } from '../dominio/fiado';
 import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type MovimientoFiado, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { anularPagoFiado, anularVenta, guardarCliente, registrarPagoFiado, turnoAbierto } from '../datos/operaciones';
-import { CampoPesos, errorATexto, fechaCorta, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
+import { CampoPesos, errorATexto, fechaCorta, ICONO_MEDIO, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 
@@ -83,10 +83,13 @@ export function PantallaClientes() {
             )}
           </p>
         </div>
-        <button type="button" className="boton boton-primario" onClick={() => setModal({ tipo: 'cliente' })}>
+        <button type="button" className="boton boton-primario solo-pc" onClick={() => setModal({ tipo: 'cliente' })}>
           <Icono nombre="mas" tam={18} /> Nuevo cliente
         </button>
       </div>
+      <button type="button" className="fab" onClick={() => setModal({ tipo: 'cliente' })} aria-label="Nuevo cliente" title="Nuevo cliente">
+        <Icono nombre="mas" tam={26} />
+      </button>
 
       {filas.length === 0 ? (
         <Vacio titulo="Todavía no hay clientes" icono="clientes">
@@ -215,7 +218,7 @@ export function PantallaClientes() {
                               onClick={anular}
                               title={m.tipo === 'compra' ? 'Deshace la venta entera: vuelve el stock y se borra de la cuenta' : 'Vuelve a deber este monto'}
                             >
-                              {anulando === m.id ? (m.tipo === 'compra' ? '¿Anular toda la venta?' : '¿Seguro?') : m.tipo === 'compra' ? 'Anular la venta' : 'Anular'}
+                              {anulando === m.id ? (m.tipo === 'compra' ? 'Sí, anular la venta' : 'Sí, anular') : m.tipo === 'compra' ? 'Anular la venta' : 'Anular'}
                             </button>
                           )}
                         </span>
@@ -307,7 +310,7 @@ function RegistrarPago({ fila, onCerrar }: { fila: Fila; onCerrar: () => void })
         <div className="medios">
           {MEDIOS.filter((m) => m.id !== 'fiado').map((m) => (
             <button key={m.id} type="button" className={`medio ${medio === m.id ? 'activo' : ''}`} aria-pressed={medio === m.id} onClick={() => setMedio(m.id as Exclude<MedioPago, 'fiado'>)}>
-              {m.nombre}
+              <Icono nombre={ICONO_MEDIO[m.id]} tam={18} /> {m.nombre}
             </button>
           ))}
         </div>

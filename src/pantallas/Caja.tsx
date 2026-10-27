@@ -41,21 +41,14 @@ import {
 } from '../datos/operaciones';
 import { CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
-import { pitido, useConsulta, useUnaVez } from '../ui/hooks';
+import { leerGuardado, pitido, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { NuevoMovimiento } from './Cierre';
 import { DevolverVenta } from './Devolver';
 
 // El carrito y las ventas en espera sobreviven a cambiar de pantalla, a recargar y a cerrar el navegador.
 function useGuardado<T>(llave: string, inicial: T) {
-  const [valor, setValor] = useState<T>(() => {
-    try {
-      const crudo = localStorage.getItem(llave) ?? sessionStorage.getItem(llave);
-      return crudo ? (JSON.parse(crudo) as T) : inicial;
-    } catch {
-      return inicial;
-    }
-  });
+  const [valor, setValor] = useState<T>(() => leerGuardado(llave, inicial));
   useEffect(() => {
     try {
       localStorage.setItem(llave, JSON.stringify(valor));
@@ -86,6 +79,9 @@ const MONTO_MAXIMO = 1_000_000;
 // Teclas de función para elegir el medio sin mouse (F3 lleva a "Paga con").
 const TECLA_DE: Record<MedioPago, string> = { efectivo: 'F5', mercadopago: 'F6', tarjeta: 'F7', transferencia: 'F9', fiado: 'F10' };
 const TECLA_MEDIO: Record<string, MedioPago> = Object.fromEntries(Object.entries(TECLA_DE).map(([m, t]) => [t, m as MedioPago]));
+
+// Para que entre en un botón del celular: "Marta (la del 3°)" → "Marta".
+const primerNombre = (n: string) => n.replace(/\(.*?\)/g, '').trim().split(/\s+/)[0] || n;
 
 function normalizar(t: string) {
   return t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -302,10 +298,11 @@ function Caja() {
   };
 
   // Con el buscador vacío: Supr saca el último producto y "-" le resta uno.
+  // El último agregado está primero en la lista (agregarItem lo pone adelante).
   const corregirUltimo = (sacar: boolean) => {
-    const i = carrito.items.length - 1;
-    if (i < 0) return;
-    const it = carrito.items[i]!;
+    const i = 0;
+    const it = carrito.items[i];
+    if (!it) return;
     if (sacar || it.cantidad <= 1 || it.gramos) setCarrito((c) => quitarItem(c, i));
     else setCarrito((c) => cambiarCantidad(c, i, it.cantidad - 1));
     setPagaCon(null);
@@ -393,7 +390,8 @@ function Caja() {
           : venta.medio === 'fiado'
             ? `Anotado ${formatPesos(venta.total)} a ${cliente?.nombre}`
             : `Cobrado ${formatPesos(venta.total)} con ${nombreMedio(venta.medio)}`;
-      avisar({ texto: detalle, tipo: 'ok' });
+      // En el celular el resultado queda en la barra verde de abajo; el aviso flotante la taparía.
+      if (!window.matchMedia('(max-width: 900px)').matches) avisar({ texto: detalle, tipo: 'ok' });
       const resumen: UltimaVenta = { id: venta.id!, total: venta.total, medio: venta.medio, hora: Date.now(), dividido, vuelto: venta.vuelto, cliente: cliente?.nombre, ...(fiado > 0 ? { fiado } : {}) };
       setUltima(resumen);
       setCobrado(resumen);
@@ -478,7 +476,7 @@ function Caja() {
         )}
         {!ultima.devuelto && (
           <button type="button" className={`boton boton-chico ${confirmarAnular ? 'boton-peligro' : 'boton-texto-peligro'}`} onClick={anularUltima}>
-            {confirmarAnular ? '¿Seguro?' : <><Icono nombre="deshacer" tam={16} /> Anular</>}
+            {confirmarAnular ? 'Sí, anular' : <><Icono nombre="deshacer" tam={16} /> Anular</>}
           </button>
         )}
       </span>
@@ -498,6 +496,8 @@ function Caja() {
   acciones.current = { cobrar, ponerEnEspera, elegirMedio };
   useEffect(() => {
     const tecla = (e: KeyboardEvent) => {
+      // Las F que usa la caja no abren la ayuda ni las herramientas del navegador, ni con un modal abierto.
+      if (/^F(2|3|4|8|12)$/.test(e.key)) e.preventDefault();
       if (document.querySelector('dialog[open]')) return;
       const medioTecla = TECLA_MEDIO[e.key];
       if (medioTecla) {
@@ -833,15 +833,19 @@ function Caja() {
       </aside>
 
       {carrito.items.length > 0 ? (
+        // En el celular se cobra desde acá, con el medio que esté elegido; "Medio" baja al panel para cambiarlo.
         <div className="barra-cobro-movil">
           <div>
             <small>
-              Total · {unidades(carrito)} {unidades(carrito) === 1 ? 'producto' : 'productos'}
+              {medio === 'fiado' ? (cliente ? `Fiado a ${primerNombre(cliente.nombre)}` : 'Fiado') : nombreMedio(medio)}
             </small>
             <strong className="importe">{formatPesos(total)}</strong>
           </div>
-          <button type="button" className="boton boton-primario boton-rojo" onClick={() => document.querySelector('.caja-derecha')?.scrollIntoView({ behavior: 'smooth' })} disabled={carrito.items.length === 0}>
-            Cobrar
+          <button type="button" className="boton boton-chico" onClick={() => document.querySelector('.caja-derecha')?.scrollIntoView({ behavior: 'smooth' })} aria-label="Cambiar el medio de pago">
+            Medio
+          </button>
+          <button type="button" className="boton boton-primario boton-rojo" onClick={() => cobrar()} disabled={cobrando}>
+            {medio === 'fiado' ? (cliente ? `Anotar a ${primerNombre(cliente.nombre)}` : 'Anotar fiado') : `Cobrar ${formatPesos(total)}`}
           </button>
         </div>
       ) : cobrado ? (
@@ -850,12 +854,22 @@ function Caja() {
           <div>
             <small>
               {cobrado.vuelto && cobrado.vuelto > 0 ? `Cobrado ${formatPesos(cobrado.total)} · Vuelto` : cobrado.medio === 'fiado' ? `Anotado a ${cobrado.cliente ?? 'fiado'}` : 'Cobrado'}
-              {cobrado.fiado && cobrado.fiado > 0 ? ` · ${formatPesos(cobrado.fiado)} a ${cobrado.cliente}` : ''}
+              {cobrado.dividido && cobrado.fiado ? ` · ${formatPesos(cobrado.fiado)} a ${cobrado.cliente}` : ''}
             </small>
             <strong className="importe">{formatPesos(cobrado.vuelto && cobrado.vuelto > 0 ? cobrado.vuelto : cobrado.total)}</strong>
           </div>
           <button type="button" className="boton" onClick={() => setCobrado(null)}>
             Siguiente
+          </button>
+        </div>
+      ) : espera.length > 0 ? (
+        <div className="barra-cobro-movil barra-espera" role="status">
+          <div>
+            <small>{espera.length === 1 ? 'Una venta en espera' : `${espera.length} ventas en espera`}</small>
+            <strong className="importe">{formatPesos(espera.reduce((s, e) => s + totalCarrito(e.carrito), 0))}</strong>
+          </div>
+          <button type="button" className="boton" onClick={() => retomar(espera[0]!)}>
+            <Icono nombre="pausa" tam={16} /> Retomar
           </button>
         </div>
       ) : null}
@@ -1314,8 +1328,9 @@ function DividirPago({
         </div>
         {pendiente === 'sobra' && <p className="texto-suave">Sobra plata que no es efectivo: bajá alguno de los montos.</p>}
         <div className="modal-pie">
+          {fia && !cliente && <p className="texto-suave texto-centrado">Falta elegir a quién se le anota el fiado.</p>}
           <button className="boton boton-primario boton-rojo boton-grande" type="submit" disabled={!listo}>
-            {fia && !cliente ? 'Elegí el cliente para cobrar' : `Cobrar ${formatPesos(total)}`}
+            Cobrar {formatPesos(total)}
           </button>
         </div>
       </form>

@@ -105,3 +105,13 @@ const NUBE_INICIAL: EstadoNube = { activa: false, sinActivar: false, error: null
 export function useEstadoNube(): EstadoNube {
   return useConsulta(() => estadoNube(db), [], NUBE_INICIAL);
 }
+
+// Lo que la caja deja guardado en el navegador (carrito y ventas en espera), para leerlo desde otra pantalla.
+export function leerGuardado<T>(llave: string, porDefecto: T): T {
+  try {
+    const crudo = localStorage.getItem(llave) ?? sessionStorage.getItem(llave);
+    return crudo ? (JSON.parse(crudo) as T) : porDefecto;
+  } catch {
+    return porDefecto;
+  }
+}
