@@ -97,9 +97,11 @@ describe('carrito', () => {
     expect(calcularVuelto(6150, 10000)).toBe(3850);
     expect(calcularVuelto(6150, 5000)).toBeNull();
     // Siempre están el de $10.000 y el de $20.000: son los billetes que más vuelto generan.
-    expect(pagosSugeridos(6150)).toEqual([6150, 7000, 8000, 10000, 20000]);
+    // 10.150 y 10.450 son el "vuelto redondo": se devuelven billetes grandes.
+    expect(pagosSugeridos(6150)).toEqual([6150, 7000, 8000, 10000, 10150, 20000]);
     expect(pagosSugeridos(1000)).toEqual([1000, 2000, 10000, 20000]);
-    expect(pagosSugeridos(3450)).toEqual([3450, 4000, 10000, 20000]);
+    expect(pagosSugeridos(3450)).toEqual([3450, 4000, 10000, 10450, 20000]);
+    expect(pagosSugeridos(12300)).toEqual([12300, 13000, 14000, 20000, 20300]);
     expect(pagosSugeridos(0)).toEqual([]);
   });
 

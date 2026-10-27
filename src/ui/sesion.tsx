@@ -10,6 +10,8 @@ export type Sesion = Pick<Usuario, 'usuario' | 'nombre' | 'admin'>;
 type Guardada = Sesion & { vence?: number };
 
 const LLAVE = 'milenio.sesion';
+// Marca de "en esta pestaña entra otra persona": no se toma la sesión recordada del equipo hasta que alguien entre.
+const LLAVE_OTRA = 'milenio.sesion.otra';
 const HORA = 3_600_000;
 const DURACION_EMPLEADO = 30 * 24 * HORA;
 const DURACION_DUEÑO = 12 * HORA;
@@ -45,6 +47,7 @@ function leer(): Guardada | null {
       if (larga.usuario !== s.usuario) return s.vence > Date.now() ? s : null;
       return larga;
     }
+    if (sessionStorage.getItem(LLAVE_OTRA)) return null;
     const larga = leerLarga();
     if (!larga) return null;
     // El empleado renueva el plazo cada vez que abre; el dueño no.
@@ -57,10 +60,11 @@ function leer(): Guardada | null {
   }
 }
 
-const Contexto = createContext<{ sesion: Sesion | null; entrar: (u: Sesion, recordar?: boolean) => void; salir: () => void }>({
+const Contexto = createContext<{ sesion: Sesion | null; entrar: (u: Sesion, recordar?: boolean) => void; salir: () => void; cambiar: () => void }>({
   sesion: null,
   entrar: () => {},
   salir: () => {},
+  cambiar: () => {},
 });
 
 /** Saca la sesión recordada del equipo sólo si es de este usuario: la de otra persona (en otra pestaña) no se toca. */
@@ -82,6 +86,7 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     }
     const s: Guardada = { usuario: u.usuario, nombre: u.nombre, admin: u.admin, ...(larga ? { vence: vencimiento(u.admin) } : {}) };
     try {
+      sessionStorage.removeItem(LLAVE_OTRA);
       sessionStorage.setItem(LLAVE, JSON.stringify(s));
       if (larga) localStorage.setItem(LLAVE, JSON.stringify(s));
       // Entrar sin "Recordarme" olvida la propia sesión recordada; la de otra persona queda.
@@ -96,6 +101,16 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     try {
       sessionStorage.removeItem(LLAVE);
       if (sesion) olvidarSiEsDe(sesion.usuario);
+    } catch {
+      /* nada */
+    }
+    setSesion(null);
+  };
+  // "Cambiar de usuario": esta pestaña pasa a la pantalla de ingreso sin tocar la sesión recordada del equipo (la otra persona sigue en su pestaña).
+  const cambiar = () => {
+    try {
+      sessionStorage.removeItem(LLAVE);
+      sessionStorage.setItem(LLAVE_OTRA, '1');
     } catch {
       /* nada */
     }
@@ -124,7 +139,7 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
     window.addEventListener('storage', cambio);
     return () => window.removeEventListener('storage', cambio);
   }, []);
-  return <Contexto.Provider value={{ sesion, entrar, salir }}>{children}</Contexto.Provider>;
+  return <Contexto.Provider value={{ sesion, entrar, salir, cambiar }}>{children}</Contexto.Provider>;
 }
 
 export const useSesion = () => useContext(Contexto);

@@ -57,6 +57,7 @@ button { cursor: pointer; }
 .titulo-chico { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
 .texto-aviso { color: var(--ambar); }
 .solo-movil { display: none !important; }
+.solo-movil-bloque { display: none; }
 kbd {
   font: 600 0.72em/1 'Poppins', sans-serif; font-size: max(0.72em, 0.8rem); border-radius: 4px; padding: 3px 5px; background: rgba(21, 23, 28, 0.07);
   color: inherit; border: 1px solid rgba(21, 23, 28, 0.12);
@@ -253,10 +254,16 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
    Nada scrollea por adentro (taparía "Paga con"); si la pantalla es baja, scrollea la columna entera. */
 .caja-derecha { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow: auto; }
 .caja-derecha > * { flex: none; }
+/* "Última venta" y las acciones del mostrador: a la derecha en pantallas altas, abajo a la izquierda en las bajas (1366×768). */
+.caja-pie-derecha { display: contents; }
+.caja-pie-izquierda { display: none; }
 .caja-derecha > .cobro { min-height: 420px; }
 .caja-derecha > .cobro > .vuelto { margin-top: auto; }
 /* Pantallas bajas (notebooks, all-in-one de 1366×768): todo un poco más compacto para que entre sin scroll. */
 @media (max-height: 820px) and (min-width: 901px) {
+  .caja-pie-derecha { display: none; }
+  .caja-pie-izquierda { display: flex; flex-direction: column; gap: 10px; order: 10; }
+  .caja-pie-izquierda .acciones-caja { justify-content: flex-start; }
   .caja-derecha { gap: 8px; }
   .caja-derecha > .cobro { min-height: 380px; }
   .total strong { font-size: 2.4rem; }
@@ -384,6 +391,11 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 .medio-ancho { grid-column: 1 / -1; }
 .sugeridos { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 6px; }
 .sugeridos .chip { min-height: 38px; padding: 0 4px; justify-content: center; font-size: 0.86rem; letter-spacing: -0.01em; }
+/* El chip de vuelto redondo ($10.600 para $4.600) dice cuánto se devuelve. */
+.sugeridos .chip-redondo { flex-direction: column; gap: 0; line-height: 1.15; }
+.sugeridos .chip-redondo small { font-size: 0.7rem; font-weight: 500; color: var(--apagado); }
+.sugeridos .chip-redondo.activo small { color: #d7dae0; }
+.cobro-hoja > .boton:not(.boton-primario) { margin-top: 2px; }
 .vuelto { display: flex; justify-content: space-between; align-items: baseline; border-top: 1px solid var(--borde); padding-top: 10px; }
 .vuelto strong { font-size: 2rem; font-weight: 700; color: var(--verde); letter-spacing: -0.02em; }
 .vuelto-falta strong { color: var(--alerta); }
@@ -724,7 +736,9 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
   /* La barra de arriba ya dice en qué pantalla estamos. */
   .pagina-cabecera h1, .pagina > h1 { display: none; }
   .solo-movil { display: inline-flex !important; }
+  .solo-movil-bloque { display: flex; }
   .solo-pc { display: none !important; }
+  .acciones-vacia { gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
   .fab {
     display: grid; place-items: center; position: fixed; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 14;
     width: 56px; height: 56px; border-radius: 50%; border: none; background: var(--grafito); color: #fff; box-shadow: var(--sombra-alta);

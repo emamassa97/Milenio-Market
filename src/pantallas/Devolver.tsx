@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { formatoPeso, pagosDeVenta } from '../dominio/carrito';
 import { cantidadDevuelta, describirPagos, fiadoDisponible, montoDevolucion, type RenglonDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
+import { codigoEscaneado } from '../dominio/entrada';
 import { MEDIOS, nombreMedio, type MedioPago, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { devolverProductos, turnoAbierto } from '../datos/operaciones';
-import { errorATexto, fechaCorta, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
+import { CampoCantidad, errorATexto, fechaCorta, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
+import { pitido } from '../ui/hooks';
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
@@ -40,6 +42,31 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
   const monto = montoDevolucion(venta, renglones);
   const quedan = (i: number) => venta.items[i]!.cantidad - cantidadDevuelta(venta, i);
   const poner = (i: number, c: number) => setCantidades((x) => ({ ...x, [i]: Math.max(0, Math.min(quedan(i), c)) }));
+  const form = useRef<HTMLFormElement>(null);
+  // El lector tipea donde está el cursor: después de cada pasada (o de tocar + / −, o de un Enter) el cursor vuelve a una cantidad,
+  // así se puede seguir escaneando. En el celular no: abriría el teclado.
+  const enfocarCantidad = (i: number) => {
+    if (!window.matchMedia('(pointer: fine)').matches) return;
+    window.setTimeout(() => {
+      const campos = form.current?.querySelectorAll<HTMLInputElement>('input[aria-label^="Cuántos vuelven"]');
+      (campos?.[i] ?? campos?.[0])?.focus();
+    }, 30);
+  };
+  const visibles = (i: number) => venta.items.slice(0, i).filter((_, idx) => quedan(idx) > 0).length;
+  // Con el modal abierto se escanea lo que traen: cada pasada marca uno más de ese renglón.
+  const marcar = (codigo: string): boolean => {
+    const i = venta.items.findIndex((it, idx) => it.codigo === codigo && quedan(idx) > (cantidades[idx] ?? 0));
+    if (i < 0) {
+      pitido('error');
+      avisar({ texto: venta.items.some((it) => it.codigo === codigo) ? 'Ese producto ya está marcado entero.' : 'Ese producto no está en esta venta.', tipo: 'error' });
+      enfocarCantidad(0);
+      return true;
+    }
+    pitido('ok');
+    setCantidades((x) => ({ ...x, [i]: (x[i] ?? 0) + 1 }));
+    enfocarCantidad(visibles(i));
+    return true;
+  };
   const medios = MEDIOS.filter((m) => m.id !== 'fiado' || enCuenta > 0);
   const pasaDeCuenta = medio === 'fiado' && monto > enCuenta;
   // Con una promo, devolver una parte no devuelve el precio suelto: las que quedan pasan a precio sin promo.
@@ -54,7 +81,16 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
   return (
     <Modal titulo="Devolver o cambiar" onCerrar={onCerrar}>
       <form
+        ref={form}
         className="formulario"
+        onKeyDown={(e) => {
+          // Enter en una cantidad la confirma (el campo suelta el foco): el cursor vuelve ahí para la próxima pasada del lector.
+          const campo = e.target as HTMLInputElement;
+          // Si lo que hay en el campo es un código de barras, fue el lector: marcar() ya lleva el cursor al renglón que corresponde.
+          if (e.key !== 'Enter' || !campo.matches('input[aria-label^="Cuántos vuelven"]') || codigoEscaneado(campo.value)) return;
+          const campos = [...(form.current?.querySelectorAll<HTMLInputElement>('input[aria-label^="Cuántos vuelven"]') ?? [])];
+          enfocarCantidad(Math.max(0, campos.indexOf(campo)));
+        }}
         onSubmit={(e) => {
           e.preventDefault();
           unaVez(async () => {
@@ -82,7 +118,7 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
         <p className="texto-suave">
           Venta del {fechaCorta(venta.fecha)} por {formatPesos(venta.total)}. Pagó {comoPago}.
           <br />
-          Marcá qué vuelve; si es un cambio, después cobrá el producto nuevo como siempre.
+          Marcá qué vuelve (o pasá por el lector lo que te traen); si es un cambio, después cobrá el producto nuevo como siempre.
         </p>
         <ul className="lista-devolver">
           {venta.items.map((it, i) => {
@@ -100,17 +136,11 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
                 </span>
                 {disponibles > 0 && (
                   <span className="cantidad">
-                    <button type="button" className="boton-icono" aria-label={`Uno menos de ${it.nombre}`} onClick={() => poner(i, elegida - 1)} disabled={elegida <= 0}>
+                    <button type="button" className="boton-icono" aria-label={`Uno menos de ${it.nombre}`} onClick={() => { poner(i, elegida - 1); enfocarCantidad(visibles(i)); }} disabled={elegida <= 0}>
                       <Icono nombre="menos" tam={18} />
                     </button>
-                    <input
-                      inputMode="numeric"
-                      aria-label={`Cuántos vuelven de ${it.nombre}`}
-                      value={elegida}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onChange={(e) => poner(i, Number(e.target.value.replace(/\D/g, '')) || 0)}
-                    />
-                    <button type="button" className="boton-icono" aria-label={`Uno más de ${it.nombre}`} onClick={() => poner(i, elegida + 1)} disabled={elegida >= disponibles}>
+                    <CampoCantidad ariaLabel={`Cuántos vuelven de ${it.nombre}`} valor={elegida} max={disponibles} enVivo={false} onCambio={(n) => poner(i, n)} onEscaneo={marcar} />
+                    <button type="button" className="boton-icono" aria-label={`Uno más de ${it.nombre}`} onClick={() => { poner(i, elegida + 1); enfocarCantidad(visibles(i)); }} disabled={elegida >= disponibles}>
                       <Icono nombre="mas" tam={18} />
                     </button>
                   </span>
@@ -152,12 +182,19 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
           <span>
             A devolver
             {tocaPromo && <small className="texto-suave"> · lo que queda pasa a precio sin promo</small>}
+            {!!venta.descuento && monto > 0 && <small className="texto-suave"> · con el descuento de la venta</small>}
           </span>
           <strong className="importe">{formatPesos(monto)}</strong>
         </div>
         <div className="modal-pie">
           <button type="submit" className="boton boton-primario boton-grande" disabled={renglones.length === 0 || enCurso || pasaDeCuenta || cargando}>
-            {medio === 'efectivo' ? `Devolver ${formatPesos(monto)} en efectivo` : medio === 'fiado' ? `Descontar ${formatPesos(monto)} de la cuenta` : `Anotar devolución de ${formatPesos(monto)}`}
+            {renglones.length === 0
+              ? 'Marcá qué vuelve'
+              : medio === 'efectivo'
+                ? `Devolver ${formatPesos(monto)} en efectivo`
+                : medio === 'fiado'
+                  ? `Descontar ${formatPesos(monto)} de la cuenta`
+                  : `Anotar devolución de ${formatPesos(monto)}`}
           </button>
           {!cargando && !delTurno && !dueño && <p className="texto-suave texto-centrado">Es una venta de otro turno: pide la clave del dueño.</p>}
         </div>

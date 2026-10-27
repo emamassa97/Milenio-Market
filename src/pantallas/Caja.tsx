@@ -75,6 +75,10 @@ interface UltimaVenta {
   fiado?: number;
   /** Lo que ya se devolvió de esta venta. */
   devuelto?: number;
+  /** Un pago de fiado cobrado desde la caja (no es una venta): `total` es lo que pagó. */
+  pagoFiado?: boolean;
+  /** Lo que le queda por pagar después de ese pago. */
+  queda?: number;
 }
 
 // Tope para que un código leído por el lector en un campo de plata no se cobre como monto.
@@ -344,6 +348,7 @@ function Caja() {
   }, [carrito, avisar, enfocar, setCarrito, setEspera]);
 
   const retomar = (e: Espera) => {
+    descuentoQuitadoAdrede.current = true;
     setEspera((l) => {
       const resto = l.filter((x) => x.id !== e.id);
       return carrito.items.length > 0 ? [...resto, { id: Date.now(), carrito, hora: Date.now() }] : resto;
@@ -439,7 +444,10 @@ function Caja() {
     (m: MedioPago) => {
       setMedio(m);
       if (m === 'fiado' && !cliente) setModal({ tipo: 'cliente' });
-      if (m === 'efectivo') window.setTimeout(() => document.getElementById(modalRef.current?.tipo === 'cobro' ? 'paga-con-hoja' : 'paga-con')?.focus(), 0);
+      // En la PC el cursor va a "Paga con"; en el celular no, porque abriría el teclado encima de los chips.
+      if (m === 'efectivo' && window.matchMedia('(pointer: fine)').matches) {
+        window.setTimeout(() => document.getElementById(modalRef.current?.tipo === 'cobro' ? 'paga-con-hoja' : 'paga-con')?.focus(), 0);
+      }
     },
     [cliente],
   );
@@ -557,16 +565,50 @@ function Caja() {
 
   const sugeridos = pagosSugeridos(total);
 
+  // Si el descuento se fue solo (la venta quedó más chica que el descuento), se avisa: sacarlo adrede no avisa.
+  const descuentoPrevio = useRef(carrito.descuento);
+  const descuentoQuitadoAdrede = useRef(false);
+  useEffect(() => {
+    const antes = descuentoPrevio.current;
+    descuentoPrevio.current = carrito.descuento;
+    const adrede = descuentoQuitadoAdrede.current;
+    descuentoQuitadoAdrede.current = false;
+    if (antes && !carrito.descuento && carrito.items.length > 0 && !adrede) {
+      avisar({ texto: `Se sacó el descuento de ${formatPesos(antes)}: era más que lo que queda en la venta.`, tipo: 'error' });
+    }
+  }, [carrito, avisar]);
+
   // Si el empleado hizo un descuento de hasta el 10 % y después saca productos, el mismo descuento puede pasar el tope: se saca y se avisa.
   // El que autorizó el dueño viaja con el carrito (sobrevive a la espera y a recargar), así no se pide la clave dos veces.
   useEffect(() => {
     const d = carrito.descuento ?? 0;
     if (!d || dueño || carrito.descuentoAutorizado) return;
     if (d > sumaCarrito(carrito) * 0.1) {
+      descuentoQuitadoAdrede.current = true;
       setCarrito((c) => aplicarDescuento(c, 0));
       avisar({ texto: `Se sacó el descuento de ${formatPesos(d)}: con menos productos pasa el 10 %, y eso lo autoriza el dueño.`, tipo: 'error' });
     }
   }, [carrito, dueño, setCarrito, avisar]);
+
+  // La última venta y las otras cosas del mostrador (cobrar un fiado, retiro, mercadería): en PC alta van a la derecha; en pantallas bajas, a la izquierda.
+  const pieCaja = (
+    <>
+      {/* Siempre ocupa su lugar, así el botón de cobrar no se mueve con la primera venta. */}
+      <div className="solo-pc">{tiraUltima}</div>
+      <div className="botonera botonera-centrada acciones-caja">
+        <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'cobrarFiado' })} title="Alguien viene a pagar lo que debe">
+          <Icono nombre="clientes" tam={16} /> Cobrar un fiado
+        </button>
+        <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'movimiento' })}>
+          <Icono nombre="billetera" tam={16} /> Anotar un retiro o gasto
+        </button>
+        {/* El empleado recibe el reparto sin salir de la caja: sólo suma stock; el dueño ve el ingreso completo. */}
+        <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'mercaderia' })} disabled={productos.length === 0}>
+          <Icono nombre="camion" tam={16} /> Llegó mercadería
+        </button>
+      </div>
+    </>
+  );
 
   // El panel de medio de pago y vuelto: en PC va en la columna de la derecha; en el celular, también en la hoja "Cómo paga".
   const panelCobro = (enHoja = false) => {
@@ -612,13 +654,15 @@ function Caja() {
                       <button
                         key={s}
                         type="button"
-                        className={`chip ${pagaCon === s ? 'activo' : ''}`}
+                        className={`chip ${pagaCon === s ? 'activo' : ''} ${s !== total && s % 1000 !== 0 ? 'chip-redondo' : ''}`}
+                        title={s === total ? undefined : `Vuelto ${formatPesos(s - total)}`}
                         onClick={() => {
                           setPagaCon(s);
                           enfocar();
                         }}
                       >
                         {s === total ? 'Justo' : formatPesos(s)}
+                        {s !== total && s % 1000 !== 0 && <small>vuelto {formatPesos(s - total)}</small>}
                       </button>
                     ))}
                   </div>
@@ -627,6 +671,7 @@ function Caja() {
                   id={idPagaCon}
                   valor={pagaCon}
                   onCambio={setPagaCon}
+                  onEscaneo={escaneoEnCampo}
                   grande
                   placeholder="Justo"
                   onKeyDown={(e) => {
@@ -677,9 +722,9 @@ function Caja() {
                     const desdeAgregado = Date.now() - ultimoAgregado.current;
                     // Algunos lectores mandan dos Enter, y después de un "no encontré" el Enter es un reintento: ninguno cobra.
                     if (desdeAgregado <= 400 || Date.now() - ultimoError.current <= 1500) return;
-                    // Recién pasado el último producto y sin "paga con": el primer Enter va a "Paga con", así no se cobra sin vuelto por reflejo.
-                    // Ahí, Enter cobra justo o se escribe con cuánto paga. F12 cobra directo igual.
-                    if (medio === 'efectivo' && pagaCon === null && desdeAgregado < 5000 && window.matchMedia('(pointer: fine)').matches) {
+                    // En efectivo y sin "paga con", el primer Enter va a "Paga con" (aunque el cliente haya tardado en sacar la billetera),
+                    // así no se cobra sin vuelto por reflejo. Ahí, Enter cobra justo o se escribe con cuánto paga. F12 cobra directo igual.
+                    if (medio === 'efectivo' && pagaCon === null && window.matchMedia('(pointer: fine)').matches) {
                       document.getElementById('paga-con')?.focus();
                       return;
                     }
@@ -782,6 +827,15 @@ function Caja() {
               </span>
               <p className="vacio-titulo">Listo para cobrar</p>
               <p className="texto-suave">Pasá el primer producto por el lector o tocá un botón rápido.</p>
+              {/* En el celular, las otras cosas que pasan en el mostrador sin tener que bajar hasta el fondo. */}
+              <div className="acciones-vacia solo-movil-bloque">
+                <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'cobrarFiado' })}>
+                  <Icono nombre="clientes" tam={16} /> Cobrar un fiado
+                </button>
+                <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'movimiento' })}>
+                  <Icono nombre="billetera" tam={16} /> Retiro o gasto
+                </button>
+              </div>
             </div>
           ) : (
             <>
@@ -824,6 +878,7 @@ function Caja() {
                         ariaLabel={`Cantidad de ${it.nombre}`}
                         valor={it.cantidad}
                         minimo={1}
+                        enVivo={false}
                         onCambio={(n) => setCarrito((c) => cambiarCantidad(c, i, n))}
                         onEscaneo={escaneoEnCampo}
                       />
@@ -844,7 +899,15 @@ function Caja() {
                 <span>
                   Descuento <small className="texto-suave">sobre {formatPesos(sumaCarrito(carrito))}</small>
                 </span>
-                <button type="button" className="boton-icono boton-quitar" aria-label="Sacar el descuento" onClick={() => setCarrito((c) => aplicarDescuento(c, 0))}>
+                <button
+                  type="button"
+                  className="boton-icono boton-quitar"
+                  aria-label="Sacar el descuento"
+                  onClick={() => {
+                    descuentoQuitadoAdrede.current = true;
+                    setCarrito((c) => aplicarDescuento(c, 0));
+                  }}
+                >
                   <Icono nombre="basura" tam={18} />
                 </button>
                 <span className="importe renglon-subtotal">−{formatPesos(carrito.descuento)}</span>
@@ -853,19 +916,24 @@ function Caja() {
           </>
           )}
         </div>
+
+      <div className="caja-pie caja-pie-izquierda">{pieCaja}</div>
       </section>
 
       <aside className="caja-derecha" aria-label="Cobro">
         {cobrado && carrito.items.length === 0 ? (
           <div className="total total-cobrado" role="status">
             <span>
-              {cobrado.vuelto && cobrado.vuelto > 0
-                ? `Cobrado ${formatPesos(cobrado.total)} · Vuelto`
-                : cobrado.medio === 'fiado'
-                  ? `Anotado a ${cobrado.cliente ?? 'fiado'}`
-                  : `Cobrado ${cobrado.dividido ? 'en 2 pagos' : `con ${nombreMedio(cobrado.medio)}`}`}
+              {cobrado.pagoFiado
+                ? `Fiado cobrado a ${cobrado.cliente ?? ''} con ${nombreMedio(cobrado.medio)}`
+                : cobrado.vuelto && cobrado.vuelto > 0
+                  ? `Cobrado ${formatPesos(cobrado.total)} · Vuelto`
+                  : cobrado.medio === 'fiado'
+                    ? `Anotado a ${cobrado.cliente ?? 'fiado'}`
+                    : `Cobrado ${cobrado.dividido ? 'en 2 pagos' : `con ${nombreMedio(cobrado.medio)}`}`}
             </span>
             <strong className="importe">{formatPesos(cobrado.vuelto && cobrado.vuelto > 0 ? cobrado.vuelto : cobrado.total)}</strong>
+            {cobrado.pagoFiado && <small>{cobrado.queda && cobrado.queda > 0 ? `Le quedan ${formatPesos(cobrado.queda)}` : 'Quedó al día'}</small>}
             {cobrado.fiado && cobrado.fiado > 0 && (
               <small>
                 {formatPesos(cobrado.fiado)} anotados a {cobrado.cliente}
@@ -909,20 +977,8 @@ function Caja() {
             {confirmarCancelar ? 'Sí, cancelar' : 'Cancelar venta'}
           </button>
         </div>
-        {/* Siempre ocupa su lugar, así el botón de cobrar no se mueve con la primera venta. */}
-        <div className="solo-pc">{tiraUltima}</div>
-        <div className="botonera botonera-centrada acciones-caja">
-          <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'cobrarFiado' })} title="Alguien viene a pagar lo que debe">
-            <Icono nombre="clientes" tam={16} /> Cobrar un fiado
-          </button>
-          <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'movimiento' })}>
-            <Icono nombre="billetera" tam={16} /> Anotar un retiro o gasto
-          </button>
-          {/* El empleado recibe el reparto sin salir de la caja: sólo suma stock; el dueño ve el ingreso completo. */}
-          <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'mercaderia' })} disabled={productos.length === 0}>
-            <Icono nombre="camion" tam={16} /> Llegó mercadería
-          </button>
-        </div>
+        {/* En pantallas bajas (1366×768) esto pasa a la columna izquierda, donde sobra lugar; acá quedaría bajo el borde. */}
+        <div className="caja-pie caja-pie-derecha">{pieCaja}</div>
       </aside>
 
       {carrito.items.length > 0 ? (
@@ -947,7 +1003,13 @@ function Caja() {
         <div className="barra-cobro-movil barra-cobrado" role="status">
           <div>
             <small>
-              {cobrado.vuelto && cobrado.vuelto > 0 ? `Cobrado ${formatPesos(cobrado.total)} · Vuelto` : cobrado.medio === 'fiado' ? `Anotado a ${primerNombre(cobrado.cliente ?? 'fiado')}` : 'Cobrado'}
+              {cobrado.pagoFiado
+                ? `Fiado cobrado a ${primerNombre(cobrado.cliente ?? '')}${cobrado.queda && cobrado.queda > 0 ? ` · le quedan ${formatPesos(cobrado.queda)}` : ' · al día'}`
+                : cobrado.vuelto && cobrado.vuelto > 0
+                  ? `Cobrado ${formatPesos(cobrado.total)} · Vuelto`
+                  : cobrado.medio === 'fiado'
+                    ? `Anotado a ${primerNombre(cobrado.cliente ?? 'fiado')}`
+                    : 'Cobrado'}
               {cobrado.dividido && cobrado.fiado ? ` · ${formatPesos(cobrado.fiado)} a ${primerNombre(cobrado.cliente ?? '')}` : ''}
             </small>
             <strong className="importe">{formatPesos(cobrado.vuelto && cobrado.vuelto > 0 ? cobrado.vuelto : cobrado.total)}</strong>
@@ -976,6 +1038,17 @@ function Caja() {
             <button type="button" className="boton boton-primario boton-rojo boton-grande" onClick={() => cobrar()} disabled={carrito.items.length === 0 || cobrando}>
               {medio === 'fiado' ? (cliente ? `Anotar ${formatPesos(total)} a ${primerNombre(cliente.nombre)}` : 'Anotar fiado') : `Cobrar ${formatPesos(total)}`}
             </button>
+            <button
+              type="button"
+              className="boton"
+              onClick={() => {
+                setModal(null);
+                ponerEnEspera();
+              }}
+              disabled={carrito.items.length === 0}
+            >
+              <Icono nombre="pausa" tam={16} /> Dejar en espera
+            </button>
           </div>
         </Modal>
       )}
@@ -994,6 +1067,9 @@ function Caja() {
         <RegistrarPago
           cliente={modal.cliente}
           saldo={modal.saldo}
+          onHecho={({ monto, medio: m, resto }) =>
+            setCobrado({ id: 0, total: monto, medio: m, hora: Date.now(), cliente: modal.cliente.nombre, pagoFiado: true, queda: Math.max(0, resto) })
+          }
           onCerrar={() => {
             setModal(null);
             enfocar();
@@ -1009,6 +1085,7 @@ function Caja() {
             enfocar();
           }}
           onAplicar={(d, autorizado) => {
+            descuentoQuitadoAdrede.current = true;
             setCarrito((c) => aplicarDescuento(c, d, autorizado));
             setPagaCon(null);
             setModal(null);
@@ -1049,6 +1126,10 @@ function Caja() {
           onCerrar={() => {
             setModal(null);
             enfocar();
+          }}
+          onEscaneo={(codigo) => {
+            setModal(null);
+            escaneoEnCampo(codigo);
           }}
           onAgregar={(gramos) => {
             setCarrito((c) => agregarItem(c, itemPorPeso(modal.producto, gramos)));
@@ -1562,17 +1643,35 @@ function ElegirCliente({
   );
 }
 
-function PedirPeso({ producto, onCerrar, onAgregar }: { producto: Producto; onCerrar: () => void; onAgregar: (gramos: number) => void }) {
+function PedirPeso({
+  producto,
+  onCerrar,
+  onAgregar,
+  onEscaneo,
+}: {
+  producto: Producto;
+  onCerrar: () => void;
+  onAgregar: (gramos: number) => void;
+  /** El lector pasó un código con el cursor en los gramos: se suma ese producto y el peso queda para después. */
+  onEscaneo: (codigo: string) => void;
+}) {
   const [texto, setTexto] = useState('');
   const gramos = gramosDeTexto(texto);
   const precio = Math.round((producto.precio * gramos) / 1000);
+  const codigo = codigoEscaneado(texto);
+  // Más de 50 kg no es un peso de mostrador: casi siempre es el lector.
+  const demasiado = !codigo && gramos > 50_000;
   return (
     <Modal titulo={producto.nombre} onCerrar={onCerrar}>
       <form
         className="formulario"
         onSubmit={(e) => {
           e.preventDefault();
-          if (gramos > 0) onAgregar(gramos);
+          if (codigo) {
+            onEscaneo(codigo);
+            return;
+          }
+          if (gramos > 0 && !demasiado) onAgregar(gramos);
         }}
       >
         <p className="texto-suave">
@@ -1592,9 +1691,15 @@ function PedirPeso({ producto, onCerrar, onAgregar }: { producto: Producto; onCe
             <span aria-hidden="true">g</span>
           </div>
         </label>
-        {gramos > 3000 && <p className="texto-aviso">Son {formatoPeso(gramos)}: fijate que esté bien antes de agregar.</p>}
-        <button className="boton boton-primario boton-grande" type="submit" disabled={gramos <= 0}>
-          {gramos > 0 ? `Agregar ${formatoPeso(gramos)}: ${formatPesos(precio)}` : 'Agregar'}
+        {codigo ? (
+          <p className="texto-alerta">Eso fue el lector, no un peso: con Enter se suma ese producto y el {producto.nombre.toLowerCase()} queda para después.</p>
+        ) : demasiado ? (
+          <p className="texto-alerta">Son {formatoPeso(gramos)}: eso no es un peso de mostrador. Revisá los gramos.</p>
+        ) : (
+          gramos > 3000 && <p className="texto-aviso">Son {formatoPeso(gramos)}: fijate que esté bien antes de agregar.</p>
+        )}
+        <button className="boton boton-primario boton-grande" type="submit" disabled={(gramos <= 0 && !codigo) || demasiado}>
+          {codigo ? 'Sumar lo que pasó el lector' : gramos > 0 ? `Agregar ${formatoPeso(gramos)}: ${formatPesos(precio)}` : 'Agregar'}
         </button>
       </form>
     </Modal>

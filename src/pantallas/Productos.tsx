@@ -14,6 +14,8 @@ import {
   cargarPlanilla,
   guardarProducto,
   ingresarMercaderia,
+  resumenDeTurno,
+  turnoAbierto,
   type DatosProducto,
 } from '../datos/operaciones';
 import { CampoPesos, copiarTexto, descargarArchivo, Desplegable, errorATexto, Icono, Modal, sinCortes, useAvisar, Vacio } from '../ui/componentes';
@@ -948,6 +950,16 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
   const [pagado, setPagado] = useState<number | null>(null);
   const [enCurso, unaVez] = useUnaVez();
   const buscador = useRef<HTMLInputElement>(null);
+  // Lo que debería haber en la caja: pagar más que eso casi siempre es un cero de más (26.400 por 2.640).
+  const enCaja = useConsulta(
+    async () => {
+      const t = await turnoAbierto(db);
+      return t ? (await resumenDeTurno(db, t)).resumen.efectivoEsperado : null;
+    },
+    [],
+    null as number | null,
+  );
+  const [confirmarPasado, setConfirmarPasado] = useState(false);
   const encontrados = useMemo(() => {
     const t = normalizar(q.trim());
     if (t.length < 2) return [];
@@ -990,6 +1002,8 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
   const cant = (r: { cantidad: string; p: Producto }) => cantidadDeTexto(r.cantidad, !!r.p.porPeso);
   const total = renglones.reduce((s, r) => s + Math.round(cant(r) * (r.costo ?? 0)), 0);
   const montoCaja = pagado ?? total;
+  const sePasa = deCaja && !soloStock && enCaja !== null && montoCaja > enCaja;
+  useEffect(() => setConfirmarPasado(false), [montoCaja, deCaja]);
   const subidas = renglones.filter((r) => r.mantenerMargen && precioNuevo(r)).length;
   return (
     <Modal titulo="Llegó mercadería" onCerrar={onCerrar} ancho="ancho">
@@ -1006,6 +1020,10 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
           e.preventDefault();
           if (deCaja && montoCaja <= 0) {
             avisar({ texto: 'Poné cuánto pagaste de la caja (o cargá el costo de cada producto).', tipo: 'error' });
+            return;
+          }
+          if (sePasa && !confirmarPasado) {
+            setConfirmarPasado(true);
             return;
           }
           unaVez(async () => {
@@ -1156,6 +1174,11 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
         {deCaja && (
           <div className="fila-campos">
             <CampoPesos etiqueta="Cuánto pagaste de la caja" valor={pagado ?? (total || null)} onCambio={setPagado} placeholder={String(total)} />
+            {sePasa && (
+              <p className="texto-alerta" role="alert">
+                {dueño ? `En la caja debería haber ${formatPesos(Math.max(0, enCaja))}: con eso queda en negativo.` : 'Es más de lo que hay en la caja.'} Si está bien, anotalo igual.
+              </p>
+            )}
           </div>
         )}
         <div className="vuelto">
@@ -1164,8 +1187,16 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
         </div>
         </>
         )}
-        <button type="submit" className="boton boton-primario boton-grande" disabled={enCurso || !renglones.some((r) => cant(r) > 0)}>
-          {soloStock ? 'Sumar al stock' : subidas > 0 ? `Guardar ingreso y subir ${subidas === 1 ? '1 precio' : `${subidas} precios`}` : 'Guardar ingreso'}
+        <button type="submit" className={`boton boton-grande ${sePasa && confirmarPasado ? 'boton-peligro' : 'boton-primario'}`} disabled={enCurso || !renglones.some((r) => cant(r) > 0)}>
+          {sePasa && confirmarPasado
+            ? 'Sí, anotar igual'
+            : sePasa
+              ? '¿Anotar igual?'
+              : soloStock
+                ? 'Sumar al stock'
+                : subidas > 0
+                  ? `Guardar ingreso y subir ${subidas === 1 ? '1 precio' : `${subidas} precios`}`
+                  : 'Guardar ingreso'}
         </button>
       </form>
     </Modal>

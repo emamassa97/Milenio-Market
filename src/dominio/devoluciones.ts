@@ -45,7 +45,7 @@ export function totalNeto(venta: Pick<Venta, 'total' | 'devoluciones'>): Pesos {
  * que se cobraría por lo que queda. Con una promo "3 x $1.700", devolver 1 de
  * 3 devuelve $400, porque las otras 2 pasan a precio suelto.
  */
-export function montoDevolucion(venta: Pick<Venta, 'items' | 'devoluciones' | 'total'>, renglones: RenglonDevuelto[]): Pesos {
+export function montoDevolucion(venta: Pick<Venta, 'items' | 'devoluciones' | 'total' | 'descuento'>, renglones: RenglonDevuelto[]): Pesos {
   let monto = 0;
   for (const r of renglones) {
     const it = venta.items[r.indice];
@@ -54,7 +54,9 @@ export function montoDevolucion(venta: Pick<Venta, 'items' | 'devoluciones' | 't
     const despues = quedan - r.cantidad;
     monto += subtotal({ ...it, cantidad: quedan }) - (despues > 0 ? subtotal({ ...it, cantidad: despues }) : 0);
   }
-  // Con descuento en la venta, lo devuelto nunca supera lo que de verdad se cobró.
+  // Con descuento en la venta, se devuelve lo que se cobró de verdad: una Coca de lista $1.400 vendida con 10 % menos devuelve $1.260.
+  const lista = venta.items.reduce((s, it) => s + subtotal(it), 0);
+  if (venta.descuento && lista > 0) monto = Math.round((monto * (lista - venta.descuento)) / lista);
   return Math.min(monto, totalNeto(venta));
 }
 

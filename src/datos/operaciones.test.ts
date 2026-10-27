@@ -57,9 +57,9 @@ describe('turnos y ventas', () => {
     expect(venta.vuelto).toBe(2000);
     expect(resumirVentas([venta]).total).toBe(3000);
     expect(resumirVentas([venta]).ganancia).toBe(3150 - 2100 - 150);
-    // Devolver todo nunca devuelve más de lo cobrado.
+    // Devolver todo devuelve lo cobrado; devolver una parte, lo que se cobró por esa parte (con el descuento): 1.050 × 3.000 / 3.150.
     expect(montoDevolucion(venta, [{ indice: 0, cantidad: 3 }])).toBe(3000);
-    expect(montoDevolucion(venta, [{ indice: 0, cantidad: 1 }])).toBe(1050);
+    expect(montoDevolucion(venta, [{ indice: 0, cantidad: 1 }])).toBe(1000);
     // Sin descuento no queda el campo; un descuento que deja la venta en cero no se acepta.
     const sin = await registrarVenta(db, { items: [itemDeProducto(p, 1)], medio: 'efectivo', pagaCon: null, clienteId: null, descuento: 0 });
     expect('descuento' in sin).toBe(false);

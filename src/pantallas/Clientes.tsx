@@ -278,7 +278,18 @@ function EditarCliente({ cliente, onCerrar, onGuardado }: { cliente?: Cliente; o
 }
 
 /** Un cliente paga (todo o parte de) lo que debe. Se usa acá y desde la caja ("Cobrar un fiado"). */
-export function RegistrarPago({ cliente, saldo, onCerrar }: { cliente: Cliente; saldo: number; onCerrar: () => void }) {
+export function RegistrarPago({
+  cliente,
+  saldo,
+  onCerrar,
+  onHecho,
+}: {
+  cliente: Cliente;
+  saldo: number;
+  onCerrar: () => void;
+  /** Con el pago anotado: cuánto, por dónde y cuánto le queda (negativo si quedó a favor). */
+  onHecho?: (r: { monto: number; medio: Exclude<MedioPago, 'fiado'>; resto: number }) => void;
+}) {
   const avisar = useAvisar();
   const [monto, setMonto] = useState<number | null>(saldo > 0 ? saldo : null);
   const [medio, setMedio] = useState<Exclude<MedioPago, 'fiado'>>('efectivo');
@@ -294,6 +305,7 @@ export function RegistrarPago({ cliente, saldo, onCerrar }: { cliente: Cliente; 
             await registrarPagoFiado(db, cliente.id!, monto ?? 0, medio);
             const resto = saldo - (monto ?? 0);
             avisar({ texto: resto > 0 ? `Anotado. Le quedan ${formatPesos(resto)}.` : 'Anotado. ¡Quedó al día!', tipo: 'ok' });
+            onHecho?.({ monto: monto ?? 0, medio, resto });
             onCerrar();
           } catch (err) {
             avisar({ texto: errorATexto(err), tipo: 'error' });

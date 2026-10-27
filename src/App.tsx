@@ -55,7 +55,7 @@ function Contenido() {
 }
 
 function Sistema() {
-  const { sesion, salir, entrar } = useSesion();
+  const { sesion, salir, entrar, cambiar } = useSesion();
   const dueño = useEsDueño();
   const [hash, setHash] = useState<IdPantalla>(leerHash);
   const [menuMas, setMenuMas] = useState(false);
@@ -164,7 +164,10 @@ function Sistema() {
                 <strong>{sesion.nombre}</strong>
                 <small>{sesion.admin ? 'Dueño' : 'Empleado'}</small>
               </span>
-              <button type="button" className="boton-icono" onClick={salir} aria-label="Salir" title="Salir">
+              <button type="button" className="boton-icono" onClick={cambiar} aria-label="Cambiar de usuario" title="Cambiar de usuario (la sesión recordada queda)">
+                <Icono nombre="usuario" tam={20} />
+              </button>
+              <button type="button" className="boton-icono" onClick={salir} aria-label="Salir" title="Salir (cierra la sesión recordada)">
                 <Icono nombre="salir" tam={20} />
               </button>
             </div>
@@ -224,18 +227,31 @@ function Sistema() {
               </a>
             ))}
             {sesion && (
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setMenuMas(false);
-                  salir();
-                }}
-              >
-                <Icono nombre="salir" tam={22} />
-                Salir
-                <small className="texto-suave">{sesion.nombre}</small>
-              </button>
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuMas(false);
+                    cambiar();
+                  }}
+                >
+                  <Icono nombre="usuario" tam={22} />
+                  Cambiar de usuario
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuMas(false);
+                    salir();
+                  }}
+                >
+                  <Icono nombre="salir" tam={22} />
+                  Salir
+                  <small className="texto-suave">{sesion.nombre}</small>
+                </button>
+              </>
             )}
             <div className="hoja-estados">
               {estadoRed}

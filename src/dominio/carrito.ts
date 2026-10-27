@@ -182,5 +182,9 @@ export function pagosSugeridos(total: Pesos): Pesos[] {
     const arriba = Math.ceil(total / paso) * paso;
     if (arriba > total) opciones.add(arriba);
   }
-  return [...opciones].sort((a, b) => a - b).slice(0, 5);
+  // El vuelto redondo: para $4.600 el cliente da $10.600 y se le devuelven $6.000 en billetes grandes.
+  const resto = total % 1000;
+  const grande = [10000, 20000].find((b) => b > total);
+  if (resto > 0 && grande) opciones.add(grande + resto);
+  return [...opciones].sort((a, b) => a - b).slice(0, 6);
 }
