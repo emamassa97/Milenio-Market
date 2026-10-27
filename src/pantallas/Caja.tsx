@@ -518,7 +518,9 @@ function Caja() {
       const dividido = !!pagos && pagos.length > 1;
       // El resultado queda a la vista sin aviso flotante: en PC en la tarjeta verde, en el celular en la barra de abajo.
       setModal((m) => (m?.tipo === 'cobro' ? null : m));
-      const resumen: UltimaVenta = { id: venta.id!, total: venta.total, medio: venta.medio, hora: Date.now(), dividido, vuelto: venta.vuelto, cliente: cliente?.nombre, ...(fiado > 0 ? { fiado } : {}) };
+      // Al fiar, cómo queda la cuenta (si tenía saldo a favor, se ve cuánto le queda).
+      const queda = fiado > 0 && cliente?.id !== undefined ? saldoCliente(await db.movimientosFiado.where('clienteId').equals(cliente.id).toArray()) : undefined;
+      const resumen: UltimaVenta = { id: venta.id!, total: venta.total, medio: venta.medio, hora: Date.now(), dividido, vuelto: venta.vuelto, cliente: cliente?.nombre, ...(fiado > 0 ? { fiado, queda } : {}) };
       setUltima(resumen);
       setCobrado(resumen);
       if (ticket.auto) imprimirTicket(venta, ticket);
@@ -1039,7 +1041,7 @@ function Caja() {
                     : `Cobrado ${cobrado.dividido ? 'en 2 pagos' : `con ${nombreMedio(cobrado.medio)}`}`}
             </span>
             <strong className="importe">{formatPesos(cobrado.vuelto && cobrado.vuelto > 0 ? cobrado.vuelto : cobrado.total)}</strong>
-            {cobrado.pagoFiado && <small>{textoQueda(cobrado.queda)}</small>}
+            {(cobrado.pagoFiado || (cobrado.fiado && !cobrado.dividido)) && <small>{textoQueda(cobrado.queda)}</small>}
             {cobrado.dividido && cobrado.fiado && cobrado.fiado > 0 ? <small>{formatPesos(cobrado.fiado)} anotados a {primerNombre(cobrado.cliente ?? '')}</small> : null}
             <button
               type="button"
