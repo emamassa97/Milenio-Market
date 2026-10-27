@@ -3,6 +3,7 @@ import { DENOMINACIONES, resumirTurno, textoCierre, totalConteo, type ResumenTur
 import { carritoVacio, pagosDeVenta, totalCarrito, type Carrito } from '../dominio/carrito';
 import { describirItems, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
+import { normalizarTexto } from '../dominio/entrada';
 import { nombreMedio, type Cliente, type MovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
 import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
 import { db } from '../datos/db';
@@ -100,7 +101,44 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
           </ul>
         </section>
       )}
+      <BuscarVentas />
     </div>
+  );
+}
+
+// Encontrar una venta de cualquier día por producto o por importe exacto (ticket, devolución).
+function BuscarVentas() {
+  const [q, setQ] = useState('');
+  const t = q.trim();
+  const resultados = useConsulta(
+    async () => {
+      if (t.length < 2) return [] as Venta[];
+      const monto = /^\$?\s*[\d.]+$/.test(t) ? Number(t.replace(/\D/g, '')) : 0;
+      const nq = normalizarTexto(t);
+      const encontradas: Venta[] = [];
+      // De la más nueva a la más vieja; con las últimas 30 que coinciden alcanza.
+      await db.ventas
+        .orderBy('fecha')
+        .reverse()
+        .until(() => encontradas.length >= 30)
+        .each((v) => {
+          if (monto > 0 ? v.total === monto : v.items.some((i) => normalizarTexto(i.nombre).includes(nq))) encontradas.push(v);
+        });
+      return encontradas;
+    },
+    [t],
+    [] as Venta[],
+  );
+  return (
+    <section className="tarjeta historial buscar-ventas">
+      <h2 className="titulo-chico">Buscar una venta</h2>
+      <p className="texto-suave">Por producto o por importe exacto, de cualquier día: para reimprimir el ticket o devolver algo.</p>
+      <div className="buscador-campo buscador-chico">
+        <Icono nombre="buscar" tam={18} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ej.: coca o 3450" aria-label="Buscar una venta" />
+      </div>
+      {t.length >= 2 && (resultados.length === 0 ? <p className="texto-suave">No encontré ventas con «{t}».</p> : <VentasDelTurno ventas={resultados} soloDevolver conFecha />)}
+    </section>
   );
 }
 
@@ -400,7 +438,7 @@ function ResultadoCierre({ r, irACaja }: { r: Resultado; irACaja: () => void }) 
   );
 }
 
-function VentasDelTurno({ ventas, soloDevolver = false }: { ventas: Venta[]; soloDevolver?: boolean }) {
+function VentasDelTurno({ ventas, soloDevolver = false, conFecha = false }: { ventas: Venta[]; soloDevolver?: boolean; conFecha?: boolean }) {
   const avisar = useAvisar();
   const pedirDueño = usePedirDueño();
   const [anulando, setAnulando] = useState<number | null>(null);
@@ -418,7 +456,7 @@ function VentasDelTurno({ ventas, soloDevolver = false }: { ventas: Venta[]; sol
             return (
               <li key={v.id} className={v.anulada ? 'anulada' : ''}>
                 <span>
-                  <strong>{hora(v.fecha)}</strong> · {pagosDeVenta(v).map((p) => (p.medio === 'fiado' && cliente ? `Fiado a ${cliente}` : nombreMedio(p.medio))).join(' + ')}
+                  <strong>{conFecha ? fechaCorta(v.fecha) : hora(v.fecha)}</strong> · {pagosDeVenta(v).map((p) => (p.medio === 'fiado' && cliente ? `Fiado a ${cliente}` : nombreMedio(p.medio))).join(' + ')}
                   {devuelto > 0 && <span className="insignia insignia-aviso">Devuelto {formatPesos(devuelto)}</span>}
                   <small className="texto-suave"> · {describirItems(v.items)}</small>
                 </span>

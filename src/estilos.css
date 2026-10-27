@@ -359,6 +359,7 @@ input[type='file'] { padding: 10px; }
 .ultima-venta-arriba { display: none; }
 .boton-retiro { align-self: center; font-size: 0.92rem; color: var(--texto); }
 .acciones-caja { gap: 4px 16px; }
+.buscar-ventas .buscador-campo { margin: 4px 0 8px; }
 .acciones-caja .boton-retiro { align-self: auto; }
 .acciones-secundarias { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .acciones-secundarias .boton { white-space: nowrap; min-height: 46px; font-size: 0.92rem; padding: 0 10px; }
