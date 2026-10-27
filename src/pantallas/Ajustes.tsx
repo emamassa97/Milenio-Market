@@ -189,6 +189,9 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
                   : 'Todo lo cargado en este equipo ya está copiado en la nube.'}
             </span>
             <span>{estado.ultima ? `Última vez: ${fechaCorta(estado.ultima)}` : 'Todavía no se subió nada.'}</span>
+            <span>
+              Clave de esta caja: <strong>{estado.clave}</strong>. Guardala: con ella recuperás todo en otra compu.
+            </span>
           </p>
           <div className="botonera">
             <button type="button" className="boton boton-primario" disabled={enCurso || !navigator.onLine} onClick={subir}>
@@ -211,7 +214,7 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
       ) : (
         <>
           <p className="texto-suave">
-            Con la copia en la nube, cada venta, producto y fiado se guarda también en internet. La caja sigue andando igual sin conexión y sube lo pendiente cuando vuelve. Escribí la clave de la nube una sola vez.
+            Con la copia en la nube, cada venta, producto y fiado se guarda también en internet. La caja sigue andando igual sin conexión y sube lo pendiente cuando vuelve. La primera caja se activa sola; en otra compu, escribí la clave que figura en la primera.
           </p>
           <label className="campo">
             <span className="campo-etiqueta">Clave de la nube</span>

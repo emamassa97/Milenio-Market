@@ -108,3 +108,39 @@ it('el ejemplo también queda listo para subir', async () => {
   await cargarEjemplo(db);
   expect(await pendientes(db)).toBeGreaterThan(20);
 });
+
+describe('alta automática de la clave', () => {
+  const crearNube = () => {
+    let guardada: string | undefined;
+    const consulta: Consulta = async (texto, parametros) => {
+      if (texto.includes('insert into config_nube')) {
+        if (guardada) return [];
+        guardada = parametros[0] as string;
+        return [{ valor: guardada }];
+      }
+      if (texto.includes('from config_nube')) return guardada ? [{ valor: guardada }] : [];
+      return [];
+    };
+    return consulta;
+  };
+  const alta = (consulta: Consulta, clave?: string) =>
+    manejar(new Request('http://x/api/sincronizar', { method: 'POST', headers: { 'x-alta': '1' } }), { consulta, clave });
+  const subir = (consulta: Consulta, x: string) =>
+    manejar(new Request('http://x/api/sincronizar', { method: 'POST', headers: { 'x-clave': x }, body: JSON.stringify({ dispositivo: 'd', registros: [] }) }), { consulta, clave: undefined });
+
+  it('la primera caja recibe una clave y la segunda no', async () => {
+    const consulta = crearNube();
+    const r1 = await alta(consulta);
+    expect(r1.status).toBe(200);
+    const { clave } = (await r1.json()) as { clave: string };
+    expect(clave.length).toBeGreaterThan(20);
+    expect((await alta(consulta)).status).toBe(409);
+    expect((await subir(consulta, clave)).status).toBe(200);
+    expect((await subir(consulta, 'otra')).status).toBe(401);
+  });
+  it('sin alta nadie entra, y con SYNC_CLAVE no hay alta', async () => {
+    const consulta = crearNube();
+    expect((await subir(consulta, '')).status).toBe(401);
+    expect((await alta(consulta, 'fija')).status).toBe(409);
+  });
+});

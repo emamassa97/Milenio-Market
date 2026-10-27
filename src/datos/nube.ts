@@ -109,6 +109,21 @@ async function mensajeServidor(r: Response): Promise<string> {
   }
 }
 
+/**
+ * Si este equipo todavía no tiene clave, le pide una a la nube. Sólo la
+ * consigue la primera caja que se conecta; si ya la tiene otra, no hace nada
+ * (en ese caso la clave se escribe a mano en Ajustes).
+ */
+export async function pedirAlta(db: BaseKiosco, url = '/api/sincronizar'): Promise<boolean> {
+  if (await leerAjuste<string>(db, 'nube.clave', '')) return true;
+  const r = await fetch(url, { method: 'POST', headers: { 'x-alta': '1' } });
+  if (!r.ok) return false;
+  const { clave } = (await r.json()) as { clave?: string };
+  if (!clave) return false;
+  await guardarAjuste(db, 'nube.clave', clave);
+  return true;
+}
+
 let enCurso: Promise<{ subidas: number } | null> | null = null;
 
 /**

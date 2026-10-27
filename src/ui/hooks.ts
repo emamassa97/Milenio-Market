@@ -1,6 +1,6 @@
 import { liveQuery } from 'dexie';
 import { db } from '../datos/db';
-import { sincronizarAhora } from '../datos/nube';
+import { pedirAlta, sincronizarAhora } from '../datos/nube';
 import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react';
 
 /** Lee de la base y se actualiza sola cuando los datos cambian. */
@@ -73,14 +73,18 @@ export function useUnaVez(): [boolean, (accion: () => Promise<void>) => Promise<
 }
 
 /**
- * Sube los cambios a la nube cada minuto y apenas vuelve internet.
- * Sin clave guardada no hace nada; los errores quedan anotados para mostrarlos.
+ * Sube los cambios a la nube cada minuto y apenas vuelve internet. La primera
+ * vez, si la nube todavía no tiene dueño, este equipo recibe la clave solo.
+ * Los errores quedan anotados para mostrarlos.
  */
 export function useCopiaEnLaNube(activa: boolean) {
   useEffect(() => {
     if (!activa) return;
     const subir = () => {
-      if (navigator.onLine) sincronizarAhora(db).catch(() => {});
+      if (!navigator.onLine) return;
+      pedirAlta(db)
+        .then((conClave) => (conClave ? sincronizarAhora(db) : null))
+        .catch(() => {});
     };
     subir();
     const reloj = window.setInterval(subir, 60_000);
