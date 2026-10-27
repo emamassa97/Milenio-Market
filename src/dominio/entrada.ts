@@ -36,3 +36,8 @@ export function telefonoWhatsApp(telefono: string): string | null {
   if (conQuince) d = conQuince[1]! + conQuince[2]!;
   return `549${d}`;
 }
+
+/** Minúsculas y sin acentos, para buscar "cafe" y encontrar "Café". */
+export function normalizarTexto(texto: string): string {
+  return texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}

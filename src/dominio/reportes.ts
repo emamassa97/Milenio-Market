@@ -44,6 +44,11 @@ export function resumirVentas(ventas: Venta[]): ResumenVentas {
     devuelto += v.total - neto;
     for (const p of pagosDeVenta(v)) porMedio[p.medio] += p.monto;
     porHora[new Date(v.fecha).getHours()]! += neto;
+    // El descuento de la venta sale de la ganancia (los renglones siguen a precio de lista).
+    if (v.descuento) {
+      if (v.items.some((it) => it.costoUnitario > 0)) ganancia -= v.descuento;
+      else ventasSinCosto -= v.descuento;
+    }
     for (const it of itemsNetos(v)) {
       const sub = subtotal(it);
       if (it.costoUnitario > 0) ganancia += sub - it.costoUnitario * it.cantidad;
@@ -69,6 +74,41 @@ export function resumirVentas(ventas: Venta[]): ResumenVentas {
     porHora,
     productos: [...productos.values()].sort((a, b) => b.total - a.total),
   };
+}
+
+export interface FilaDevuelto {
+  clave: string;
+  nombre: string;
+  /** Unidades (o veces, en los productos por peso) que volvieron. */
+  unidades: number;
+  importe: Pesos;
+  /** El motivo que más se repitió, si lo anotaron. */
+  motivo: string;
+}
+
+/** Qué productos vuelven más (por lo que se devolvió en el período), para detectar lo que viene fallado o vencido. */
+export function masDevueltos(ventas: Venta[]): FilaDevuelto[] {
+  const filas = new Map<string, FilaDevuelto & { motivos: Map<string, number> }>();
+  for (const v of ventas) {
+    if (v.anulada) continue;
+    for (const d of v.devoluciones ?? []) {
+      for (const { indice, cantidad } of d.items) {
+        const it = v.items[indice];
+        if (!it || cantidad <= 0) continue;
+        const clave = it.productoId !== null ? `p${it.productoId}` : `libre:${it.nombre}`;
+        const nombre = it.gramos ? it.nombre.replace(/ \([\d.,]+ k?g\)$/, '') : it.nombre;
+        const fila = filas.get(clave) ?? { clave, nombre, unidades: 0, importe: 0, motivo: '', motivos: new Map<string, number>() };
+        fila.unidades += cantidad;
+        fila.importe += Math.round(cantidad * it.precioUnitario);
+        const motivo = d.motivo.trim();
+        if (motivo) fila.motivos.set(motivo, (fila.motivos.get(motivo) ?? 0) + cantidad);
+        filas.set(clave, fila);
+      }
+    }
+  }
+  return [...filas.values()]
+    .map(({ motivos, ...fila }) => ({ ...fila, motivo: [...motivos.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '' }))
+    .sort((a, b) => b.unidades - a.unidades || b.importe - a.importe);
 }
 
 export function paraReponer(productos: Producto[]): Producto[] {

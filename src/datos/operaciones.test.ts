@@ -1,6 +1,8 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { itemDeProducto, itemMontoLibre } from '../dominio/carrito';
+import { montoDevolucion } from '../dominio/devoluciones';
+import { resumirVentas } from '../dominio/reportes';
 import { BaseKiosco } from './db';
 import { estaVacia, exportarTodo, restaurarCopia } from './copia';
 import {
@@ -42,6 +44,35 @@ describe('turnos y ventas', () => {
   it('no deja vender sin caja abierta', async () => {
     await expect(registrarVenta(db, { items: [itemMontoLibre(100, '')], medio: 'efectivo', pagaCon: null, clienteId: null }))
       .rejects.toThrow(/abrí la caja/);
+  });
+
+  it('el descuento baja el total, queda en la venta y sale de la ganancia', async () => {
+    await abrirTurno(db, 'Emanuel', 0);
+    const id = await guardarProducto(db, prod({ precio: 1050, costo: 700 }));
+    const p = (await db.productos.get(id))!;
+    // "Son 3.150, dejámelo en 3.000".
+    const venta = await registrarVenta(db, { items: [itemDeProducto(p, 3)], medio: 'efectivo', pagaCon: 5000, clienteId: null, descuento: 150 });
+    expect(venta.total).toBe(3000);
+    expect(venta.descuento).toBe(150);
+    expect(venta.vuelto).toBe(2000);
+    expect(resumirVentas([venta]).total).toBe(3000);
+    expect(resumirVentas([venta]).ganancia).toBe(3150 - 2100 - 150);
+    // Devolver todo nunca devuelve más de lo cobrado.
+    expect(montoDevolucion(venta, [{ indice: 0, cantidad: 3 }])).toBe(3000);
+    expect(montoDevolucion(venta, [{ indice: 0, cantidad: 1 }])).toBe(1050);
+    // Sin descuento no queda el campo; un descuento que deja la venta en cero no se acepta.
+    const sin = await registrarVenta(db, { items: [itemDeProducto(p, 1)], medio: 'efectivo', pagaCon: null, clienteId: null, descuento: 0 });
+    expect('descuento' in sin).toBe(false);
+    await expect(registrarVenta(db, { items: [itemDeProducto(p, 1)], medio: 'efectivo', pagaCon: null, clienteId: null, descuento: 1050 })).rejects.toThrow(/descuento/);
+    await expect(registrarVenta(db, { items: [itemDeProducto(p, 1)], medio: 'efectivo', pagaCon: null, clienteId: null, descuento: -5 })).rejects.toThrow(/descuento/);
+  });
+
+  it('cerrar sin contar queda "sin contar", no "faltó todo"', async () => {
+    await abrirTurno(db, 'Emanuel', 5000);
+    const cerrado = await cerrarTurno(db, {}, '');
+    expect(cerrado.contado).toBeNull();
+    expect(cerrado.conteo).toBeNull();
+    expect(cerrado.esperado).toBe(5000);
   });
 
   it('una venta descuenta stock y anularla lo devuelve', async () => {

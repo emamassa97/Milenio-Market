@@ -1,21 +1,23 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DENOMINACIONES, resumirTurno, textoCierre, totalConteo, type ResumenTurno } from '../dominio/caja';
-import { pagosDeVenta, totalCarrito, type Carrito } from '../dominio/carrito';
+import { carritoVacio, pagosDeVenta, totalCarrito, type Carrito } from '../dominio/carrito';
 import { describirItems, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
+import { normalizarTexto } from '../dominio/entrada';
 import { nombreMedio, type Cliente, type MovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
 import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
 import { db } from '../datos/db';
-import { anularVenta, cerrarTurno, registrarMovimientoCaja, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
-import { CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
-import { leerGuardado, useConsulta, useUnaVez } from '../ui/hooks';
+import { anularVenta, cerrarTurno, registrarMovimientoCaja, resumenDeTurno, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
+import { CampoCantidad, CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
+import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 import { DevolverVenta } from './Devolver';
 
 interface Resultado {
-  diferencia: number;
-  contado: number;
+  /** null: se cerró sin contar. */
+  diferencia: number | null;
+  contado: number | null;
   esperado: number;
   vendido: number;
   ventas: number;
@@ -74,7 +76,7 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
           <p className="texto-suave">Para devolver o reimprimir el ticket de una venta de otro día, abrí ese cierre.</p>
           <ul>
             {historial.map((t) => {
-              const dif = (t.contado ?? 0) - (t.esperado ?? 0);
+              const dif = t.contado === null ? null : t.contado - (t.esperado ?? 0);
               return (
                 <li key={t.id} className={abierto === t.id ? 'historial-abierto' : ''}>
                   <button type="button" className="historial-fila" aria-expanded={abierto === t.id} onClick={() => setAbierto(abierto === t.id ? null : t.id!)}>
@@ -83,8 +85,8 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
                       {t.nota && <small className="texto-suave"> · {t.nota}</small>}
                     </span>
                     {dueño ? (
-                      <span className={`importe ${dif < 0 ? 'texto-alerta' : dif > 0 ? 'texto-aviso' : ''}`}>
-                        {dif === 0 ? 'Justo' : dif < 0 ? `Faltaron ${formatPesos(-dif)}` : `Sobraron ${formatPesos(dif)}`}
+                      <span className={`importe ${dif === null ? 'texto-suave' : dif < 0 ? 'texto-alerta' : dif > 0 ? 'texto-aviso' : ''}`}>
+                        {dif === null ? 'Sin contar' : dif === 0 ? 'Justo' : dif < 0 ? `Faltaron ${formatPesos(-dif)}` : `Sobraron ${formatPesos(dif)}`}
                       </span>
                     ) : (
                       <span className="texto-suave">Cerrada</span>
@@ -100,20 +102,72 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
           </ul>
         </section>
       )}
+      <BuscarVentas />
     </div>
+  );
+}
+
+// Encontrar una venta de cualquier día por producto o por importe exacto (ticket, devolución).
+function BuscarVentas() {
+  const [q, setQ] = useState('');
+  const t = q.trim();
+  const resultados = useConsulta(
+    async () => {
+      if (t.length < 2) return [] as Venta[];
+      const monto = /^\$?\s*[\d.]+$/.test(t) ? Number(t.replace(/\D/g, '')) : 0;
+      const nq = normalizarTexto(t);
+      const encontradas: Venta[] = [];
+      // De la más nueva a la más vieja; con las últimas 30 que coinciden alcanza.
+      await db.ventas
+        .orderBy('fecha')
+        .reverse()
+        .until(() => encontradas.length >= 30)
+        .each((v) => {
+          if (monto > 0 ? v.total === monto : v.items.some((i) => normalizarTexto(i.nombre).includes(nq))) encontradas.push(v);
+        });
+      return encontradas;
+    },
+    [t],
+    [] as Venta[],
+  );
+  return (
+    <section className="tarjeta historial buscar-ventas">
+      <h2 className="titulo-chico">Buscar una venta</h2>
+      <p className="texto-suave">Por producto o por importe exacto, de cualquier día: para reimprimir el ticket o devolver algo.</p>
+      <div className="buscador-campo buscador-chico">
+        <Icono nombre="buscar" tam={18} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ej.: coca o 3450" aria-label="Buscar una venta" />
+      </div>
+      {t.length >= 2 && (resultados.length === 0 ? <p className="texto-suave">No encontré ventas con «{t}».</p> : <VentasDelTurno ventas={resultados} soloDevolver conFecha />)}
+    </section>
   );
 }
 
 // Ventas que quedaron armadas en la caja sin cobrar (el navegador las guarda aunque se cambie de pantalla).
 function ventasSinCobrar(): string | null {
-  const espera = leerGuardado<{ carrito: Carrito }[]>('milenio.espera', []);
-  const carrito = leerGuardado<Carrito>('milenio.carrito', { items: [] });
-  if (espera.length === 0 && carrito.items.length === 0) return null;
-  const partes = [
-    espera.length > 0 && `${espera.length === 1 ? 'una venta en espera' : `${espera.length} ventas en espera`} (${formatPesos(espera.reduce((s, e) => s + totalCarrito(e.carrito), 0))})`,
-    carrito.items.length > 0 && `una venta sin cobrar (${formatPesos(totalCarrito(carrito))})`,
-  ].filter(Boolean);
+  const espera = resumenEspera(leerGuardado<unknown>(LLAVE_ESPERA, []));
+  const guardado = leerGuardado<Partial<Carrito>>(LLAVE_CARRITO, carritoVacio);
+  const carrito: Carrito = Array.isArray(guardado?.items) ? { items: guardado.items } : carritoVacio;
+  if (espera.cantidad === 0 && carrito.items.length === 0) return null;
+  const partes = [espera.cantidad > 0 && `${espera.texto.charAt(0).toLowerCase()}${espera.texto.slice(1)} (${formatPesos(espera.total)})`, carrito.items.length > 0 && `una venta sin cobrar (${formatPesos(totalCarrito(carrito))})`].filter(Boolean);
   return `Hay ${partes.join(' y ')}.`;
+}
+
+// Se vuelve a mirar al volver a la pestaña o cuando otra pestaña cobra o deja algo en espera.
+function useVentasSinCobrar(): string | null {
+  const [texto, setTexto] = useState(ventasSinCobrar);
+  useEffect(() => {
+    const revisar = () => setTexto(ventasSinCobrar());
+    window.addEventListener('focus', revisar);
+    window.addEventListener('storage', revisar);
+    document.addEventListener('visibilitychange', revisar);
+    return () => {
+      window.removeEventListener('focus', revisar);
+      window.removeEventListener('storage', revisar);
+      document.removeEventListener('visibilitychange', revisar);
+    };
+  }, []);
+  return texto;
 }
 
 function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado: (r: Resultado) => void; irACaja: () => void }) {
@@ -131,14 +185,24 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
   const contoAlgo = Object.values(conteo).some((v) => v > 0);
   const diferencia = contado - resumen.efectivoEsperado;
   const fiadoCobrado = Object.values(resumen.cobrosFiado).reduce((a, b) => a + b, 0);
-  const sinCobrar = useMemo(ventasSinCobrar, []);
+  const sinCobrar = useVentasSinCobrar();
   const textoCerrar = !confirmar
     ? 'Cerrar turno'
-    : sinCobrar
-      ? 'Hay ventas sin cobrar. ¿Cerrar igual?'
-      : !contoAlgo
-        ? 'No contaste nada. ¿Cerrar igual?'
-        : `Sí, cerrar · contaste ${formatPesos(contado)}`;
+    : sinCobrar && !contoAlgo
+      ? 'Hay ventas sin cobrar y no contaste nada. ¿Cerrar igual?'
+      : sinCobrar
+        ? 'Hay ventas sin cobrar. ¿Cerrar igual?'
+        : !contoAlgo
+          ? 'No contaste nada. ¿Cerrar igual?'
+          : `Sí, cerrar · contaste ${formatPesos(contado)}`;
+
+  // La confirmación se apaga sola a los 6 s y en cuanto se toca el conteo: si corrige un billete, no queda el "Sí, cerrar" prendido.
+  useEffect(() => {
+    if (!confirmar) return;
+    const t = window.setTimeout(() => setConfirmar(false), 6000);
+    return () => window.clearTimeout(t);
+  }, [confirmar]);
+  useEffect(() => setConfirmar(false), [conteo]);
 
   const cerrar = () => {
     if (!confirmar) {
@@ -148,8 +212,8 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
     unaVez(async () => {
     try {
       onCerrado({
-        diferencia,
-        contado,
+        diferencia: contoAlgo ? diferencia : null,
+        contado: contoAlgo ? contado : null,
         esperado: resumen.efectivoEsperado,
         vendido: resumen.vendidoNeto,
         ventas: resumen.cantidadVentas,
@@ -220,8 +284,11 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
               {dueño && (
                 <div className="cuentas-total">
                   <dt>Debería haber</dt>
-                  <dd className="importe">{formatPesos(resumen.efectivoEsperado)}</dd>
+                  <dd className={`importe ${resumen.efectivoEsperado < 0 ? 'texto-alerta' : ''}`}>{formatPesos(resumen.efectivoEsperado)}</dd>
                 </div>
+              )}
+              {dueño && resumen.efectivoEsperado < 0 && (
+                <p className="texto-alerta">Salió más plata de la que entró: revisá los retiros y gastos anotados, alguno puede estar de más.</p>
               )}
               {contoAlgo && (
                 <div className="cuentas-total">
@@ -293,13 +360,11 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
               {DENOMINACIONES.map((d) => (
                 <label key={d} className="billete">
                   <span className="importe">{formatPesos(d)}</span>
-                  <input
-                    inputMode="numeric"
-                    value={conteo[String(d)] || ''}
-                    placeholder="0"
-                    onFocus={(e) => e.currentTarget.select()}
-                    onChange={(e) => setConteo({ ...conteo, [String(d)]: Number(e.target.value.replace(/\D/g, '')) || 0 })}
-                    aria-label={`Cantidad de billetes de ${formatPesos(d)}`}
+                  <CampoCantidad
+                    valor={conteo[String(d)] || 0}
+                    vacioEnCero
+                    onCambio={(n) => setConteo((c) => ({ ...c, [String(d)]: n }))}
+                    ariaLabel={`Cantidad de billetes de ${formatPesos(d)}`}
                   />
                   {conteo[String(d)] ? <span className="importe texto-suave">{formatPesos(d * conteo[String(d)]!)}</span> : <span className="billete-vacio">—</span>}
                 </label>
@@ -320,7 +385,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
             {contoAlgo && dueño && (
               <div className={`diferencia ${diferencia === 0 ? 'diferencia-justa' : diferencia < 0 ? 'diferencia-falta' : 'diferencia-sobra'}`}>
                 <strong>{diferencia === 0 ? 'Da justo' : diferencia < 0 ? `Faltan ${formatPesos(-diferencia)}` : `Sobran ${formatPesos(diferencia)}`}</strong>
-                {diferencia !== 0 && <input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Anotá el motivo (opcional)" aria-label="Motivo de la diferencia" />}
+                {diferencia !== 0 && <input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Motivo (opcional)" aria-label="Motivo de la diferencia" />}
               </div>
             )}
             <button type="button" className={`boton boton-grande ${confirmar ? 'boton-peligro' : 'boton-primario'}`} onClick={cerrar} disabled={cerrando}>
@@ -339,13 +404,15 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
 
 function ResultadoCierre({ r, irACaja }: { r: Resultado; irACaja: () => void }) {
   const avisar = useAvisar();
-  const tono = r.diferencia === 0 ? 'justo' : r.diferencia < 0 ? 'falta' : 'sobra';
+  const tono = r.diferencia === null ? 'sin-contar' : r.diferencia === 0 ? 'justo' : r.diferencia < 0 ? 'falta' : 'sobra';
   return (
     <section className={`tarjeta resultado-cierre resultado-${tono}`}>
       <span className="resultado-icono">
-        <Icono nombre={r.diferencia === 0 ? 'check' : 'alerta'} tam={30} />
+        <Icono nombre={r.diferencia === 0 || r.diferencia === null ? 'check' : 'alerta'} tam={30} />
       </span>
-      <h1>{r.diferencia === 0 ? 'Caja cerrada: dio justo' : r.diferencia < 0 ? `Faltaron ${formatPesos(-r.diferencia)}` : `Sobraron ${formatPesos(r.diferencia)}`}</h1>
+      <h1>
+        {r.diferencia === null ? 'Caja cerrada sin contar' : r.diferencia === 0 ? 'Caja cerrada: dio justo' : r.diferencia < 0 ? `Faltaron ${formatPesos(-r.diferencia)}` : `Sobraron ${formatPesos(r.diferencia)}`}
+      </h1>
       <dl className="resultado-cifras">
         <div>
           <dt>Vendiste</dt>
@@ -361,7 +428,7 @@ function ResultadoCierre({ r, irACaja }: { r: Resultado; irACaja: () => void }) 
         </div>
         <div>
           <dt>Contaste</dt>
-          <dd className="importe">{formatPesos(r.contado)}</dd>
+          <dd className="importe">{r.contado === null ? 'Sin contar' : formatPesos(r.contado)}</dd>
         </div>
       </dl>
       <div className="botonera botonera-centrada">
@@ -383,7 +450,7 @@ function ResultadoCierre({ r, irACaja }: { r: Resultado; irACaja: () => void }) 
   );
 }
 
-function VentasDelTurno({ ventas, soloDevolver = false }: { ventas: Venta[]; soloDevolver?: boolean }) {
+function VentasDelTurno({ ventas, soloDevolver = false, conFecha = false }: { ventas: Venta[]; soloDevolver?: boolean; conFecha?: boolean }) {
   const avisar = useAvisar();
   const pedirDueño = usePedirDueño();
   const [anulando, setAnulando] = useState<number | null>(null);
@@ -401,7 +468,7 @@ function VentasDelTurno({ ventas, soloDevolver = false }: { ventas: Venta[]; sol
             return (
               <li key={v.id} className={v.anulada ? 'anulada' : ''}>
                 <span>
-                  <strong>{hora(v.fecha)}</strong> · {pagosDeVenta(v).map((p) => (p.medio === 'fiado' && cliente ? `Fiado a ${cliente}` : nombreMedio(p.medio))).join(' + ')}
+                  <strong>{conFecha ? fechaCorta(v.fecha) : hora(v.fecha)}</strong> · {pagosDeVenta(v).map((p) => (p.medio === 'fiado' && cliente ? `Fiado a ${cliente}` : nombreMedio(p.medio))).join(' + ')}
                   {devuelto > 0 && <span className="insignia insignia-aviso">Devuelto {formatPesos(devuelto)}</span>}
                   <small className="texto-suave"> · {describirItems(v.items)}</small>
                 </span>
@@ -477,12 +544,29 @@ export function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
   const [monto, setMonto] = useState<number | null>(null);
   const [motivo, setMotivo] = useState('');
   const [enCurso, unaVez] = useUnaVez();
+  const dueño = useEsDueño();
+  // Lo que debería haber en la caja ahora: sacar más que eso casi siempre es un cero de más.
+  const enCaja = useConsulta(
+    async () => {
+      const t = await turnoAbierto(db);
+      return t ? (await resumenDeTurno(db, t)).resumen.efectivoEsperado : null;
+    },
+    [],
+    null as number | null,
+  );
+  const [confirmarPasado, setConfirmarPasado] = useState(false);
+  const sePasa = tipo !== 'ingreso' && enCaja !== null && monto !== null && monto > enCaja;
+  useEffect(() => setConfirmarPasado(false), [monto, tipo]);
   return (
     <Modal titulo="Retiro, gasto o ingreso" onCerrar={onCerrar}>
       <form
         className="formulario"
         onSubmit={(e) => {
           e.preventDefault();
+          if (sePasa && !confirmarPasado) {
+            setConfirmarPasado(true);
+            return;
+          }
           unaVez(async () => {
             // Retiros y gastos sacan plata de la caja: para un empleado los autoriza el dueño.
             const real = tipo === 'mercaderia' ? 'gasto' : tipo;
@@ -536,8 +620,13 @@ export function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
           <span className="campo-etiqueta">Motivo</span>
           <input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder={tipo === 'mercaderia' ? 'Ej.: Distribuidora Coca-Cola' : tipo === 'gasto' ? 'Ej.: Luz, limpieza, delivery' : tipo === 'retiro' ? 'Ej.: Me llevo para el banco' : 'Ej.: Cambio del banco'} />
         </label>
-        <button type="submit" className="boton boton-primario boton-grande" disabled={!monto || monto <= 0 || enCurso}>
-          Anotar
+        {sePasa && (
+          <p className="texto-alerta" role="alert">
+            {dueño ? `En la caja debería haber ${formatPesos(Math.max(0, enCaja))}: con eso queda en negativo.` : 'Es más de lo que hay en la caja.'} Si está bien, anotalo igual.
+          </p>
+        )}
+        <button type="submit" className={`boton boton-grande ${sePasa && confirmarPasado ? 'boton-peligro' : 'boton-primario'}`} disabled={!monto || monto <= 0 || enCurso}>
+          {sePasa && confirmarPasado ? 'Sí, anotar igual' : sePasa ? '¿Anotar igual?' : 'Anotar'}
         </button>
       </form>
     </Modal>

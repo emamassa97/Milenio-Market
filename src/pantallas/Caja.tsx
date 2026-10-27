@@ -2,6 +2,7 @@ import { useSesion } from '../ui/sesion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   agregarItem,
+  aplicarDescuento,
   calcularVuelto,
   cambiarCantidad,
   carritoVacio,
@@ -16,6 +17,7 @@ import {
   pagosSugeridos,
   quitarItem,
   subtotal,
+  sumaCarrito,
   totalCarrito,
   unidades,
   type Carrito,
@@ -39,12 +41,14 @@ import {
   registrarVenta,
   turnoAbierto,
 } from '../datos/operaciones';
-import { CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
+import { CampoCantidad, CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
-import { leerGuardado, pitido, useConsulta, useUnaVez } from '../ui/hooks';
+import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, LLAVE_ULTIMA, pitido, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { NuevoMovimiento } from './Cierre';
+import { RegistrarPago } from './Clientes';
 import { DevolverVenta } from './Devolver';
+import { IngresoMercaderia } from './Productos';
 
 // El carrito y las ventas en espera sobreviven a cambiar de pantalla, a recargar y a cerrar el navegador.
 function useGuardado<T>(llave: string, inicial: T) {
@@ -165,9 +169,9 @@ function Caja() {
   const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
   const pedirDueño = usePedirDueño();
   const { sesion } = useSesion();
-  const [carrito, setCarrito] = useGuardado<Carrito>('milenio.carrito', carritoVacio);
-  const [espera, setEspera] = useGuardado<Espera[]>('milenio.espera', []);
-  const [ultima, setUltima] = useGuardado<UltimaVenta | null>('milenio.ultima', null);
+  const [carrito, setCarrito] = useGuardado<Carrito>(LLAVE_CARRITO, carritoVacio);
+  const [espera, setEspera] = useGuardado<Espera[]>(LLAVE_ESPERA, []);
+  const [ultima, setUltima] = useGuardado<UltimaVenta | null>(LLAVE_ULTIMA, null);
   const ticket = useConsulta(() => leerAjustesTicket(db), [], TICKET_INICIAL);
   const [entrada, setEntrada] = useState('');
   const [resaltado, setResaltado] = useState(0);
@@ -185,6 +189,12 @@ function Caja() {
     | { tipo: 'devolver'; venta: Venta }
     | { tipo: 'limite'; aviso: string; pagos?: Pago[]; pagaCon: number | null }
     | { tipo: 'movimiento' }
+    | { tipo: 'mercaderia' }
+    | { tipo: 'cobrarFiado' }
+    | { tipo: 'pagoFiado'; cliente: Cliente; saldo: number }
+    | { tipo: 'descuento' }
+    | { tipo: 'precio'; producto: Producto | null }
+    | { tipo: 'cobro' }
   >(null);
   const [confirmarAnular, setConfirmarAnular] = useState(false);
   const dueño = useEsDueño();
@@ -194,6 +204,10 @@ function Caja() {
   const [cobrado, setCobrado] = useState<UltimaVenta | null>(null);
   const buscador = useRef<HTMLInputElement>(null);
   const cobrandoRef = useRef(false);
+  const carritoRef = useRef(carrito);
+  carritoRef.current = carrito;
+  const modalRef = useRef(modal);
+  modalRef.current = modal;
   const ultimoAgregado = useRef(0);
   const ultimoError = useRef(0);
 
@@ -242,14 +256,13 @@ function Caja() {
         setModal({ tipo: 'peso', producto: p });
         return;
       }
-      setCarrito((c) => {
-        // Se vende igual, pero se avisa: el stock del sistema puede estar mal y conviene saberlo.
-        const enCarrito = c.items.filter((i) => i.productoId === p.id).reduce((n, i) => n + i.cantidad, 0);
-        if (p.stock - enCarrito - cantidad < 0 && p.stock - enCarrito >= 0) {
-          avisar({ texto: `Ojo: en el sistema ${p.stock === 1 ? 'queda 1' : `quedan ${p.stock}`} de ${p.nombre}.`, tipo: 'info' });
-        }
-        return agregarItem(c, itemDeProducto(p, cantidad));
-      });
+      // Se vende igual, pero se avisa (una vez, al pasarse): el stock del sistema puede estar mal y conviene saberlo.
+      // Un producto sin stock ni mínimo cargados no se sigue, así que no avisa.
+      const enCarrito = carritoRef.current.items.filter((i) => i.productoId === p.id).reduce((n, i) => n + i.cantidad, 0);
+      if ((p.stock > 0 || p.stockMinimo > 0) && p.stock - enCarrito - cantidad < 0 && p.stock - enCarrito >= 0) {
+        avisar({ texto: `Ojo: en el sistema ${p.stock === 1 ? 'queda 1' : `quedan ${p.stock}`} de ${p.nombre}.`, tipo: 'info' });
+      }
+      setCarrito((c) => agregarItem(c, itemDeProducto(p, cantidad)));
       setEntrada('');
       setResaltado(0);
       setPagaCon(null);
@@ -278,9 +291,25 @@ function Caja() {
   // Todo sincrónico: el lector USB escribe muy rápido y no hay que perder ni mezclar códigos.
   const procesarEntrada = () => {
     const texto = buscador.current?.value ?? entrada;
-    const { cantidad, busqueda: q } = interpretarEntrada(texto);
-    if (!q) return;
+    const { cantidad, busqueda: q, consulta } = interpretarEntrada(texto);
+    if (!q) {
+      if (consulta) {
+        setEntrada('');
+        setModal({ tipo: 'precio', producto: null });
+      }
+      return;
+    }
     const p = porCodigo.get(q);
+    // "?coca": sólo mirar el precio, sin cargarlo.
+    if (consulta) {
+      const elegido = p ?? resultados[resaltado];
+      setEntrada('');
+      if (elegido) return setModal({ tipo: 'precio', producto: elegido });
+      pitido('error');
+      ultimoError.current = Date.now();
+      avisar({ texto: `No encontré "${q}".`, tipo: 'error' });
+      return;
+    }
     if (p) return agregar(p, cantidad);
     if (esCodigo(q)) {
       pitido('error');
@@ -297,13 +326,13 @@ function Caja() {
     avisar({ texto: `No encontré "${q}".`, tipo: 'error' });
   };
 
-  // Con el buscador vacío: Supr saca el último producto y "-" le resta uno.
+  // Con el buscador vacío, Supr (o "-") saca lo último que se pasó: una unidad, o el renglón si era la última.
   // El último agregado está primero en la lista (agregarItem lo pone adelante).
-  const corregirUltimo = (sacar: boolean) => {
+  const corregirUltimo = () => {
     const i = 0;
     const it = carrito.items[i];
     if (!it) return;
-    if (sacar || it.cantidad <= 1 || it.gramos) setCarrito((c) => quitarItem(c, i));
+    if (it.cantidad <= 1 || it.gramos) setCarrito((c) => quitarItem(c, i));
     else setCarrito((c) => cambiarCantidad(c, i, it.cantidad - 1));
     setPagaCon(null);
   };
@@ -313,7 +342,8 @@ function Caja() {
     setEspera((l) => [...l, { id: Date.now(), carrito, hora: Date.now() }]);
     setCarrito(carritoVacio);
     limpiarCobro();
-    avisar({ texto: 'Venta en espera. Podés atender a otro.', tipo: 'info' });
+    // En el celular la barra de abajo ya dice "Una venta en espera · Retomar".
+    if (!window.matchMedia('(max-width: 900px)').matches) avisar({ texto: 'Venta en espera. Podés atender a otro.', tipo: 'info' });
     enfocar();
   }, [carrito, avisar, enfocar, setCarrito, setEspera]);
 
@@ -380,18 +410,12 @@ function Caja() {
         pagaCon: pagos ? pagaConDividido : medio === 'efectivo' ? pagaCon : null,
         clienteId: fiado > 0 ? (cliente?.id ?? null) : null,
         ...(pagos ? { pagos } : {}),
+        ...(carrito.descuento ? { descuento: carrito.descuento } : {}),
       }, sesion?.usuario);
       pitido('ok');
       const dividido = !!pagos && pagos.length > 1;
-      const detalle = dividido
-        ? `Cobrado ${formatPesos(venta.total)}${fiado > 0 ? ` · ${formatPesos(fiado)} anotados a ${cliente?.nombre}` : ''}${venta.vuelto > 0 ? ` · Vuelto ${formatPesos(venta.vuelto)}` : ''}`
-        : venta.medio === 'efectivo' && venta.vuelto > 0
-          ? `Cobrado ${formatPesos(venta.total)} · Vuelto ${formatPesos(venta.vuelto)}`
-          : venta.medio === 'fiado'
-            ? `Anotado ${formatPesos(venta.total)} a ${cliente?.nombre}`
-            : `Cobrado ${formatPesos(venta.total)} con ${nombreMedio(venta.medio)}`;
-      // En el celular el resultado queda en la barra verde de abajo; el aviso flotante la taparía.
-      if (!window.matchMedia('(max-width: 900px)').matches) avisar({ texto: detalle, tipo: 'ok' });
+      // El resultado queda a la vista sin aviso flotante: en PC en la tarjeta verde, en el celular en la barra de abajo.
+      setModal((m) => (m?.tipo === 'cobro' ? null : m));
       const resumen: UltimaVenta = { id: venta.id!, total: venta.total, medio: venta.medio, hora: Date.now(), dividido, vuelto: venta.vuelto, cliente: cliente?.nombre, ...(fiado > 0 ? { fiado } : {}) };
       setUltima(resumen);
       setCobrado(resumen);
@@ -448,6 +472,7 @@ function Caja() {
     try {
       await anularVenta(db, ultima.id, quien);
       setUltima(null);
+      setCobrado(null);
       avisar({ texto: `Venta de ${formatPesos(ultima.total)} anulada. El stock volvió.`, tipo: 'info' });
     } catch (e) {
       avisar({ texto: errorATexto(e), tipo: 'error' });
@@ -496,10 +521,17 @@ function Caja() {
   acciones.current = { cobrar, ponerEnEspera, elegirMedio };
   useEffect(() => {
     const tecla = (e: KeyboardEvent) => {
-      // Las F que usa la caja no abren la ayuda ni las herramientas del navegador, ni con un modal abierto.
-      if (/^F(2|3|4|8|12)$/.test(e.key)) e.preventDefault();
-      if (document.querySelector('dialog[open]')) return;
+      // Ninguna F recarga ni abre cosas del navegador mientras se cobra (F11, pantalla completa, sí se deja), ni con un modal abierto.
+      if (/^F([1-9]|10|12)$/.test(e.key)) e.preventDefault();
       const medioTecla = TECLA_MEDIO[e.key];
+      if (document.querySelector('dialog[open]')) {
+        // Con "¿A quién se lo anotás?" abierto, F5 a F9 cambian de idea: cierran y eligen ese medio.
+        if (medioTecla && medioTecla !== 'fiado' && modalRef.current?.tipo === 'cliente') {
+          setModal(null);
+          acciones.current.elegirMedio(medioTecla);
+        }
+        return;
+      }
       if (medioTecla) {
         e.preventDefault();
         acciones.current.elegirMedio(medioTecla);
@@ -529,6 +561,87 @@ function Caja() {
 
   const sugeridos = pagosSugeridos(total);
 
+  // El panel de medio de pago y vuelto: en PC va en la columna de la derecha; en el celular, también en la hoja "Cómo paga".
+  const panelCobro = (
+        <div className="tarjeta cobro">
+          <div className="cobro-cabecera">
+            <h2 className="titulo-chico">Medio de pago</h2>
+            <button type="button" className="boton boton-chico boton-dividir" onClick={() => setModal({ tipo: 'dividir' })} disabled={carrito.items.length === 0}>
+              <Icono nombre="dividir" tam={15} /> Dividir pago
+            </button>
+          </div>
+          <div className="medios">
+            {MEDIOS.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={`medio ${medio === m.id ? 'activo' : ''} ${m.id === 'fiado' ? 'medio-ancho' : ''}`}
+                aria-pressed={medio === m.id}
+                aria-keyshortcuts={TECLA_DE[m.id]}
+                onClick={() => elegirMedio(m.id)}
+              >
+                <Icono nombre={ICONO_MEDIO[m.id]} tam={18} />
+                <span className="medio-nombre" title={m.id === 'fiado' && cliente ? cliente.nombre : undefined}>
+                  {m.id === 'fiado' ? (cliente ? `Fiado: ${primerNombre(cliente.nombre)}` : 'Fiado (anotar a un cliente)') : m.nombre}
+                </span>
+                <kbd>{TECLA_DE[m.id]}</kbd>
+              </button>
+            ))}
+          </div>
+
+          {medio === 'efectivo' && (
+            <>
+              <div className="paga-con">
+                <label className="titulo-chico" htmlFor="paga-con">
+                  Paga con <kbd>F3</kbd>
+                </label>
+                {/* Los billetes van antes del campo: un toque y listo; el campo es para cuando paga con otra cosa. */}
+                {sugeridos.length > 0 && (
+                  <div className="sugeridos">
+                    {sugeridos.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        className={`chip ${pagaCon === s ? 'activo' : ''}`}
+                        onClick={() => {
+                          setPagaCon(s);
+                          enfocar();
+                        }}
+                      >
+                        {s === total ? 'Justo' : formatPesos(s)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <CampoPesos
+                  id="paga-con"
+                  valor={pagaCon}
+                  onCambio={setPagaCon}
+                  grande
+                  placeholder="Justo"
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    // Si lo que hay es un código de barras, el lector escaneó acá: es un producto, no plata.
+                    if (escaneoEnCampo(e.currentTarget.value)) return;
+                    cobrar();
+                  }}
+                />
+              </div>
+              <div className={`vuelto ${vuelto === null ? 'vuelto-falta' : !vuelto ? 'vuelto-cero' : ''}`}>
+                <span>{vuelto === null ? 'Falta' : 'Vuelto'}</span>
+                <strong className="importe">{formatPesos(vuelto === null ? total - (pagaCon ?? 0) : vuelto)}</strong>
+              </div>
+            </>
+          )}
+          {medio === 'fiado' && cliente && (
+            <button type="button" className="boton boton-texto" onClick={() => setModal({ tipo: 'cliente' })}>
+              Cambiar cliente
+            </button>
+          )}
+        </div>
+  );
+
   return (
     <div className="caja">
       <section className="caja-izquierda" aria-label="Productos de la venta">
@@ -550,17 +663,22 @@ function Caja() {
                   e.preventDefault();
                   // Con el buscador vacío, Enter cobra: todo se hace sin soltar el teclado.
                   if (vacio) {
+                    const desdeAgregado = Date.now() - ultimoAgregado.current;
                     // Algunos lectores mandan dos Enter, y después de un "no encontré" el Enter es un reintento: ninguno cobra.
-                    if (Date.now() - ultimoAgregado.current > 400 && Date.now() - ultimoError.current > 1500) cobrar();
+                    if (desdeAgregado <= 400 || Date.now() - ultimoError.current <= 1500) return;
+                    // Recién pasado el último producto y sin "paga con": el primer Enter va a "Paga con", así no se cobra sin vuelto por reflejo.
+                    // Ahí, Enter cobra justo o se escribe con cuánto paga. F12 cobra directo igual.
+                    if (medio === 'efectivo' && pagaCon === null && desdeAgregado < 5000 && window.matchMedia('(pointer: fine)').matches) {
+                      document.getElementById('paga-con')?.focus();
+                      return;
+                    }
+                    cobrar();
                     return;
                   }
                   procesarEntrada();
-                } else if (vacio && e.key === 'Delete') {
+                } else if (vacio && (e.key === 'Delete' || e.key === '-')) {
                   e.preventDefault();
-                  corregirUltimo(true);
-                } else if (vacio && e.key === '-') {
-                  e.preventDefault();
-                  corregirUltimo(false);
+                  corregirUltimo();
                 } else if (e.key === 'ArrowDown') {
                   e.preventDefault();
                   setResaltado((r) => Math.min(r + 1, Math.max(0, resultados.length - 1)));
@@ -605,13 +723,17 @@ function Caja() {
           <button type="button" className="boton" onClick={() => setModal({ tipo: 'libre' })} title="F4">
             Monto libre
           </button>
+          <button type="button" className="boton boton-precio" onClick={() => setModal({ tipo: 'precio', producto: null })} title="Consultar un precio sin cargarlo en la venta (o escribí ? antes del producto)" aria-label="¿Cuánto sale? Consultar un precio">
+            <Icono nombre="promo" tam={18} /> <span className="solo-pc">¿Cuánto sale?</span>
+          </button>
         </div>
         <p className="ayuda-teclas">
           <span><kbd>3*</kbd> antes del código suma 3</span>
-          <span><kbd>Supr</kbd> saca el último</span>
+          <span><kbd>?</kbd> antes del producto consulta el precio</span>
+          <span><kbd>Supr</kbd> saca lo último que pasaste</span>
           <span><kbd>F4</kbd> monto libre</span>
           <span><kbd>F8</kbd> en espera</span>
-          <span><kbd>Enter</kbd> con el buscador vacío cobra</span>
+          <span><kbd>Enter</kbd> con el buscador vacío va a "Paga con"; otro <kbd>Enter</kbd> cobra justo</span>
         </p>
         {/* En el celular la última venta va arriba: devolver o reimprimir sin bajar hasta el fondo. */}
         {carrito.items.length === 0 && ultima && <div className="ultima-venta-arriba">{tiraUltima}</div>}
@@ -657,18 +779,25 @@ function Caja() {
               <span className="texto-suave">
                 {unidades(carrito)} {unidades(carrito) === 1 ? 'producto' : 'productos'}
               </span>
+              <button type="button" className="boton boton-chico boton-texto boton-descuento" onClick={() => setModal({ tipo: 'descuento' })} title="Redondear o hacer un descuento sobre toda la venta">
+                <Icono nombre="porcentaje" tam={15} /> {carrito.descuento ? `Descuento ${formatPesos(carrito.descuento)}` : 'Descuento'}
+              </button>
             </div>
             <ul>
               {carrito.items.map((it, i) => {
                 const prod = it.productoId !== null ? productos.find((p) => p.id === it.productoId) : undefined;
-                const quedan = prod ? Math.round((prod.stock - stockQueUsa(it)) * 1000) / 1000 : null;
+                // Sólo se mira el stock de lo que se sigue (tiene stock o mínimo cargado).
+                const seguido = prod !== undefined && (prod.stock > 0 || prod.stockMinimo > 0);
+                const quedan = prod && seguido ? Math.round((prod.stock - stockQueUsa(it)) * 1000) / 1000 : null;
+                const negativo = quedan !== null && quedan < 0;
+                const bajo = !negativo && quedan !== null && prod !== undefined && prod.stockMinimo > 0 && quedan <= prod.stockMinimo;
                 return (
                   <li key={`${it.productoId ?? 'libre'}-${i}`} className="renglon">
                     <div className="renglon-nombre">
                       <strong>{sinCortes(it.nombre)}</strong>
-                      <small className={quedan !== null && prod && prod.stockMinimo > 0 && quedan <= prod.stockMinimo ? 'texto-aviso' : ''}>
+                      <small className={negativo ? 'texto-alerta' : bajo ? 'texto-aviso' : ''}>
                         {it.gramos ? `${formatoPeso(it.gramos)} por peso` : `${formatPesos(it.precioUnitario)} c/u`}
-                        {quedan !== null && prod && prod.stockMinimo > 0 && quedan <= prod.stockMinimo ? ` · ${quedan === 1 ? 'queda 1' : `quedan ${quedan}`}: reponer` : ''}
+                        {negativo ? ' · stock mal cargado: corregilo en Productos' : bajo ? ` · ${quedan === 0 ? 'sin stock' : quedan === 1 ? 'queda 1' : `quedan ${quedan}`}: reponer` : ''}
                       </small>
                       {it.promo && ahorroPromo(it) > 0 && (
                         <span className="promo-etiqueta">
@@ -680,15 +809,12 @@ function Caja() {
                       <button type="button" className="boton-icono" aria-label={`Uno menos de ${it.nombre}`} onClick={() => setCarrito((c) => cambiarCantidad(c, i, it.cantidad - 1))}>
                         <Icono nombre="menos" tam={18} />
                       </button>
-                      <input
-                        aria-label={`Cantidad de ${it.nombre}`}
-                        inputMode="numeric"
-                        value={it.cantidad}
-                        onFocus={(e) => e.currentTarget.select()}
-                        onChange={(e) => {
-                          const n = Number(e.target.value.replace(/\D/g, ''));
-                          if (n > 0) setCarrito((c) => cambiarCantidad(c, i, n));
-                        }}
+                      <CampoCantidad
+                        ariaLabel={`Cantidad de ${it.nombre}`}
+                        valor={it.cantidad}
+                        minimo={1}
+                        onCambio={(n) => setCarrito((c) => cambiarCantidad(c, i, n))}
+                        onEscaneo={escaneoEnCampo}
                       />
                       <button type="button" className="boton-icono" aria-label={`Uno más de ${it.nombre}`} onClick={() => setCarrito((c) => cambiarCantidad(c, i, it.cantidad + 1))}>
                         <Icono nombre="mas" tam={18} />
@@ -702,6 +828,17 @@ function Caja() {
                 );
               })}
             </ul>
+            {carrito.descuento ? (
+              <div className="renglon-descuento">
+                <span>
+                  Descuento <small className="texto-suave">sobre {formatPesos(sumaCarrito(carrito))}</small>
+                </span>
+                <button type="button" className="boton-icono boton-quitar" aria-label="Sacar el descuento" onClick={() => setCarrito((c) => aplicarDescuento(c, 0))}>
+                  <Icono nombre="basura" tam={18} />
+                </button>
+                <span className="importe renglon-subtotal">−{formatPesos(carrito.descuento)}</span>
+              </div>
+            ) : null}
           </>
           )}
         </div>
@@ -740,76 +877,12 @@ function Caja() {
             <strong className="importe">{formatPesos(total)}</strong>
             <small>
               {unidades(carrito)} {unidades(carrito) === 1 ? 'producto' : 'productos'}
+              {carrito.descuento ? ` · ${formatPesos(sumaCarrito(carrito))} menos ${formatPesos(carrito.descuento)} de descuento` : ''}
             </small>
           </div>
         )}
 
-        <div className="tarjeta cobro">
-          <div className="cobro-cabecera">
-            <h2 className="titulo-chico">Medio de pago</h2>
-            <button type="button" className="boton boton-chico boton-dividir" onClick={() => setModal({ tipo: 'dividir' })} disabled={carrito.items.length === 0}>
-              <Icono nombre="dividir" tam={15} /> Dividir pago
-            </button>
-          </div>
-          <div className="medios">
-            {MEDIOS.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                className={`medio ${medio === m.id ? 'activo' : ''} ${m.id === 'fiado' ? 'medio-ancho' : ''}`}
-                aria-pressed={medio === m.id}
-                aria-keyshortcuts={TECLA_DE[m.id]}
-                onClick={() => elegirMedio(m.id)}
-              >
-                <Icono nombre={ICONO_MEDIO[m.id]} tam={18} />
-                <span className="medio-nombre">{m.id === 'fiado' ? (cliente ? `Fiado: ${cliente.nombre}` : 'Fiado (anotar a un cliente)') : m.nombre}</span>
-                <kbd>{TECLA_DE[m.id]}</kbd>
-              </button>
-            ))}
-          </div>
-
-          {medio === 'efectivo' && (
-            <>
-              <div className="paga-con">
-                <label className="titulo-chico" htmlFor="paga-con">
-                  Paga con <kbd>F3</kbd>
-                </label>
-                <CampoPesos
-                  id="paga-con"
-                  valor={pagaCon}
-                  onCambio={setPagaCon}
-                  grande
-                  placeholder="Justo"
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter') return;
-                    e.preventDefault();
-                    // Si lo que hay es un código de barras, el lector escaneó acá: es un producto, no plata.
-                    if (escaneoEnCampo(e.currentTarget.value)) return;
-                    cobrar();
-                  }}
-                />
-              </div>
-              {sugeridos.length > 0 && (
-                <div className="sugeridos">
-                  {sugeridos.map((s) => (
-                    <button key={s} type="button" className={`chip ${pagaCon === s ? 'activo' : ''}`} onClick={() => setPagaCon(s)}>
-                      {s === total ? 'Justo' : formatPesos(s)}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className={`vuelto ${vuelto === null ? 'vuelto-falta' : !vuelto ? 'vuelto-cero' : ''}`}>
-                <span>{vuelto === null ? 'Falta' : 'Vuelto'}</span>
-                <strong className="importe">{formatPesos(vuelto === null ? total - (pagaCon ?? 0) : vuelto)}</strong>
-              </div>
-            </>
-          )}
-          {medio === 'fiado' && cliente && (
-            <button type="button" className="boton boton-texto" onClick={() => setModal({ tipo: 'cliente' })}>
-              Cambiar cliente
-            </button>
-          )}
-        </div>
+        {panelCobro}
 
         <button type="button" className="boton boton-primario boton-rojo boton-cobrar" onClick={() => cobrar()} disabled={carrito.items.length === 0 || cobrando}>
           <span>
@@ -827,25 +900,35 @@ function Caja() {
         </div>
         {/* Siempre ocupa su lugar, así el botón de cobrar no se mueve con la primera venta. */}
         <div className="solo-pc">{tiraUltima}</div>
-        <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'movimiento' })}>
-          <Icono nombre="billetera" tam={16} /> Anotar un retiro o gasto
-        </button>
+        <div className="botonera botonera-centrada acciones-caja">
+          <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'cobrarFiado' })} title="Alguien viene a pagar lo que debe">
+            <Icono nombre="clientes" tam={16} /> Cobrar un fiado
+          </button>
+          <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'movimiento' })}>
+            <Icono nombre="billetera" tam={16} /> Anotar un retiro o gasto
+          </button>
+          {/* El empleado recibe el reparto sin salir de la caja: sólo suma stock; el dueño ve el ingreso completo. */}
+          <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'mercaderia' })} disabled={productos.length === 0}>
+            <Icono nombre="camion" tam={16} /> Llegó mercadería
+          </button>
+        </div>
       </aside>
 
       {carrito.items.length > 0 ? (
-        // En el celular se cobra desde acá, con el medio que esté elegido; "Medio" baja al panel para cambiarlo.
+        // En el celular se cobra desde acá, con el medio que esté elegido; el botón del medio abre la hoja para cambiarlo o poner con cuánto paga.
         <div className="barra-cobro-movil">
           <div>
             <small>
               {medio === 'fiado' ? (cliente ? `Fiado a ${primerNombre(cliente.nombre)}` : 'Fiado') : nombreMedio(medio)}
+              {medio === 'efectivo' && pagaCon !== null && vuelto !== null ? ` · paga con ${formatPesos(pagaCon)}, vuelto ${formatPesos(vuelto)}` : ''}
             </small>
             <strong className="importe">{formatPesos(total)}</strong>
           </div>
-          <button type="button" className="boton boton-chico" onClick={() => document.querySelector('.caja-derecha')?.scrollIntoView({ behavior: 'smooth' })} aria-label="Cambiar el medio de pago">
-            Medio
+          <button type="button" className="boton boton-chico boton-cuadrado" onClick={() => setModal({ tipo: 'cobro' })} aria-label="Cambiar el medio de pago o poner con cuánto paga" title="Medio de pago y vuelto">
+            <Icono nombre={ICONO_MEDIO[medio]} tam={20} />
           </button>
           <button type="button" className="boton boton-primario boton-rojo" onClick={() => cobrar()} disabled={cobrando}>
-            {medio === 'fiado' ? (cliente ? `Anotar a ${primerNombre(cliente.nombre)}` : 'Anotar fiado') : `Cobrar ${formatPesos(total)}`}
+            {medio === 'fiado' ? (cliente ? `Anotar a ${primerNombre(cliente.nombre)}` : 'Anotar fiado') : 'Cobrar'}
           </button>
         </div>
       ) : cobrado ? (
@@ -853,8 +936,8 @@ function Caja() {
         <div className="barra-cobro-movil barra-cobrado" role="status">
           <div>
             <small>
-              {cobrado.vuelto && cobrado.vuelto > 0 ? `Cobrado ${formatPesos(cobrado.total)} · Vuelto` : cobrado.medio === 'fiado' ? `Anotado a ${cobrado.cliente ?? 'fiado'}` : 'Cobrado'}
-              {cobrado.dividido && cobrado.fiado ? ` · ${formatPesos(cobrado.fiado)} a ${cobrado.cliente}` : ''}
+              {cobrado.vuelto && cobrado.vuelto > 0 ? `Cobrado ${formatPesos(cobrado.total)} · Vuelto` : cobrado.medio === 'fiado' ? `Anotado a ${primerNombre(cobrado.cliente ?? 'fiado')}` : 'Cobrado'}
+              {cobrado.dividido && cobrado.fiado ? ` · ${formatPesos(cobrado.fiado)} a ${primerNombre(cobrado.cliente ?? '')}` : ''}
             </small>
             <strong className="importe">{formatPesos(cobrado.vuelto && cobrado.vuelto > 0 ? cobrado.vuelto : cobrado.total)}</strong>
           </div>
@@ -865,8 +948,8 @@ function Caja() {
       ) : espera.length > 0 ? (
         <div className="barra-cobro-movil barra-espera" role="status">
           <div>
-            <small>{espera.length === 1 ? 'Una venta en espera' : `${espera.length} ventas en espera`}</small>
-            <strong className="importe">{formatPesos(espera.reduce((s, e) => s + totalCarrito(e.carrito), 0))}</strong>
+            <small>{resumenEspera(espera).texto}</small>
+            <strong className="importe">{formatPesos(resumenEspera(espera).total)}</strong>
           </div>
           <button type="button" className="boton" onClick={() => retomar(espera[0]!)}>
             <Icono nombre="pausa" tam={16} /> Retomar
@@ -874,6 +957,68 @@ function Caja() {
         </div>
       ) : null}
 
+      {modal?.tipo === 'cobro' && (
+        // La hoja del celular: medio de pago, con cuánto paga y el botón de cobrar, sin bajar hasta el panel.
+        <Modal titulo="Cómo paga" onCerrar={() => setModal(null)}>
+          <div className="formulario cobro-hoja">
+            {panelCobro}
+            <button type="button" className="boton boton-primario boton-rojo boton-grande" onClick={() => cobrar()} disabled={carrito.items.length === 0 || cobrando}>
+              {medio === 'fiado' ? (cliente ? `Anotar ${formatPesos(total)} a ${primerNombre(cliente.nombre)}` : 'Anotar fiado') : `Cobrar ${formatPesos(total)}`}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {modal?.tipo === 'cobrarFiado' && (
+        <ElegirCliente
+          titulo="¿Quién viene a pagar su fiado?"
+          deudoresPrimero
+          onCerrar={() => {
+            setModal(null);
+            enfocar();
+          }}
+          onElegir={(c, saldo) => setModal({ tipo: 'pagoFiado', cliente: c, saldo })}
+        />
+      )}
+      {modal?.tipo === 'pagoFiado' && (
+        <RegistrarPago
+          cliente={modal.cliente}
+          saldo={modal.saldo}
+          onCerrar={() => {
+            setModal(null);
+            enfocar();
+          }}
+        />
+      )}
+      {modal?.tipo === 'descuento' && (
+        <Descuento
+          suma={sumaCarrito(carrito)}
+          actual={carrito.descuento ?? 0}
+          onCerrar={() => {
+            setModal(null);
+            enfocar();
+          }}
+          onAplicar={(d) => {
+            setCarrito((c) => aplicarDescuento(c, d));
+            setPagaCon(null);
+            setModal(null);
+            enfocar();
+          }}
+        />
+      )}
+      {modal?.tipo === 'precio' && (
+        <ConsultaPrecio
+          inicial={modal.producto}
+          productos={productos}
+          onCerrar={() => {
+            setModal(null);
+            enfocar();
+          }}
+          onAgregar={(p) => {
+            setModal(null);
+            agregar(p, 1);
+          }}
+        />
+      )}
       {modal?.tipo === 'libre' && (
         <MontoLibre
           onCerrar={() => {
@@ -970,6 +1115,17 @@ function Caja() {
           </div>
         </Modal>
       )}
+      {modal?.tipo === 'mercaderia' && (
+        <IngresoMercaderia
+          productos={productos}
+          proveedores={[...new Set(productos.map((p) => p.proveedor?.trim()).filter((x): x is string => !!x))].sort()}
+          soloStock={!dueño}
+          onCerrar={() => {
+            setModal(null);
+            enfocar();
+          }}
+        />
+      )}
       {modal?.tipo === 'movimiento' && (
         <NuevoMovimiento
           onCerrar={() => {
@@ -1020,6 +1176,177 @@ function Caja() {
         />
       )}
     </div>
+  );
+}
+
+/** Redondear o descontar sobre toda la venta: "son 3.150, dejámelo en 3.000". */
+function Descuento({ suma, actual, onCerrar, onAplicar }: { suma: number; actual: number; onCerrar: () => void; onAplicar: (descuento: number) => void }) {
+  const dueño = useEsDueño();
+  const pedirDueño = usePedirDueño();
+  const [modo, setModo] = useState<'total' | 'pesos' | 'porcentaje'>('total');
+  const [total, setTotal] = useState<number | null>(actual > 0 ? suma - actual : null);
+  const [pesos, setPesos] = useState<number | null>(actual > 0 ? actual : null);
+  const [porcentaje, setPorcentaje] = useState('');
+  const [enCurso, unaVez] = useUnaVez();
+  const descuento =
+    modo === 'total' ? (total === null ? 0 : suma - total) : modo === 'pesos' ? (pesos ?? 0) : Math.round((suma * Math.min(100, Number(porcentaje) || 0)) / 100);
+  const valido = descuento > 0 && descuento < suma;
+  const aplicar = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!valido) return;
+    unaVez(async () => {
+      // Hasta un 10 % lo decide el empleado; más, el dueño.
+      if (!dueño && descuento > suma * 0.1) {
+        const quien = await pedirDueño(`Hacer un descuento de ${formatPesos(descuento)} (${Math.round((descuento / suma) * 100)} %)`);
+        if (!quien) return;
+      }
+      onAplicar(descuento);
+    });
+  };
+  return (
+    <Modal titulo="Descuento o redondeo" onCerrar={onCerrar}>
+      <form className="formulario" onSubmit={aplicar}>
+        <p className="texto-suave">
+          La venta suma <strong className="importe texto-normal">{formatPesos(suma)}</strong>. El descuento queda en el ticket y en los reportes.
+        </p>
+        <div className="segmentos" role="group" aria-label="Cómo descontar">
+          {(
+            [
+              ['total', 'Dejarlo en'],
+              ['pesos', 'Descontar $'],
+              ['porcentaje', 'Descontar %'],
+            ] as const
+          ).map(([id, texto]) => (
+            <button
+              key={id}
+              type="button"
+              className={modo === id ? 'activo' : ''}
+              aria-pressed={modo === id}
+              onClick={() => {
+                setModo(id);
+                document.getElementById('campo-descuento')?.focus();
+              }}
+            >
+              {texto}
+            </button>
+          ))}
+        </div>
+        {modo === 'total' && <CampoPesos id="campo-descuento" etiqueta="Cobrar en total" valor={total} onCambio={setTotal} autoFocus grande />}
+        {modo === 'pesos' && <CampoPesos id="campo-descuento" etiqueta="Descontar" valor={pesos} onCambio={setPesos} autoFocus grande />}
+        {modo === 'porcentaje' && (
+          <label className="campo">
+            <span className="campo-etiqueta">Descontar</span>
+            <div className="campo-pesos campo-pesos-grande">
+              <input id="campo-descuento" inputMode="numeric" autoFocus value={porcentaje} onChange={(e) => setPorcentaje(e.target.value.replace(/\D/g, '').slice(0, 3))} placeholder="10" />
+              <span aria-hidden="true">%</span>
+            </div>
+          </label>
+        )}
+        {descuento >= suma && descuento > 0 && <p className="texto-alerta">Así la venta queda en cero: no se puede.</p>}
+        <div className={`vuelto ${valido ? '' : 'vuelto-cero'}`}>
+          <span>{valido ? `Descuento −${formatPesos(descuento)} · se cobra` : 'Se cobra'}</span>
+          <strong className="importe">{formatPesos(valido ? suma - descuento : suma)}</strong>
+        </div>
+        {!dueño && valido && descuento > suma * 0.1 && <p className="texto-suave">Más del 10 %: pide la clave del dueño.</p>}
+        <div className="modal-pie">
+          <button className="boton boton-primario boton-grande" type="submit" disabled={!valido || enCurso}>
+            {valido ? `Aplicar descuento de ${formatPesos(descuento)}` : 'Aplicar descuento'}
+          </button>
+          {actual > 0 && (
+            <button type="button" className="boton boton-texto" onClick={() => onAplicar(0)}>
+              Sacar el descuento de {formatPesos(actual)}
+            </button>
+          )}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** "¿Cuánto sale?": mirar el precio (y el stock) de algo sin sumarlo a la venta. El lector funciona acá adentro. */
+function ConsultaPrecio({ inicial, productos, onCerrar, onAgregar }: { inicial: Producto | null; productos: Producto[]; onCerrar: () => void; onAgregar: (p: Producto) => void }) {
+  const [producto, setProducto] = useState<Producto | null>(inicial);
+  const [q, setQ] = useState('');
+  const porCodigo = useMemo(() => new Map(productos.filter((p) => p.codigo).map((p) => [p.codigo, p])), [productos]);
+  const resultados = useMemo(() => {
+    const t = normalizar(q.trim());
+    if (t.length < 2 || esCodigo(t)) return [];
+    const palabras = t.split(/\s+/);
+    return productos.filter((p) => palabras.every((w) => normalizar(`${p.nombre} ${p.codigo} ${p.categoria}`).includes(w))).slice(0, 6);
+  }, [q, productos]);
+  const elegir = (p: Producto) => {
+    setProducto(p);
+    setQ('');
+    pitido('ok');
+  };
+  const buscar = () => {
+    const t = q.trim();
+    const p = porCodigo.get(codigoEscaneado(t) ?? t) ?? resultados[0];
+    if (p) elegir(p);
+    else pitido('error');
+  };
+  return (
+    <Modal titulo="¿Cuánto sale?" onCerrar={onCerrar}>
+      <div className="formulario consulta-precio">
+        <div className="buscador-campo buscador-chico">
+          <Icono nombre="buscar" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            autoFocus
+            placeholder="Escaneá o escribí el producto"
+            aria-label="Producto a consultar"
+            autoComplete="off"
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              e.preventDefault();
+              if (q.trim()) buscar();
+              else if (producto) onAgregar(producto);
+            }}
+          />
+        </div>
+        {q.trim() && resultados.length > 0 && (
+          <ul className="lista-clientes" aria-label="Productos encontrados">
+            {resultados.map((p) => (
+              <li key={p.id}>
+                <button type="button" onClick={() => elegir(p)}>
+                  <span>{p.nombre}</span>
+                  <span className="importe">{formatPesos(p.precio)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {producto ? (
+          <div className="precio-consultado" role="status">
+            <strong>{producto.nombre}</strong>
+            <span className="importe precio-grande">
+              {formatPesos(producto.precio)}
+              {producto.porPeso ? <small> el kilo</small> : null}
+            </span>
+            {producto.promo && producto.promo.cantidad > 1 && (
+              <span className="promo-etiqueta">
+                <Icono nombre="promo" tam={13} /> Promo {producto.promo.cantidad} x {formatPesos(producto.promo.precio)}
+              </span>
+            )}
+            <small className="texto-suave">
+              {producto.stock <= 0 ? 'Sin stock en el sistema' : producto.stock === 1 ? 'Queda 1' : `Quedan ${producto.stock}`}
+              {producto.codigo ? ` · ${producto.codigo}` : ''}
+            </small>
+          </div>
+        ) : (
+          <p className="texto-suave">Para decir un precio sin cargarlo. Nada se suma a la venta hasta que toques "Agregar".</p>
+        )}
+        <div className="botonera botonera-final">
+          <button type="button" className="boton" onClick={onCerrar}>
+            Cerrar
+          </button>
+          <button type="button" className="boton boton-primario" disabled={!producto} onClick={() => producto && onAgregar(producto)}>
+            Agregar a la venta
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -1119,7 +1446,18 @@ function ProductoNuevoRapido({
   );
 }
 
-function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir: (c: Cliente) => void }) {
+function ElegirCliente({
+  onCerrar,
+  onElegir,
+  titulo = '¿A quién se lo anotás?',
+  deudoresPrimero = false,
+}: {
+  onCerrar: () => void;
+  onElegir: (c: Cliente, saldo: number) => void;
+  titulo?: string;
+  /** Para cobrar: los que deben van arriba, del que más debe al que menos. */
+  deudoresPrimero?: boolean;
+}) {
   const avisar = useAvisar();
   const [q, setQ] = useState('');
   const [, unaVez] = useUnaVez();
@@ -1134,9 +1472,9 @@ function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir:
       }
       return clientes
         .map((c) => ({ c, saldo: saldoCliente(porCliente.get(c.id!) ?? []) }))
-        .sort((a, b) => a.c.nombre.localeCompare(b.c.nombre));
+        .sort((a, b) => (deudoresPrimero && a.saldo !== b.saldo ? b.saldo - a.saldo : a.c.nombre.localeCompare(b.c.nombre)));
     },
-    [],
+    [deudoresPrimero],
     [] as { c: Cliente; saldo: number }[],
   );
   const filtrados = datos.filter((d) => normalizar(d.c.nombre).includes(normalizar(q.trim())));
@@ -1147,13 +1485,13 @@ function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir:
       try {
         const id = await guardarCliente(db, { nombre: q, telefono: '', limite: 0 });
         const c = await db.clientes.get(id);
-        if (c) onElegir(c);
+        if (c) onElegir(c, 0);
       } catch (e) {
         avisar({ texto: errorATexto(e), tipo: 'error' });
       }
     });
   return (
-    <Modal titulo="¿A quién se lo anotás?" onCerrar={onCerrar}>
+    <Modal titulo={titulo} onCerrar={onCerrar}>
       <div className="formulario">
         <input
           value={q}
@@ -1166,6 +1504,7 @@ function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir:
           aria-label="Buscar cliente"
           onKeyDown={(e) => {
             // Enter elige sólo si está claro a quién: nombre exacto, un único resultado o el marcado con las flechas.
+            // Si no hay nadie que se llame así, Enter lo crea.
             if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
               e.preventDefault();
               const n = Math.min(filtrados.length, 8);
@@ -1174,14 +1513,15 @@ function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir:
               e.preventDefault();
               if (!q.trim()) return;
               const elegido = resaltado >= 0 ? filtrados[resaltado] : exacto ?? (filtrados.length === 1 ? filtrados[0] : undefined);
-              if (elegido) onElegir(elegido.c);
+              if (elegido) onElegir(elegido.c, elegido.saldo);
+              else if (filtrados.length === 0) crear();
             }
           }}
         />
         <ul className="lista-clientes">
           {filtrados.slice(0, 8).map(({ c, saldo }, i) => (
             <li key={c.id}>
-              <button type="button" className={i === resaltado ? 'resaltado' : ''} onClick={() => onElegir(c)}>
+              <button type="button" className={i === resaltado ? 'resaltado' : ''} onClick={() => onElegir(c, saldo)}>
                 <span>{c.nombre}</span>
                 <span className={saldo > 0 ? 'texto-alerta importe' : 'texto-suave importe'}>{saldo > 0 ? `debe ${formatPesos(saldo)}` : 'al día'}</span>
               </button>
@@ -1190,7 +1530,7 @@ function ElegirCliente({ onCerrar, onElegir }: { onCerrar: () => void; onElegir:
         </ul>
         {q.trim() && !exacto && (
           <button type="button" className="boton" onClick={crear}>
-            <Icono nombre="mas" tam={18} /> Crear cliente "{q.trim()}"
+            <Icono nombre="mas" tam={18} /> Crear cliente "{q.trim()}"{filtrados.length === 0 ? <kbd>Enter</kbd> : null}
           </button>
         )}
       </div>
@@ -1284,7 +1624,7 @@ function DividirPago({
           {MEDIOS.filter((m) => visibles.includes(m.id)).map((m, i) => (
             <div key={m.id} className="dividir-fila">
               <span className="dividir-medio">
-                <Icono nombre={ICONO_MEDIO[m.id]} tam={18} /> {m.id === 'fiado' ? (cliente ? `Fiado a ${cliente.nombre}` : 'Fiado') : m.nombre}
+                <Icono nombre={ICONO_MEDIO[m.id]} tam={18} /> {m.id === 'fiado' ? (cliente ? `Fiado a ${primerNombre(cliente.nombre)}` : 'Fiado') : m.nombre}
               </span>
               <CampoPesos valor={montos[m.id] ?? null} onCambio={(v) => setMontos((x) => ({ ...x, [m.id]: v }))} autoFocus={i === 0} ariaLabel={`Monto en ${m.nombre}`} />
               <button type="button" className="boton boton-chico" tabIndex={-1} onClick={() => completar(m.id)} disabled={falta <= 0}>

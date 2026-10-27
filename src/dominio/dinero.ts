@@ -10,6 +10,16 @@ export function formatPesos(monto: Pesos): string {
 }
 
 /**
+ * Lo que va quedando en un campo de plata mientras se tipea. Los puntos que el campo fue poniendo
+ * como separador de miles se sacan antes de interpretar ("1.0005" → "10005", que es 10.005); un punto
+ * seguido de una o dos cifras al final se respeta como decimal ("1400.5"). Con coma no se toca.
+ */
+export function textoTecleado(texto: string): string {
+  if (texto.includes(',')) return texto;
+  return texto.replace(/\.(?=\d{3}|\d*\.)/g, '');
+}
+
+/**
  * Lee un importe escrito a mano, como lo escribe cualquiera en Argentina:
  * "1400", "1.400", "$ 1.400", "1400,50", "1.400,50". Devuelve pesos enteros
  * (redondea los centavos) o null si no es un número.

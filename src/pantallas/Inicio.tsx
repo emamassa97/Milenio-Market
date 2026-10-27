@@ -7,7 +7,6 @@ import { paraReponer, porVencer, resumirVentas } from '../dominio/reportes';
 import type { Evento, MovimientoCaja, Producto, Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { leerAjuste, turnoAbierto } from '../datos/operaciones';
-import { estadoNube } from '../datos/nube';
 import { hora, Icono, sinCortes } from '../ui/componentes';
 import { useConsulta } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
@@ -72,8 +71,8 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
   // Sin copia en la nube, que no pasen más de 7 días sin bajar una copia (si ya hubo algún turno).
   const copia = useConsulta<{ dias: number | null } | null>(
     async () => {
-      const [ultima, nube, turnos] = await Promise.all([leerAjuste<number | null>(db, 'ultimaCopia', null), estadoNube(db), db.turnos.count()]);
-      if (nube.activa || turnos === 0) return null;
+      const [ultima, claveNube, turnos] = await Promise.all([leerAjuste<number | null>(db, 'ultimaCopia', null), leerAjuste<string>(db, 'nube.clave', ''), db.turnos.count()]);
+      if (claveNube || turnos === 0) return null;
       const dias = ultima ? Math.floor((Date.now() - ultima) / DIA) : null;
       return dias === null || dias > 7 ? { dias } : null;
     },

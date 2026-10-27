@@ -119,9 +119,9 @@ export function PantallaClientes() {
           <section className="tarjeta detalle-cliente" ref={refDetalle}>
             {detalle ? (
               <>
-                <div className="pagina-cabecera">
+                <div className="pagina-cabecera cabecera-cliente">
                   <div>
-                    <h2>{detalle.cliente.nombre}</h2>
+                    <h2 title={detalle.cliente.nombre}>{detalle.cliente.nombre}</h2>
                     <p className="texto-suave">
                       {detalle.cliente.telefono || 'sin teléfono'}
                       {detalle.cliente.limite > 0 && ` · límite ${formatPesos(detalle.cliente.limite)}`}
@@ -235,7 +235,7 @@ export function PantallaClientes() {
       )}
 
       {modal?.tipo === 'cliente' && <EditarCliente cliente={modal.cliente} onCerrar={() => setModal(null)} onGuardado={(id) => setElegido(id)} />}
-      {modal?.tipo === 'pago' && <RegistrarPago fila={modal.fila} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'pago' && <RegistrarPago cliente={modal.fila.cliente} saldo={modal.fila.saldo} onCerrar={() => setModal(null)} />}
     </div>
   );
 }
@@ -280,21 +280,22 @@ function EditarCliente({ cliente, onCerrar, onGuardado }: { cliente?: Cliente; o
   );
 }
 
-function RegistrarPago({ fila, onCerrar }: { fila: Fila; onCerrar: () => void }) {
+/** Un cliente paga (todo o parte de) lo que debe. Se usa acá y desde la caja ("Cobrar un fiado"). */
+export function RegistrarPago({ cliente, saldo, onCerrar }: { cliente: Cliente; saldo: number; onCerrar: () => void }) {
   const avisar = useAvisar();
-  const [monto, setMonto] = useState<number | null>(fila.saldo);
+  const [monto, setMonto] = useState<number | null>(saldo > 0 ? saldo : null);
   const [medio, setMedio] = useState<Exclude<MedioPago, 'fiado'>>('efectivo');
   const [enCurso, unaVez] = useUnaVez();
   return (
-    <Modal titulo={`Pago de ${fila.cliente.nombre}`} onCerrar={onCerrar}>
+    <Modal titulo={`Pago de ${cliente.nombre}`} onCerrar={onCerrar}>
       <form
         className="formulario"
         onSubmit={(e) => {
           e.preventDefault();
           unaVez(async () => {
           try {
-            await registrarPagoFiado(db, fila.cliente.id!, monto ?? 0, medio);
-            const resto = fila.saldo - (monto ?? 0);
+            await registrarPagoFiado(db, cliente.id!, monto ?? 0, medio);
+            const resto = saldo - (monto ?? 0);
             avisar({ texto: resto > 0 ? `Anotado. Le quedan ${formatPesos(resto)}.` : 'Anotado. ¡Quedó al día!', tipo: 'ok' });
             onCerrar();
           } catch (err) {
@@ -303,9 +304,7 @@ function RegistrarPago({ fila, onCerrar }: { fila: Fila; onCerrar: () => void })
           });
         }}
       >
-        <p>
-          Debe <strong>{formatPesos(fila.saldo)}</strong>.
-        </p>
+        <p>{saldo > 0 ? <>Debe <strong>{formatPesos(saldo)}</strong>.</> : 'Está al día: lo que pague le queda a favor.'}</p>
         <CampoPesos etiqueta="¿Cuánto paga?" valor={monto} onCambio={setMonto} autoFocus grande />
         <div className="medios">
           {MEDIOS.filter((m) => m.id !== 'fiado').map((m) => (
@@ -314,7 +313,7 @@ function RegistrarPago({ fila, onCerrar }: { fila: Fila; onCerrar: () => void })
             </button>
           ))}
         </div>
-        {monto !== null && monto > fila.saldo && <p className="texto-alerta">Paga más de lo que debe: le va a quedar saldo a favor.</p>}
+        {monto !== null && monto > saldo && <p className="texto-alerta">Paga más de lo que debe: le va a quedar saldo a favor.</p>}
         <button className="boton boton-primario boton-grande" type="submit" disabled={!monto || monto <= 0 || enCurso}>
           Registrar pago
         </button>
