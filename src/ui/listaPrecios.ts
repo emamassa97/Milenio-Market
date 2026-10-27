@@ -3,6 +3,7 @@
 import { formatPesos } from '../dominio/dinero';
 import type { Producto } from '../dominio/tipos';
 import { escapar } from './ticket';
+import logoRojo from '../assets/logo-rojo.svg?raw';
 import poppins400 from '@fontsource/poppins/files/poppins-latin-400-normal.woff2?url';
 import poppins500 from '@fontsource/poppins/files/poppins-latin-500-normal.woff2?url';
 import poppins600 from '@fontsource/poppins/files/poppins-latin-600-normal.woff2?url';
@@ -35,6 +36,9 @@ const FUENTES = ([
 ] as const)
   .map(([peso, url]) => `@font-face { font-family: Poppins; font-weight: ${peso}; font-style: normal; src: url(${absoluta(url)}) format('woff2'); }`)
   .join('\n');
+
+// El logo va adentro del documento (data:), así se imprime aunque el iframe no resuelva rutas.
+const LOGO = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(logoRojo)}`;
 
 const ESTILOS_BASE = () => `
   ${FUENTES}
@@ -77,7 +81,9 @@ export function htmlListaPrecios(productos: Producto[], titulo: string, formato:
     )
     .join('');
   return `<!doctype html><html lang="es-AR"><head><meta charset="utf-8"><title>Lista de precios</title><style>${ESTILOS_BASE()}
-  header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 0.6mm solid #e30613; padding-bottom: 2mm; margin-bottom: 4mm; }
+  header { display: flex; justify-content: space-between; align-items: center; border-bottom: 0.6mm solid #e30613; padding-bottom: 2mm; margin-bottom: 4mm; }
+  .marca { display: flex; align-items: center; gap: 3mm; }
+  .marca img { height: 28px; width: auto; display: block; border-radius: 1mm; }
   h1 { font-size: 16pt; margin: 0; }
   header span { font-size: 9.5pt; color: #646a75; }
   .columnas { column-count: 2; column-gap: 8mm; }
@@ -89,5 +95,5 @@ export function htmlListaPrecios(productos: Producto[], titulo: string, formato:
   small { display: block; color: #e30613; font-weight: 600; font-size: 8pt; }
   .unidad { font-weight: 400; color: #646a75; font-size: 8.5pt; }
   footer { margin-top: 4mm; font-size: 8.5pt; color: #646a75; text-align: center; }
-</style></head><body><header><h1>${escapar(titulo)}</h1><span>Lista de precios · ${fecha}</span></header><div class="columnas">${grupos}</div><footer>Precios en pesos, pueden cambiar sin aviso.</footer></body></html>`;
+</style></head><body><header><div class="marca"><img src="${LOGO}" alt=""><h1>${escapar(titulo)}</h1></div><span>Lista de precios · ${fecha}</span></header><div class="columnas">${grupos}</div><footer>Precios en pesos, pueden cambiar sin aviso.</footer></body></html>`;
 }

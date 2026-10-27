@@ -133,6 +133,19 @@ export function useEstadoNube(): EstadoNube {
   return useConsulta(() => estadoNube(db), [], NUBE_INICIAL);
 }
 
+/** Si la pantalla cumple una media query (`(max-width: 1400px)`), al día cuando cambia el tamaño. */
+export function useMedia(consulta: string): boolean {
+  const [cumple, setCumple] = useState(() => typeof window !== 'undefined' && window.matchMedia(consulta).matches);
+  useEffect(() => {
+    const m = window.matchMedia(consulta);
+    const cambio = () => setCumple(m.matches);
+    cambio();
+    m.addEventListener('change', cambio);
+    return () => m.removeEventListener('change', cambio);
+  }, [consulta]);
+  return cumple;
+}
+
 // Lo que la caja deja guardado en el navegador (carrito, ventas en espera, última venta), para leerlo desde otra pantalla.
 export const LLAVE_CARRITO = 'milenio.carrito';
 export const LLAVE_ESPERA = 'milenio.espera';
