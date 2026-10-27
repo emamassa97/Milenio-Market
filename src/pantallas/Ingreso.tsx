@@ -4,7 +4,7 @@ import { db } from '../datos/db';
 import { recuperarDeLaNube } from '../datos/nube';
 import { hayUsuariosEnLaNube, ingresarDondeSea } from '../datos/ingreso';
 import { crearUsuario, empezarDeCero, leerUsuarios, resumenEquipo, type Usuario } from '../datos/usuarios';
-import { errorATexto, useAvisar } from '../ui/componentes';
+import { errorATexto, Icono, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion, LLAVE_SIGUIENTE } from '../ui/sesion';
 
@@ -65,7 +65,18 @@ function Entrar({ usuarios, crearNuevo }: { usuarios: Usuario[]; crearNuevo?: ()
   const [clave, setClave] = useState('');
   const [recordar, setRecordar] = useState(true);
   const [error, setError] = useState('');
+  // Con muchas claves mal seguidas la nube bloquea un rato: no es lo mismo que una clave mal, y probar de nuevo no sirve.
+  const [bloqueadoHasta, setBloqueadoHasta] = useState(0);
+  const [, setReloj] = useState(0);
+  const bloqueado = bloqueadoHasta > Date.now();
+  useEffect(() => {
+    if (!bloqueadoHasta) return;
+    const t = window.setTimeout(() => setReloj((n) => n + 1), Math.max(0, bloqueadoHasta - Date.now()) + 50);
+    return () => window.clearTimeout(t);
+  }, [bloqueadoHasta]);
   const [enCurso, unaVez] = useUnaVez();
+  // Después de pasar la caja, el título le habla a quien le toca.
+  const nombreSugerido = sugerido ? usuarios.find((u) => u.usuario === usuario.trim().toLowerCase())?.nombre.split(' ')[0] : undefined;
   if (olvide) return <OlvideClave usuarios={usuarios} volver={() => setOlvide(false)} crearNuevo={crearNuevo} />;
   return (
     <form
@@ -76,17 +87,40 @@ function Entrar({ usuarios, crearNuevo }: { usuarios: Usuario[]; crearNuevo?: ()
           try {
             entrar(await ingresarDondeSea(db, usuario, clave), recordar);
           } catch (err) {
-            setError(errorATexto(err));
+            const texto = errorATexto(err);
+            const minutos = /Demasiadas claves.*?(\d+)\s*minutos/i.exec(texto);
+            setBloqueadoHasta(minutos ? Date.now() + Number(minutos[1]) * 60_000 : 0);
+            setError(texto);
             setClave('');
           }
         });
       }}
     >
-      <h1>Ingresar</h1>
-      <p className="texto-suave">Tu usuario sirve en cualquier compu o celular.</p>
+      {nombreSugerido ? (
+        <>
+          <h1>Te toca, {nombreSugerido}</h1>
+          <p className="texto-suave">La caja ya está abierta a tu nombre: poné tu clave.</p>
+        </>
+      ) : (
+        <>
+          <h1>Ingresar</h1>
+          <p className="texto-suave">Tu usuario sirve en cualquier compu o celular.</p>
+        </>
+      )}
       <label className="campo">
         <span className="campo-etiqueta">Usuario</span>
-        <input value={usuario} onChange={(e) => setUsuario(e.target.value)} autoComplete="username" autoCapitalize="none" autoFocus={!sugerido} required />
+        <input
+          value={usuario}
+          onChange={(e) => {
+            setUsuario(e.target.value);
+            // El bloqueo es de ese usuario: con otro se puede probar.
+            setBloqueadoHasta(0);
+          }}
+          autoComplete="username"
+          autoCapitalize="none"
+          autoFocus={!sugerido}
+          required
+        />
       </label>
       <label className="campo">
         <span className="campo-etiqueta">Clave</span>
@@ -97,12 +131,13 @@ function Entrar({ usuarios, crearNuevo }: { usuarios: Usuario[]; crearNuevo?: ()
         <span>Recordarme en este equipo</span>
       </label>
       {error && (
-        <p className="texto-alerta" role="alert">
-          {error}
+        <p className={`texto-alerta ${bloqueado ? 'ingreso-bloqueado' : ''}`} role="alert">
+          {bloqueado && <Icono nombre="reloj" tam={18} />}
+          <span>{error}</span>
         </p>
       )}
-      <button className="boton boton-primario boton-grande" type="submit" disabled={enCurso} aria-busy={enCurso}>
-        {enCurso ? 'Entrando…' : 'Entrar'}
+      <button className="boton boton-primario boton-grande" type="submit" disabled={enCurso || bloqueado} aria-busy={enCurso}>
+        {enCurso ? 'Entrando…' : bloqueado ? 'Esperá unos minutos' : 'Entrar'}
       </button>
       <button type="button" className="boton-texto" onClick={() => setOlvide(true)}>
         ¿Te olvidaste el usuario o la clave?
@@ -130,12 +165,13 @@ function OlvideClave({ usuarios, volver, crearNuevo }: { usuarios: Usuario[]; vo
         <p className="texto-suave">
           Tu usuario es el mismo de la otra compu o celular. Si te olvidaste la clave, entrá donde la tengas guardada y cambiala en Ajustes: después sirve en todos lados.
         </p>
-        <p className="texto-suave">Si no podés entrar en ningún lado, creá un usuario nuevo en esta compu.</p>
-        <button type="button" className="boton boton-primario boton-grande" onClick={crearNuevo}>
-          Crear un usuario nuevo
+        <p className="texto-suave">Si no podés entrar en ningún lado, creá un usuario nuevo en esta compu. Ojo: queda separado del de la otra compu.</p>
+        {/* Lo normal es volver a probar; crear otro dueño parte la cuenta en dos, así que no va en rojo. */}
+        <button type="button" className="boton boton-primario boton-grande" onClick={volver}>
+          Volver a intentar
         </button>
-        <button type="button" className="boton" onClick={volver}>
-          Volver
+        <button type="button" className="boton" onClick={crearNuevo}>
+          Crear un usuario nuevo en esta compu
         </button>
       </div>
     );

@@ -77,6 +77,8 @@ body { margin: 0; padding: 3mm ${a.ancho === 58 ? 2 : 4}mm; width: ${a.ancho}mm;
 hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
 table { width: 100%; border-collapse: collapse; }
 td { vertical-align: top; padding: 1px 0; }
+/* Sin "Coca-Cola 1,5 / l": el renglón corta antes y la cantidad con su unidad bajan juntas. */
+td:first-child { text-wrap: pretty; }
 .der { text-align: right; white-space: nowrap; padding-left: 6px; }
 .sub { font-size: 0.9em; }
 .total td { font-weight: 700; font-size: 1.25em; padding-top: 4px; }

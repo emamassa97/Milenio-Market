@@ -34,6 +34,9 @@ const FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'reponer', nombre: 'Para reponer' },
   { id: 'vencen', nombre: 'Por vencer' },
   { id: 'promos', nombre: 'Con promo' },
+];
+// Los de revisar la carga van en "Más filtros", así los chips entran en una fila.
+const MAS_FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'rapidos', nombre: 'Rápidos' },
   { id: 'sinCodigo', nombre: 'Sin código' },
   { id: 'sinCosto', nombre: 'Sin costo' },
@@ -194,7 +197,7 @@ export function PantallaProductos() {
         <div className="chips" role="group" aria-label="Filtro">
           {categorias.length > 0 && (
             <select value={categoria} onChange={(e) => setCategoria(e.target.value)} aria-label="Categoría">
-              <option value="">Todas las categorías</option>
+              <option value="">Categorías</option>
               {categorias.map((c) => (
                 <option key={c}>{c}</option>
               ))}
@@ -205,6 +208,19 @@ export function PantallaProductos() {
               {f.nombre}
             </button>
           ))}
+          <select
+            className={MAS_FILTROS.some((f) => f.id === filtro) ? 'activo' : ''}
+            value={MAS_FILTROS.some((f) => f.id === filtro) ? filtro : ''}
+            onChange={(e) => setFiltro((e.target.value || 'todos') as Filtro)}
+            aria-label="Más filtros"
+          >
+            <option value="">Más filtros</option>
+            {MAS_FILTROS.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.nombre}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

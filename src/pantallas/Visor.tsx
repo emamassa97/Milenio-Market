@@ -60,11 +60,15 @@ export function Visor() {
   const renglones = carrito.items.slice(0, entran);
   const vuelto = pagaCon !== null && pagaCon >= total ? (calcularVuelto(total, pagaCon) ?? 0) : 0;
 
+  // En espera el logo va grande en el centro; el de la cabecera vuelve con la venta (y con el "¡Gracias!").
+  const enEspera = carrito.items.length === 0 && !gracias;
   return (
     <div className="visor">
-      <header className="visor-cabecera">
-        <img src={logo} alt="Milenio Market" />
-      </header>
+      {!enEspera && (
+        <header className="visor-cabecera">
+          <img src={logo} alt="Milenio Market" />
+        </header>
+      )}
       {carrito.items.length > 0 ? (
         <main className="visor-venta">
           <ul className="visor-lista" aria-label="Lo que lleva">
@@ -111,6 +115,7 @@ export function Visor() {
         </main>
       ) : (
         <main className="visor-espera">
+          <img className="visor-espera-logo" src={logo} alt="Milenio Market" />
           <strong>Bienvenido</strong>
           <p>Acá vas a ver lo que llevás y el total.</p>
         </main>

@@ -43,6 +43,7 @@ import {
   Scale,
   Truck,
   CalendarClock,
+  CircleDollarSign,
   ChevronDown,
   Tag,
   TrendingUp,
@@ -238,6 +239,8 @@ export function CampoPesos({
 }) {
   const avisar = useAvisar();
   const [texto, setTexto] = useState(valor === null ? '' : formatearEdicion(valor));
+  // "Como mucho…" va debajo del campo, no en un aviso flotante que queda sobre la ventana siguiente.
+  const [error, setError] = useState('');
   const ultimo = useRef(valor);
   // Lo que había al entrar al campo: si lo tecleado rebota, se vuelve a eso (no a un parcial de lo que tipeó el lector).
   const alEntrar = useRef(valor);
@@ -264,12 +267,13 @@ export function CampoPesos({
     setTexto(antes === null ? '' : formatearEdicion(antes));
     onCambio(antes);
     if (codigo) {
+      setError('');
       if (onEscaneo && onEscaneo(codigo) !== false) return;
       avisar({ texto: 'Eso fue el lector, no un monto: escaneá el producto en el buscador de la caja.', tipo: 'error' });
-    } else avisar({ texto: `Como mucho ${formatPesos(maximo)}.`, tipo: 'error' });
+    } else setError(`Como mucho ${formatPesos(maximo)}.`);
   };
   const input = (
-    <div className={`campo-pesos ${grande ? 'campo-pesos-grande' : ''}`}>
+    <div className={`campo-pesos ${grande ? 'campo-pesos-grande' : ''} ${error ? 'campo-con-error' : ''}`}>
       <span aria-hidden="true">$</span>
       <input
         id={id}
@@ -278,6 +282,7 @@ export function CampoPesos({
         autoFocus={autoFocus}
         placeholder={placeholder ?? '0'}
         aria-label={ariaLabel ?? etiqueta}
+        aria-invalid={error ? true : undefined}
         value={texto}
         onFocus={(e) => {
           alEntrar.current = valor;
@@ -302,8 +307,10 @@ export function CampoPesos({
           // Pasado el máximo (el lector tipeando su código) se muestra lo escrito pero no se aplica: al Enter o al salir rebota.
           if (pasado(crudo)) {
             setTexto(crudo);
+            setError(`Como mucho ${formatPesos(maximo)}.`);
             return;
           }
+          setError('');
           const conComa = crudo.includes(',');
           // Al borrar ("15.000" → "15.00") el punto era de miles: se saca y queda 1.500.
           const borrando = crudo.length < texto.length;
@@ -317,11 +324,23 @@ export function CampoPesos({
       />
     </div>
   );
-  if (!etiqueta) return input;
+  const textoError = error && (
+    <small className="texto-alerta campo-error" role="alert">
+      {error}
+    </small>
+  );
+  if (!etiqueta)
+    return (
+      <>
+        {input}
+        {textoError}
+      </>
+    );
   return (
     <label className="campo">
       <span className="campo-etiqueta">{etiqueta}</span>
       {input}
+      {textoError}
     </label>
   );
 }
@@ -364,6 +383,7 @@ export function CampoCantidad({
   const mostrar = (n: number) => (n === 0 && vacioEnCero ? '' : String(n));
   const [texto, setTexto] = useState(() => mostrar(valor));
   const [conFoco, setConFoco] = useState(false);
+  const [error, setError] = useState('');
   const antes = useRef(valor);
   const rafaga = useRafaga();
   useEffect(() => {
@@ -384,7 +404,8 @@ export function CampoCantidad({
         if (cantidad !== antes.current) avisar({ texto: `Quedaron ${cantidad}, y lo que pasó el lector se sumó aparte.`, tipo: 'ok' });
         return;
       }
-      avisar({ texto: leido ? 'Pasaste el lector con el cursor acá: en este campo va cuántos hay.' : `Como mucho ${max}.`, tipo: 'error' });
+      if (leido) avisar({ texto: 'Pasaste el lector con el cursor acá: en este campo va cuántos hay.', tipo: 'error' });
+      else setError(`Como mucho ${max}.`);
       return;
     }
     const n = crudo === '' ? (minimo > 0 ? antes.current : 0) : Math.min(Number(crudo), max);
@@ -392,11 +413,12 @@ export function CampoCantidad({
     if (final !== valor) onCambio(final);
     setTexto(mostrar(final));
   };
-  return (
+  const campo = (
     <input
       inputMode="numeric"
       autoComplete="off"
       aria-label={ariaLabel}
+      aria-invalid={error ? true : undefined}
       placeholder="0"
       value={texto}
       onFocus={(e) => {
@@ -409,6 +431,7 @@ export function CampoCantidad({
         const t = e.target.value.replace(/\D/g, '');
         rafaga.tecla();
         setTexto(t);
+        setError('');
         const n = Number(t);
         if (enVivo && t.length <= largo && n >= minimo) onCambio(Math.min(n, max));
       }}
@@ -424,6 +447,17 @@ export function CampoCantidad({
       }}
       onBlur={(e) => terminar(e.currentTarget.value)}
     />
+  );
+  // El error queda pegado abajo del campo, sin correr el renglón. El envoltorio está siempre, así el campo no pierde el foco.
+  return (
+    <span className="campo-cantidad">
+      {campo}
+      {error && (
+        <small className="texto-alerta campo-error campo-error-flotante" role="alert">
+          {error}
+        </small>
+      )}
+    </span>
   );
 }
 
@@ -481,6 +515,7 @@ const ICONOS = {
   sube: TrendingUp,
   baja: TrendingDown,
   billetera: Wallet,
+  monto: CircleDollarSign,
 } satisfies Record<string, LucideIcon>;
 
 export type NombreIcono = keyof typeof ICONOS;

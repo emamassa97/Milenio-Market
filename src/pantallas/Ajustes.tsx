@@ -36,10 +36,13 @@ export function PantallaAjustes() {
     }
   };
 
+  // El empleado sólo ve su usuario: una columna. El dueño, dos desde 1200 px (personas y ticket | equipo y copias).
+  const soloEmpleado = Boolean(sesion && !sesion.admin);
   return (
-    <div className="pagina pagina-angosta">
+    <div className={`pagina ${soloEmpleado ? 'pagina-angosta' : 'pagina-ajustes'}`}>
       <h1>Ajustes</h1>
 
+      <div className="ajustes-columna">
       {sesion ? (
         <Usuarios />
       ) : (
@@ -64,9 +67,11 @@ export function PantallaAjustes() {
       </section>
       )}
 
-      {sesion && !sesion.admin ? null : (
-        <>
-      <AjustesDelTicket />
+      {!soloEmpleado && <AjustesDelTicket />}
+      </div>
+
+      {soloEmpleado ? null : (
+        <div className="ajustes-columna">
       <section className="tarjeta formulario">
         <h2 className="titulo-chico">Pantalla para el cliente</h2>
         <p className="texto-suave">Un segundo monitor conectado a esta compu, mirando al mostrador: el cliente ve lo que lleva, el total y el vuelto. Abrila con este botón y arrastrá la ventana a ese monitor.</p>
@@ -164,7 +169,7 @@ export function PantallaAjustes() {
           )}
         </section>
       )}
-        </>
+        </div>
       )}
     </div>
   );
@@ -432,7 +437,7 @@ function AjustesDelTicket() {
     await guardarAjuste(db, 'ticket', nuevo);
   };
   return (
-    <section className="tarjeta formulario">
+    <section className="tarjeta formulario ajustes-ticket">
       <h2 className="titulo-chico">Ticket</h2>
       <p className="texto-suave">Para impresoras térmicas. No es factura: es el comprobante para el cliente.</p>
       <div className="ticket-ajustes">

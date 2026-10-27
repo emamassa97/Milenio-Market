@@ -44,7 +44,7 @@ import {
 } from '../datos/operaciones';
 import { CampoCantidad, CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
 import { Escaner } from '../ui/Escaner';
-import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, LLAVE_PAGA_CON, LLAVE_ULTIMA, pitido, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
+import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, LLAVE_PAGA_CON, LLAVE_ULTIMA, pitido, resumenEspera, useConsulta, useMedia, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { NuevoMovimiento } from './Cierre';
 import { RegistrarPago } from './Clientes';
@@ -159,7 +159,7 @@ function AbrirCaja() {
         } catch {
           /* sin almacenamiento */
         }
-        avisar({ texto: 'Caja abierta. ¡Buenas ventas!', tipo: 'ok' });
+        // Sin aviso: la caja abierta ya se ve, y el aviso tapaba el buscador en el celular.
       } catch (err) {
         avisar({ texto: errorATexto(err), tipo: 'error' });
       }
@@ -206,14 +206,18 @@ function Caja() {
   const [ultima, setUltima] = useGuardado<UltimaVenta | null>(LLAVE_ULTIMA, null);
   const ticket = useConsulta(() => leerAjustesTicket(db), [], TICKET_INICIAL);
   const [entrada, setEntrada] = useState('');
+  // "No encontré…" va debajo del buscador (como los errores del ingreso), no en un aviso que tapa lo que se está por tocar.
+  const [noEncontre, setNoEncontre] = useState<{ q: string; cantidad: number } | null>(null);
   const [resaltado, setResaltado] = useState(0);
+  // A 1280–1400 px el campo queda angosto y el texto largo se cortaba ("Escaneá o buscá un pro").
+  const buscadorAngosto = useMedia('(max-width: 1400px)');
   const [medio, setMedio] = useState<MedioPago>('efectivo');
   const [pagaCon, setPagaCon] = useState<number | null>(null);
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [modal, setModal] = useState<
     | null
     | { tipo: 'libre' }
-    | { tipo: 'nuevo'; codigo: string; cantidad: number }
+    | { tipo: 'nuevo'; codigo: string; cantidad: number; nombre?: string }
     | { tipo: 'camara' }
     | { tipo: 'cliente' }
     | { tipo: 'peso'; producto: Producto }
@@ -356,7 +360,7 @@ function Caja() {
       if (elegido) return setModal({ tipo: 'precio', producto: elegido });
       pitido('error');
       ultimoError.current = Date.now();
-      avisar({ texto: `No encontré "${q}".`, tipo: 'error' });
+      setNoEncontre({ q, cantidad: 1 });
       return;
     }
     if (p) return agregar(p, cantidad);
@@ -372,7 +376,7 @@ function Caja() {
     setEntrada('');
     // El próximo Enter no cobra: el cajero está reintentando la búsqueda, no cerrando la venta.
     ultimoError.current = Date.now();
-    avisar({ texto: `No encontré "${q}".`, tipo: 'error' });
+    setNoEncontre({ q, cantidad });
   };
 
   // Con el buscador vacío, Supr (o "-") saca lo último que se pasó: una unidad, o el renglón si era la última.
@@ -782,6 +786,7 @@ function Caja() {
               onChange={(e) => {
                 setEntrada(e.target.value);
                 setResaltado(0);
+                setNoEncontre(null);
                 if (e.target.value) setCobrado(null);
               }}
               onKeyDown={(e) => {
@@ -816,8 +821,10 @@ function Caja() {
                   setEntrada('');
                 }
               }}
-              placeholder="Escaneá o buscá un producto"
+              placeholder={buscadorAngosto ? 'Escaneá o buscá' : 'Escaneá o buscá un producto'}
               aria-label="Escaneá el código o escribí el nombre del producto"
+              aria-invalid={noEncontre ? true : undefined}
+              aria-describedby={noEncontre ? 'no-encontre' : undefined}
               autoComplete="off"
               enterKeyHint="enter"
             />
@@ -847,13 +854,32 @@ function Caja() {
           <button type="button" className="boton boton-cuadrado" onClick={() => setModal({ tipo: 'camara' })} aria-label="Escanear con la cámara" title="Escanear con la cámara">
             <Icono nombre="camara" />
           </button>
-          <button type="button" className="boton" onClick={() => setModal({ tipo: 'libre' })} title="F4">
-            Monto libre
+          <button type="button" className="boton boton-libre" onClick={() => setModal({ tipo: 'libre' })} title="Monto libre (F4)" aria-label="Monto libre">
+            <Icono nombre="monto" tam={18} /> <span className="boton-texto-largo">Monto libre</span>
           </button>
           <button type="button" className="boton boton-precio" onClick={() => setModal({ tipo: 'precio', producto: null })} title="Consultar un precio sin cargarlo en la venta (o escribí ? antes del producto)" aria-label="¿Cuánto sale? Consultar un precio">
-            <Icono nombre="promo" tam={18} /> <span className="solo-pc">¿Cuánto sale?</span>
+            <Icono nombre="promo" tam={18} /> <span className="solo-pc boton-texto-largo">¿Cuánto sale?</span>
           </button>
         </div>
+        {noEncontre && (
+          <p className="texto-alerta buscador-error" id="no-encontre" role="alert">
+            <Icono nombre="alerta" tam={16} />
+            <span>
+              No encontré "{noEncontre.q}".{' '}
+              <button
+                type="button"
+                className="enlace"
+                onClick={() => {
+                  const { q, cantidad } = noEncontre;
+                  setNoEncontre(null);
+                  setModal({ tipo: 'nuevo', codigo: '', cantidad, nombre: q });
+                }}
+              >
+                Cargarlo
+              </button>
+            </span>
+          </p>
+        )}
         <p className="ayuda-teclas">
           <span><kbd>3*</kbd> antes del código suma 3</span>
           <span><kbd>?</kbd> antes del producto consulta el precio</span>
@@ -906,14 +932,19 @@ function Caja() {
                 <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'movimiento' })}>
                   <Icono nombre="billetera" tam={16} /> Retiro o gasto
                 </button>
+                <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'mercaderia' })} disabled={productos.length === 0}>
+                  <Icono nombre="camion" tam={16} /> Llegó mercadería
+                </button>
               </div>
             </div>
           ) : (
             <>
             <div className="lista-venta-cabecera">
               <h2 className="titulo-chico">Venta actual</h2>
-              <span className="texto-suave">
-                {unidades(carrito)} {unidades(carrito) === 1 ? 'producto' : 'productos'}
+              {/* En el celular angosto queda sólo el número, en una insignia: la cabecera entra en una línea. */}
+              <span className="texto-suave lista-venta-cuenta">
+                <span className="lista-venta-numero">{unidades(carrito)}</span>
+                <span className="lista-venta-unidad"> {unidades(carrito) === 1 ? 'producto' : 'productos'}</span>
               </span>
               <button type="button" className="boton boton-chico boton-texto boton-descuento" onClick={() => setModal({ tipo: 'descuento' })} title="Redondear o hacer un descuento sobre toda la venta">
                 <Icono nombre="porcentaje" tam={15} /> {carrito.descuento ? `Descuento ${formatPesos(carrito.descuento)}` : 'Descuento'}
@@ -1296,6 +1327,7 @@ function Caja() {
       {modal?.tipo === 'nuevo' && (
         <ProductoNuevoRapido
           codigo={modal.codigo}
+          nombreInicial={modal.nombre}
           onCerrar={() => {
             setModal(null);
             enfocar();
@@ -1559,15 +1591,18 @@ function MontoLibre({ onCerrar, onAgregar }: { onCerrar: () => void; onAgregar: 
 
 function ProductoNuevoRapido({
   codigo,
+  nombreInicial = '',
   onCerrar,
   onGuardado,
 }: {
   codigo: string;
+  /** Desde "No encontré": lo que se buscó, como punto de partida del nombre (sin código). */
+  nombreInicial?: string;
   onCerrar: () => void;
   onGuardado: (p: Producto) => void;
 }) {
   const avisar = useAvisar();
-  const [nombre, setNombre] = useState('');
+  const [nombre, setNombre] = useState(nombreInicial);
   const [precio, setPrecio] = useState<number | null>(null);
   const [stock, setStock] = useState('');
   const [enCurso, unaVez] = useUnaVez();
@@ -1594,10 +1629,16 @@ function ProductoNuevoRapido({
     });
   };
   return (
-    <Modal titulo="Este código no está cargado" onCerrar={onCerrar}>
+    <Modal titulo={codigo ? 'Este código no está cargado' : 'Cargar un producto nuevo'} onCerrar={onCerrar}>
       <form className="formulario" onSubmit={guardar}>
         <p className="texto-suave">
-          Código <strong>{codigo}</strong>. Cargalo ahora en tres datos y se suma a la venta.
+          {codigo ? (
+            <>
+              Código <strong>{codigo}</strong>. Cargalo ahora en tres datos y se suma a la venta.
+            </>
+          ) : (
+            'Sin código de barras: cargalo en tres datos y se suma a la venta. El código se agrega después en Productos.'
+          )}
         </p>
         <label className="campo">
           <span className="campo-etiqueta">Nombre</span>

@@ -413,6 +413,16 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
               </button>
             )}
           </div>
+          {/* En el celular el pie de arriba no puede quedar pegado (son cinco cosas): esta barra sí, como la de cobro. */}
+          <div className="cierre-pie-movil" role="status">
+            <div>
+              <small>{confirmar && textoCerrar.endsWith('?') ? textoCerrar : contoAlgo && dueño ?(diferencia === 0 ? 'Da justo' : diferencia < 0 ? `Faltan ${formatPesos(-diferencia)}` : `Sobran ${formatPesos(diferencia)}`) : 'Contaste'}</small>
+              <strong className="importe">{formatPesos(contado)}</strong>
+            </div>
+            <button type="button" className={`boton ${confirmar ? 'boton-peligro' : 'boton-primario'}`} onClick={cerrar} disabled={cerrando}>
+              {confirmar ? 'Sí, cerrar' : 'Cerrar turno'}
+            </button>
+          </div>
         </aside>
       </div>
       {movimiento && <NuevoMovimiento onCerrar={() => setMovimiento(false)} />}
