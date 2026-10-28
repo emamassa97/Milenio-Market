@@ -487,7 +487,35 @@ export const STOCK_MAXIMO = 99_999;
 
 export async function buscarPorCodigo(db: BaseKiosco, codigo: string): Promise<Producto | undefined> {
   if (!codigo) return undefined;
-  return db.productos.where('codigo').equals(codigo).first();
+  return (await db.productos.where('codigo').equals(codigo).first()) ?? db.productos.filter((p) => !!p.codigosAlt?.includes(codigo)).first();
+}
+
+/** Saca uno de los otros códigos de un producto (el principal se cambia en el formulario). */
+export async function quitarCodigoAlt(db: BaseKiosco, productoId: number, codigo: string): Promise<void> {
+  await db.transaction('rw', db.productos, async () => {
+    const p = await db.productos.get(productoId);
+    if (!p) return;
+    await db.productos.update(productoId, { codigosAlt: (p.codigosAlt ?? []).filter((c) => c !== codigo), actualizado: ahora() });
+  });
+}
+
+/**
+ * "Es un producto que ya tengo": el código leído pasa a ser de ese producto.
+ * Si no tenía código queda como el principal; si ya tenía, se suma como otro código.
+ */
+export async function sumarCodigo(db: BaseKiosco, productoId: number, codigo: string): Promise<Producto> {
+  const limpio = codigo.trim();
+  if (!limpio) throw new ErrorKiosco('Falta el código.');
+  return db.transaction('rw', db.productos, async () => {
+    const p = await db.productos.get(productoId);
+    if (!p) throw new ErrorKiosco('Ese producto ya no existe.');
+    const otro = await buscarPorCodigo(db, limpio);
+    if (otro && otro.id !== productoId) throw new ErrorKiosco(`El código ${limpio} ya es de "${otro.nombre}".`);
+    if (otro) return p;
+    const cambios: Partial<Producto> = p.codigo ? { codigosAlt: [...(p.codigosAlt ?? []), limpio] } : { codigo: limpio };
+    await db.productos.update(productoId, { ...cambios, actualizado: ahora() });
+    return { ...p, ...cambios };
+  });
 }
 
 /**

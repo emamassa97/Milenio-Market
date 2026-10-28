@@ -103,3 +103,24 @@ export function textoCierre(turno: Turno, r: ResumenTurno, contado: Pesos | null
 export function esGastoDelLocal(m: MovimientoCaja): boolean {
   return m.tipo === 'gasto' && !(m.mercaderia ?? m.motivo.startsWith('Mercadería'));
 }
+
+/** Cada cobro de un medio en las ventas del turno, para compararlo uno por uno con la app (Mercado Pago, el posnet). */
+export function cobrosDeMedio(ventas: Venta[], medio: MedioPago): { ventaId: number | undefined; fecha: number; monto: Pesos; dividido: boolean }[] {
+  const cobros = [];
+  for (const v of ventas) {
+    if (v.anulada) continue;
+    const pagos = pagosDeVenta(v);
+    for (const p of pagos) if (p.medio === medio && p.monto > 0) cobros.push({ ventaId: v.id, fecha: v.fecha, monto: p.monto, dividido: pagos.length > 1 });
+  }
+  return cobros.sort((a, b) => a.fecha - b.fecha);
+}
+
+/** Lo que dice la app contra lo anotado: positivo si en la app hay más. */
+export function diferenciaConApp(anotado: Pesos, enLaApp: Pesos): { diferencia: Pesos; texto: string } {
+  const diferencia = enLaApp - anotado;
+  if (diferencia === 0) return { diferencia, texto: 'Coincide con lo anotado.' };
+  if (diferencia > 0) {
+    return { diferencia, texto: 'En la app hay más que lo anotado: puede ser un cobro que se marcó con otro medio (efectivo o transferencia), o una transferencia que entró a Mercado Pago.' };
+  }
+  return { diferencia, texto: 'En la app hay menos que lo anotado: puede ser una venta que se marcó Mercado Pago y se pagó con otro medio, o un pago que todavía no se acreditó.' };
+}

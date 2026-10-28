@@ -29,3 +29,20 @@ export function deudaDesde(movimientos: MovimientoFiado[]): number | null {
 export function superaLimite(saldoActual: Pesos, compra: Pesos, limite: Pesos): boolean {
   return limite > 0 && saldoActual + compra > limite;
 }
+
+/** Días que hace que debe; para avisar se toma a los que deben hace más de una semana. */
+export const DIAS_PARA_AVISAR = 7;
+
+export function diasDeDeuda(desde: number | null, ahora = Date.now()): number {
+  return desde === null ? 0 : Math.floor((ahora - desde) / 86_400_000);
+}
+
+/** "Marta (la del 3° B)" → "Marta" para el saludo. */
+export function nombreParaSaludo(nombre: string): string {
+  return nombre.replace(/\s*\(.*?\)\s*/g, ' ').trim().split(' ')[0] ?? nombre;
+}
+
+/** El mensaje de WhatsApp para recordarle el saldo. */
+export function mensajeRecordatorio(nombre: string, saldo: Pesos, formato: (p: Pesos) => string): string {
+  return `Hola ${nombreParaSaludo(nombre)}! Te escribo de Milenio Market. Te quedó un saldo de ${formato(saldo)}. Cuando puedas pasá. Gracias!`;
+}

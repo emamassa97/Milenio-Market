@@ -22,10 +22,11 @@ import {
   sumaCarrito,
   totalCarrito,
   unidades,
+  repetirVenta,
   type Carrito,
 } from '../dominio/carrito';
 import { formatPesos } from '../dominio/dinero';
-import { codigoAlFinal, codigoEscaneado, gramosDeTexto, normalizarTexto as normalizar } from '../dominio/entrada';
+import { codigoAlFinal, codigoEscaneado, gramosDeTexto, normalizarTexto as normalizar, mapaPorCodigo } from '../dominio/entrada';
 import { saldoCliente } from '../dominio/fiado';
 import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type Pago, type Producto, type Venta } from '../dominio/tipos';
 import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
@@ -44,6 +45,7 @@ import {
   turnoAbierto,
   cajasDeOtrosEquipos,
   traerCajaAEsteEquipo,
+  sumarCodigo,
 } from '../datos/operaciones';
 import { CampoCantidad, CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
 import { Escaner, camaraDisponible } from '../ui/Escaner';
@@ -119,6 +121,13 @@ const nuevoIdCarrito = () => (typeof crypto !== 'undefined' && 'randomUUID' in c
 
 // Para que entre en un botón del celular: "Marta (la del 3°)" → "Marta".
 const primerNombre = (n: string) => n.replace(/\(.*?\)/g, '').trim().split(/\s+/)[0] || n;
+
+/** "2 Coca-Cola 500 ml, 1 Pan y 3 más": qué llevó, para reconocerlo de un vistazo. */
+function resumenItems(v: Pick<Venta, 'items'>): string {
+  const partes = v.items.slice(0, 2).map((it) => (it.gramos ? `${formatoPeso(it.gramos)} de ${it.nombre}` : `${it.cantidad} ${it.nombre}`));
+  const resto = v.items.length - partes.length;
+  return partes.join(', ') + (resto > 0 ? ` y ${resto} más` : '');
+}
 
 export function PantallaCaja() {
   const turno = useConsulta(() => turnoAbierto(db), [], null as Awaited<ReturnType<typeof turnoAbierto>> | null);
@@ -376,7 +385,30 @@ function Caja() {
     return true;
   };
 
-  const porCodigo = useMemo(() => new Map(productos.filter((p) => p.codigo).map((p) => [p.codigo, p])), [productos]);
+  const porCodigo = useMemo(() => mapaPorCodigo(productos), [productos]);
+
+  // "Lo de siempre" de un cliente de fiado: su última compra, para cargarla de un toque.
+  const ultimaDelCliente = useConsulta(
+    async () => {
+      if (cliente?.id === undefined) return null;
+      const suyas = await db.ventas.where('clienteId').equals(cliente.id).sortBy('fecha');
+      return suyas.reverse().find((v) => !v.anulada && v.items.length > 0) ?? null;
+    },
+    [cliente?.id],
+    null as Venta | null,
+  );
+  const repetirCompra = (v: Venta) => {
+    const { items, faltan } = repetirVenta(v, productos);
+    if (items.length === 0) {
+      avisar({ texto: 'Lo de la última vez ya no está cargado en Productos.', tipo: 'error' });
+      return;
+    }
+    setCarrito((c) => items.reduce(agregarItem, c));
+    setPagaCon(null);
+    pitido('ok');
+    if (faltan.length) avisar({ texto: `No se repitió ${faltan.join(', ')}: ya no está cargado.`, tipo: 'info' });
+    enfocar();
+  };
 
   // Todo sincrónico: el lector USB escribe muy rápido y no hay que perder ni mezclar códigos.
   const procesarEntrada = () => {
@@ -802,6 +834,17 @@ function Caja() {
                 <strong className="importe">{formatPesos(vuelto === null ? total - (pagaCon ?? 0) : vuelto)}</strong>
               </div>
             </>
+          )}
+          {medio === 'fiado' && cliente && carrito.items.length === 0 && ultimaDelCliente && (
+            <button type="button" className="boton repetir-compra" onClick={() => repetirCompra(ultimaDelCliente)}>
+              <Icono nombre="repetir" tam={18} />
+              <span>
+                <strong>Repetir lo de la última vez</strong>
+                <small className="texto-suave">
+                  {resumenItems(ultimaDelCliente)} · {cuando(ultimaDelCliente.fecha)}
+                </small>
+              </span>
+            </button>
           )}
           {medio === 'fiado' && cliente && (
             <button type="button" className="boton boton-texto" onClick={() => setModal({ tipo: 'cliente' })}>
@@ -1513,7 +1556,7 @@ function Descuento({
 function ConsultaPrecio({ inicial, productos, onCerrar, onAgregar }: { inicial: Producto | null; productos: Producto[]; onCerrar: () => void; onAgregar: (p: Producto) => void }) {
   const [producto, setProducto] = useState<Producto | null>(inicial);
   const [q, setQ] = useState('');
-  const porCodigo = useMemo(() => new Map(productos.filter((p) => p.codigo).map((p) => [p.codigo, p])), [productos]);
+  const porCodigo = useMemo(() => mapaPorCodigo(productos), [productos]);
   const resultados = useMemo(() => {
     const t = normalizar(q.trim());
     if (t.length < 2 || esCodigo(t)) return [];
@@ -1648,6 +1691,25 @@ function ProductoNuevoRapido({
   const [precio, setPrecio] = useState<number | null>(null);
   const [stock, setStock] = useState('');
   const [enCurso, unaVez] = useUnaVez();
+  // El mismo producto con otro código (otra caja, otro proveedor): se le suma el código en vez de cargarlo dos veces.
+  const [yaLoTengo, setYaLoTengo] = useState(false);
+  const [q, setQ] = useState('');
+  const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
+  const parecidos = useMemo(() => {
+    const palabras = normalizar(q).split(/\s+/).filter(Boolean);
+    if (palabras.length === 0) return [];
+    return productos.filter((p) => palabras.every((w) => normalizar(`${p.nombre} ${p.categoria}`).includes(w))).slice(0, 6);
+  }, [q, productos]);
+  const asociar = (p: Producto) =>
+    unaVez(async () => {
+      try {
+        const actualizado = await sumarCodigo(db, p.id!, codigo);
+        onGuardado(actualizado);
+        avisar({ texto: `Listo: el código ${codigo} ahora también es de "${p.nombre}".`, tipo: 'ok' });
+      } catch (err) {
+        avisar({ texto: errorATexto(err), tipo: 'error' });
+      }
+    });
   const guardar = (e: React.FormEvent) => {
     e.preventDefault();
     unaVez(async () => {
@@ -1672,57 +1734,106 @@ function ProductoNuevoRapido({
   };
   return (
     <Modal titulo={codigo ? 'Este código no está cargado' : 'Cargar un producto nuevo'} onCerrar={onCerrar}>
-      <form className="formulario" onSubmit={guardar}>
-        <p className="texto-suave">
-          {codigo ? (
-            <>
-              Código <strong>{codigo}</strong>. Cargalo ahora en tres datos y se suma a la venta.
-            </>
-          ) : (
-            'Sin código de barras: cargalo en tres datos y se suma a la venta. El código se agrega después en Productos.'
-          )}
-        </p>
-        <label className="campo">
-          <span className="campo-etiqueta">Nombre</span>
-          <input
-            value={nombre}
-            onChange={(e) => setNombre(e.target.value)}
-            onKeyDown={(e) => {
-              // La cajera pasó otro producto con el cursor acá: el código no queda como parte del nombre.
-              const pegado = e.key === 'Enter' ? codigoAlFinal(nombre) : null;
-              if (!pegado) return;
-              e.preventDefault();
-              setNombre(pegado.texto);
-              pitido('error');
-              avisar({ texto: 'El lector pasó otro código. Primero terminá de cargar este producto y después pasalo de nuevo.', tipo: 'info' });
-            }}
-            autoFocus
-            placeholder="Ej.: Alfajor Jorgito"
-          />
-        </label>
-        <div className="fila-campos">
-          <CampoPesos etiqueta="Precio de venta" valor={precio} onCambio={setPrecio} />
+      {codigo && productos.length > 0 && (
+        <div className="segmentos ya-lo-tengo" role="group" aria-label="¿Qué producto es?">
+          <button type="button" className={!yaLoTengo ? 'activo' : ''} aria-pressed={!yaLoTengo} onClick={() => setYaLoTengo(false)}>
+            Es nuevo
+          </button>
+          <button type="button" className={yaLoTengo ? 'activo' : ''} aria-pressed={yaLoTengo} onClick={() => setYaLoTengo(true)}>
+            Ya lo tengo cargado
+          </button>
+        </div>
+      )}
+      {yaLoTengo ? (
+        <div className="formulario">
+          <p className="texto-suave">
+            Buscalo por el nombre. El código <strong>{codigo}</strong> queda guardado en ese producto y la próxima vez lo reconoce solo.
+          </p>
           <label className="campo">
-            <span className="campo-etiqueta">Stock (opcional)</span>
+            <span className="campo-etiqueta">¿Cuál es?</span>
             <input
-              inputMode="numeric"
-              value={stock}
-              onChange={(e) => setStock(e.target.value.replace(/[^\d]/g, ''))}
+              value={q}
+              autoFocus
+              onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key !== 'Enter' || stock.length <= 5) return;
-                e.preventDefault();
-                setStock('');
-                pitido('error');
-                avisar({ texto: 'Eso fue el lector, no un stock. Primero terminá de cargar este producto.', tipo: 'info' });
+                if (e.key === 'Enter' && parecidos[0]) {
+                  e.preventDefault();
+                  asociar(parecidos[0]);
+                }
               }}
-              placeholder="0"
+              placeholder="Ej.: alfajor"
             />
           </label>
+          {q.trim() && parecidos.length === 0 && <p className="texto-suave">No encontré ninguno con ese nombre. Si no lo tenés, elegí "Es nuevo".</p>}
+          {parecidos.length > 0 && (
+            <ul className="lista-clientes lista-elegir">
+              {parecidos.map((p) => (
+                <li key={p.id}>
+                  <button type="button" disabled={enCurso} onClick={() => asociar(p)}>
+                    <span>
+                      <strong>{sinCortes(p.nombre)}</strong>
+                      <small className="texto-suave">{p.codigo ? `Código ${p.codigo}` : 'Sin código'}</small>
+                    </span>
+                    <span className="importe">{formatPesos(p.precio)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        <button className="boton boton-primario boton-grande" type="submit" disabled={!nombre.trim() || !precio || enCurso}>
-          Guardar y agregar a la venta
-        </button>
-      </form>
+      ) : (
+        <form className="formulario" onSubmit={guardar}>
+          <p className="texto-suave">
+            {codigo ? (
+              <>
+                Código <strong>{codigo}</strong>. Cargalo ahora en tres datos y se suma a la venta.
+              </>
+            ) : (
+              'Sin código de barras: cargalo en tres datos y se suma a la venta. El código se agrega después en Productos.'
+            )}
+          </p>
+          <label className="campo">
+            <span className="campo-etiqueta">Nombre</span>
+            <input
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              onKeyDown={(e) => {
+                // La cajera pasó otro producto con el cursor acá: el código no queda como parte del nombre.
+                const pegado = e.key === 'Enter' ? codigoAlFinal(nombre) : null;
+                if (!pegado) return;
+                e.preventDefault();
+                setNombre(pegado.texto);
+                pitido('error');
+                avisar({ texto: 'El lector pasó otro código. Primero terminá de cargar este producto y después pasalo de nuevo.', tipo: 'info' });
+              }}
+              autoFocus
+              placeholder="Ej.: Alfajor Jorgito"
+            />
+          </label>
+          <div className="fila-campos">
+            <CampoPesos etiqueta="Precio de venta" valor={precio} onCambio={setPrecio} />
+            <label className="campo">
+              <span className="campo-etiqueta">Stock (opcional)</span>
+              <input
+                inputMode="numeric"
+                value={stock}
+                onChange={(e) => setStock(e.target.value.replace(/[^\d]/g, ''))}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' || stock.length <= 5) return;
+                  e.preventDefault();
+                  setStock('');
+                  pitido('error');
+                  avisar({ texto: 'Eso fue el lector, no un stock. Primero terminá de cargar este producto.', tipo: 'info' });
+                }}
+                placeholder="0"
+              />
+            </label>
+          </div>
+          <button className="boton boton-primario boton-grande" type="submit" disabled={!nombre.trim() || !precio || enCurso}>
+            Guardar y agregar a la venta
+          </button>
+        </form>
+      )}
     </Modal>
   );
 }
