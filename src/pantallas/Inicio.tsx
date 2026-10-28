@@ -11,6 +11,7 @@ import { hora, Icono, sinCortes } from '../ui/componentes';
 import { useConsulta, useEstadoNube } from '../ui/hooks';
 import { AVISO_SIN_ACTIVAR } from '../datos/nube';
 import { useSesion } from '../ui/sesion';
+import { AvisoInstalar } from '../ui/instalar';
 
 // Panel del dueño: en una mirada, cómo viene el día y qué hay que atender.
 
@@ -183,6 +184,8 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
           <Icono nombre="caja" tam={18} /> Ir a la caja
         </button>
       </div>
+
+      <AvisoInstalar />
 
       <div className="indicadores indicadores-4">
         <div className="tarjeta indicador">

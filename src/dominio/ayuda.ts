@@ -17,7 +17,7 @@ export interface TemaAyuda {
   consejos?: string[];
   /** Otras palabras con las que alguien lo buscaría. */
   palabras?: string;
-  extra?: 'probarLector' | 'probarCamara' | 'guia';
+  extra?: 'probarLector' | 'probarCamara' | 'guia' | 'instalar';
 }
 
 export const TEMAS_AYUDA: TemaAyuda[] = [
@@ -422,8 +422,27 @@ export const TEMAS_AYUDA: TemaAyuda[] = [
       'Entrá con el mismo usuario y clave. Los productos, clientes y ventas se traen solos.',
       'Abajo a la izquierda (o en "Más", en el celular) dice "Nube al día" cuando todo está subido.',
     ],
-    consejos: ['En el celular, desde el menú de Chrome tocá "Agregar a pantalla principal" y queda como una aplicación.'],
+    consejos: ['En el celular, desde el menú de Chrome tocá "Instalar aplicación" y queda con su ícono, como cualquier otra.'],
     palabras: 'celular otra compu nube sincronizar instalar aplicacion',
+  },
+  {
+    id: 'instalar',
+    titulo: 'Instalarla en la compu como un programa',
+    pantallas: ['ajustes', 'inicio', 'caja'],
+    resumen: 'Ícono en el escritorio, ventana propia y sin internet. No hace falta abrir el navegador.',
+    pasos: [
+      'Abrí milenio-market.vercel.app en Google Chrome o Microsoft Edge.',
+      'En Ajustes, en "Aplicación", tocá "Instalar en esta compu" y confirmá con "Instalar".',
+      'Listo: queda el ícono de Milenio Market en el escritorio y en el menú Inicio. Abre en su propia ventana, directo a la caja.',
+    ],
+    consejos: [
+      'Para tenerla siempre a mano, hacé clic derecho en el ícono de la barra de tareas y elegí "Anclar a la barra de tareas".',
+      'Para que abra sola al prender la compu: en Chrome, entrá a chrome://apps, clic derecho en Milenio Market y tildá "Iniciar aplicación al acceder". En Edge, en edge://apps.',
+      'Los datos son los mismos que en el navegador y se actualiza sola cuando hay una versión nueva.',
+      'Clic derecho en el ícono de la barra de tareas también te deja ir directo a la Caja, el Cierre o los Productos.',
+    ],
+    palabras: 'instalar aplicacion programa escritorio icono acceso directo ventana exe descargar windows menu inicio',
+    extra: 'instalar',
   },
   {
     id: 'internet',

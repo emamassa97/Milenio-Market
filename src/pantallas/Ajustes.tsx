@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BotonAyuda } from '../ui/Ayuda';
+import { InstalarApp } from '../ui/instalar';
 import { db } from '../datos/db';
 import { estaVacia, exportarTodo, restaurarCopia } from '../datos/copia';
 import { borrarTodo, cargarEjemplo } from '../datos/ejemplo';
@@ -69,6 +70,13 @@ export function PantallaAjustes() {
         </label>
       </section>
       )}
+
+      <section className="tarjeta formulario">
+        <h2 className="titulo-chico">
+          Aplicación <BotonAyuda tema="instalar" que="instalar en esta compu" />
+        </h2>
+        <InstalarApp />
+      </section>
 
       {!soloEmpleado && <AjustesDelTicket />}
       </div>

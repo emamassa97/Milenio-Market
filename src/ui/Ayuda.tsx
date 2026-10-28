@@ -6,6 +6,7 @@ import { buscarAyuda, partesConTeclas, pasosGuia, type PantallaAyuda, type TemaA
 import { codigoEscaneado } from '../dominio/entrada';
 import type { Producto } from '../dominio/tipos';
 import { Escaner, camaraDisponible } from './Escaner';
+import { InstalarApp } from './instalar';
 import { Icono, Modal, PAUSA_ENTRE_TECLAS } from './componentes';
 
 /** Cualquier pantalla puede abrir la ayuda en un tema ("lector", "cerrar"…) sin pasar nada por props. */
@@ -163,6 +164,7 @@ function TemaPlegable({
           )}
           {tema.extra === 'probarLector' && <ProbarLector enfocar={enfocarProbador} />}
           {tema.extra === 'probarCamara' && <ProbarCamara />}
+          {tema.extra === 'instalar' && <InstalarApp />}
         </div>
       )}
     </div>
