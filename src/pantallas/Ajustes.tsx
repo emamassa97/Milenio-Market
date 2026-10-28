@@ -227,7 +227,7 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
             </span>
             {sesion?.admin && !estado.clave.startsWith('e.') && (
               <span>
-                Clave de la nube: <strong>{estado.clave}</strong>. No hace falta para entrar en otro equipo (alcanza con tu usuario), pero guardala por las dudas.
+                Clave de la nube: <strong>{estado.clave}</strong>. No hace falta para entrar en otro equipo (alcanza con tu usuario). Anotala en un lugar seguro: si un día te olvidás la clave del dueño, con ésta le ponés una nueva. No se la des a los empleados.
               </span>
             )}
           </p>

@@ -6,7 +6,7 @@ import { buscarAyuda, partesConTeclas, pasosGuia, type PantallaAyuda, type TemaA
 import { codigoEscaneado } from '../dominio/entrada';
 import type { Producto } from '../dominio/tipos';
 import { Escaner, camaraDisponible } from './Escaner';
-import { Icono, Modal } from './componentes';
+import { Icono, Modal, PAUSA_ENTRE_TECLAS } from './componentes';
 
 /** Cualquier pantalla puede abrir la ayuda en un tema ("lector", "cerrar"…) sin pasar nada por props. */
 const EVENTO_AYUDA = 'milenio-ayuda';
@@ -238,7 +238,9 @@ function ProbarLector({ enfocar }: { enfocar: boolean }) {
   const rapido = () => {
     const t = teclas.current;
     if (t.length < 6) return false;
-    return (t[t.length - 1]! - t[0]!) / (t.length - 1) < 45;
+    // La misma regla que la caja: cada tecla a menos de PAUSA_ENTRE_TECLAS de la anterior (un lector
+    // Bluetooth lento anda en la caja, así que la prueba tampoco tiene que decir "tipeado a mano").
+    return t.slice(1).every((x, i) => x - t[i]! < PAUSA_ENTRE_TECLAS);
   };
 
   const evaluar = async (texto: string, conEnter: boolean) => {
@@ -380,6 +382,8 @@ export function GuiaPrimerUso({ dueño, nombre, onTerminar, onAbrirAyuda }: { du
               className={n === i ? 'activo' : ''}
               aria-label={`Ir al paso ${n + 1}`}
               aria-current={n === i ? 'step' : undefined}
+              // Con el teclado se avanza con Anterior / Siguiente: los puntos no se llevan el foco.
+              tabIndex={-1}
               onClick={() => setI(n)}
             />
           ))}
@@ -406,12 +410,12 @@ export function GuiaPrimerUso({ dueño, nombre, onTerminar, onAbrirAyuda }: { du
               >
                 Ver la ayuda
               </button>
-              <button type="button" className="boton boton-primario" onClick={onTerminar}>
+              <button type="button" className="boton boton-primario" onClick={onTerminar} autoFocus data-autofocus>
                 Empezar
               </button>
             </span>
           ) : (
-            <button type="button" className="boton boton-primario" onClick={() => setI(i + 1)}>
+            <button type="button" className="boton boton-primario" onClick={() => setI(i + 1)} autoFocus data-autofocus>
               Siguiente
             </button>
           )}

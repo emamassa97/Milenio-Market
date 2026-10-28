@@ -113,6 +113,18 @@ export function numeroVisible(id: number | undefined): string {
   return id >= RANGO ? `${Math.floor(id / RANGO)}-${id % RANGO}` : String(id);
 }
 
+/**
+ * Los campos de un producto que cambiaron desde la última subida: los que ya estaban anotados más los de
+ * este cambio que tienen otro valor (no los internos de la sincronización, que empiezan con _).
+ */
+export function camposCambiados(fila: Record<string, unknown>, cambios: Record<string, unknown>): string[] {
+  const antes = Array.isArray(fila._c) ? (fila._c as string[]) : [];
+  const nuevos = Object.keys(cambios)
+    .filter((k) => !k.startsWith('_') && (k.includes('.') || JSON.stringify(cambios[k]) !== JSON.stringify(fila[k])))
+    .map((k) => k.split('.')[0]!);
+  return [...new Set([...antes, ...nuevos])];
+}
+
 /** Transacción que aplica lo que bajó de la nube: no marca nada para volver a subir. */
 const REMOTA = Symbol('remota');
 export function marcarRemota(tx: unknown): void {
@@ -181,6 +193,9 @@ export class BaseKiosco extends Dexie {
       });
     // Versión 3: eventos de la caja (ventas canceladas antes de cobrar) para que el dueño los vea.
     this.version(3).stores({ eventos: '++id, fecha, tipo, _v' });
+    // Versión 4: los otros códigos de un producto (`codigosAlt`) con índice, así buscar un código que no es
+    // el principal no recorre todos los productos (una planilla de 300 tardaba medio minuto).
+    this.version(4).stores({ productos: '++id, codigo, *codigosAlt, nombre, categoria, _v' });
     for (const t of TABLAS_NUBE) {
       const tabla = this.table(t);
       tabla.hook('creating', (clave, fila: Record<string, unknown>, tx) => {
@@ -194,7 +209,13 @@ export class BaseKiosco extends Dexie {
         }
         return undefined;
       });
-      tabla.hook('updating', (_cambios, _clave, _fila, tx) => (esRemota(tx) ? undefined : { _v: nuevaMarca() }));
+      tabla.hook('updating', (cambios, _clave, fila, tx) => {
+        if (esRemota(tx)) return undefined;
+        if (t !== 'productos') return { _v: nuevaMarca() };
+        // Productos: se anota qué campos cambiaron desde la última subida (`_c`), así la nube toma sólo esos
+        // y una venta en otro equipo no pisa un precio nuevo (ni al revés).
+        return { _v: nuevaMarca(), _c: camposCambiados(fila as Record<string, unknown>, cambios as Record<string, unknown>) };
+      });
     }
     // Al abrir, el contador arranca desde la marca más alta guardada. Sin esto,
     // con el reloj atrasado (o al recargar la página) los cambios nuevos

@@ -3,7 +3,8 @@ import logo from '../assets/logo-rojo.svg';
 import { db } from '../datos/db';
 import { recuperarDeLaNube } from '../datos/nube';
 import { hayUsuariosEnLaNube, ingresarDondeSea } from '../datos/ingreso';
-import { crearUsuario, empezarDeCero, leerUsuarios, resumenEquipo, type Usuario } from '../datos/usuarios';
+import { cambiarClaveConLaNube, crearUsuario, empezarDeCero, leerUsuarios, resumenEquipo, type Usuario } from '../datos/usuarios';
+import { leerAjuste } from '../datos/operaciones';
 import { errorATexto, Icono, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion, LLAVE_SIGUIENTE } from '../ui/sesion';
@@ -160,9 +161,16 @@ function Entrar({ usuarios, crearNuevo }: { usuarios: Usuario[]; crearNuevo?: ()
 function OlvideClave({ usuarios, volver, crearNuevo }: { usuarios: Usuario[]; volver: () => void; crearNuevo?: () => void }) {
   const avisar = useAvisar();
   const resumen = useConsulta(() => resumenEquipo(db), [], null);
+  // La clave de la nube (no la de un empleado): con ella se le pone una clave nueva al dueño.
+  const conNube = useConsulta(async () => {
+    const c = await leerAjuste<string>(db, 'nube.clave', '');
+    return Boolean(c) && !c.startsWith('e.');
+  }, [], false);
   const [confirmacion, setConfirmacion] = useState('');
+  const [conClaveNube, setConClaveNube] = useState(false);
   const [enCurso, unaVez] = useUnaVez();
   if (resumen === null) return null;
+  if (conClaveNube) return <ClaveConLaNube volver={() => setConClaveNube(false)} />;
   if (crearNuevo) {
     // Equipo nuevo: todavía no tiene usuarios ni datos que borrar.
     return (
@@ -213,7 +221,15 @@ function OlvideClave({ usuarios, volver, crearNuevo }: { usuarios: Usuario[]; vo
         .
       </p>
       <p className="texto-suave">
-        Si te olvidaste la clave de un empleado, entrá como dueño y cambiala desde Ajustes. Si te olvidaste la del dueño, se puede empezar de cero en esta compu y crear un usuario nuevo.
+        Si te olvidaste la clave de un empleado, entrá como dueño y cambiala desde Ajustes. Si te olvidaste la del dueño, entrá desde otro equipo donde la tengas guardada y cambiala ahí: sirve en todos lados.
+      </p>
+      {conNube && (
+        <button type="button" className="boton boton-primario boton-grande" onClick={() => setConClaveNube(true)}>
+          Cambiar la clave del dueño con la clave de la nube
+        </button>
+      )}
+      <p className="texto-suave">
+        Empezar de cero borra todo en esta compu y la desconecta de la nube: los datos de la nube no se tocan, y para volver a verlos hay que entrar con un usuario de la nube.
       </p>
       {resumen.sinSubir > 0 && (
         <p className="texto-alerta" role="alert">
@@ -233,8 +249,70 @@ function OlvideClave({ usuarios, volver, crearNuevo }: { usuarios: Usuario[]; vo
       ) : (
         <p className="texto-suave">En esta compu no hay productos, ventas ni clientes cargados: no se pierde nada.</p>
       )}
-      <button className="boton boton-primario boton-grande" type="submit" disabled={!listo || enCurso}>
+      <button className={`boton boton-grande${conNube ? '' : ' boton-primario'}`} type="submit" disabled={!listo || enCurso}>
         Empezar de cero en esta compu
+      </button>
+      <button type="button" className="boton" onClick={volver}>
+        Volver
+      </button>
+    </form>
+  );
+}
+
+/**
+ * El dueño se olvidó la clave en todos lados: con la clave de la nube (figura en Ajustes y conviene tenerla
+ * anotada; un empleado no la ve) se le pone una clave nueva, que llega sola a todos los equipos.
+ */
+function ClaveConLaNube({ volver }: { volver: () => void }) {
+  const avisar = useAvisar();
+  const [claveNube, setClaveNube] = useState('');
+  const [usuario, setUsuario] = useState('');
+  const [clave, setClave] = useState('');
+  const [repetida, setRepetida] = useState('');
+  const [error, setError] = useState('');
+  const [enCurso, unaVez] = useUnaVez();
+  return (
+    <form
+      className="tarjeta formulario ingreso-tarjeta"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (clave !== repetida) return setError('Las dos claves no coinciden.');
+        unaVez(async () => {
+          try {
+            await cambiarClaveConLaNube(db, claveNube, usuario, clave);
+            avisar({ texto: 'Listo: entrá con la clave nueva. Llega sola a los otros equipos.', tipo: 'ok' });
+            volver();
+          } catch (err) {
+            setError(errorATexto(err));
+          }
+        });
+      }}
+    >
+      <h1>Clave nueva para el dueño</h1>
+      <p className="texto-suave">Escribí la clave de la nube (está en Ajustes → Nube de un equipo donde entraste como dueño).</p>
+      <label className="campo">
+        <span className="campo-etiqueta">Clave de la nube</span>
+        <input value={claveNube} onChange={(e) => setClaveNube(e.target.value)} autoComplete="off" autoCapitalize="none" required />
+      </label>
+      <label className="campo">
+        <span className="campo-etiqueta">Usuario del dueño</span>
+        <input value={usuario} onChange={(e) => setUsuario(e.target.value)} autoComplete="off" autoCapitalize="none" required />
+      </label>
+      <label className="campo">
+        <span className="campo-etiqueta">Clave nueva</span>
+        <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} autoComplete="new-password" required />
+      </label>
+      <label className="campo">
+        <span className="campo-etiqueta">Repetí la clave nueva</span>
+        <input type="password" value={repetida} onChange={(e) => setRepetida(e.target.value)} autoComplete="new-password" required />
+      </label>
+      {error && (
+        <p className="texto-alerta" role="alert">
+          {error}
+        </p>
+      )}
+      <button className="boton boton-primario boton-grande" type="submit" disabled={enCurso}>
+        Cambiar la clave
       </button>
       <button type="button" className="boton" onClick={volver}>
         Volver
@@ -299,8 +377,8 @@ function PrimerUsuario({ yaTengo, sinRed = false, reintentar }: { yaTengo: () =>
         }
         unaVez(async () => {
           try {
+            // Sin aviso: la guía de primer uso ya saluda.
             entrar(await crearUsuario(db, { usuario, nombre, clave, admin: true }));
-            avisar({ texto: '¡Listo! Ya creaste tu usuario.', tipo: 'ok' });
           } catch (err) {
             setErrorAlta(errorATexto(err));
           }

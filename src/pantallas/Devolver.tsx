@@ -42,6 +42,19 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
   const quedan = (i: number) => venta.items[i]!.cantidad - cantidadDevuelta(venta, i);
   const poner = (i: number, c: number) => setCantidades((x) => ({ ...x, [i]: Math.max(0, Math.min(quedan(i), c)) }));
   const form = useRef<HTMLFormElement>(null);
+  // Los códigos de hoy de cada producto de la venta (el principal y los otros): la caja que traen puede
+  // tener otro código que el que se pasó al vender.
+  const codigos = useConsulta(
+    async () => {
+      const ids = [...new Set(venta.items.map((it) => it.productoId).filter((id): id is number => id !== null))];
+      const productos = await db.productos.bulkGet(ids);
+      return new Map(productos.filter((p) => p !== undefined).map((p) => [p.id!, new Set([p.codigo, ...(p.codigosAlt ?? [])].filter(Boolean))]));
+    },
+    [venta.id],
+    new Map<number, Set<string>>(),
+  );
+  const esDeEste = (it: Venta['items'][number], codigo: string) =>
+    it.codigo === codigo || (it.productoId !== null && !!codigos.get(it.productoId)?.has(codigo));
   // El lector tipea donde está el cursor: después de cada pasada (o de tocar + / −, o de un Enter) el cursor vuelve a una cantidad,
   // así se puede seguir escaneando. En el celular no: abriría el teclado.
   const enfocarCantidad = (i: number) => {
@@ -56,10 +69,10 @@ export function DevolverVenta({ venta, onCerrar, onHecho }: { venta: Venta; onCe
   const marcar = (codigo: string): boolean => {
     // Lo que no es un código de barras no es del lector: el campo lo trata como cantidad ("Como mucho N").
     if (!codigoEscaneado(codigo)) return false;
-    const i = venta.items.findIndex((it, idx) => it.codigo === codigo && quedan(idx) > (cantidades[idx] ?? 0));
+    const i = venta.items.findIndex((it, idx) => esDeEste(it, codigo) && quedan(idx) > (cantidades[idx] ?? 0));
     if (i < 0) {
       pitido('error');
-      avisar({ texto: venta.items.some((it) => it.codigo === codigo) ? 'Ese producto ya está marcado entero.' : 'Ese producto no está en esta venta.', tipo: 'error' });
+      avisar({ texto: venta.items.some((it) => esDeEste(it, codigo)) ? 'Ese producto ya está marcado entero.' : 'Ese producto no está en esta venta.', tipo: 'error' });
       enfocarCantidad(0);
       return true;
     }

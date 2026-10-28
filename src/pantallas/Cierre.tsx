@@ -118,9 +118,13 @@ function BuscarVentas() {
     const id = window.setTimeout(() => setT(q.trim()), 300);
     return () => window.clearTimeout(id);
   }, [q]);
+  // Primero los últimos 90 días (con un año de ventas, recorrer todo tarda); si no aparece, más atrás.
+  const [todo, setTodo] = useState(false);
+  useEffect(() => setTodo(false), [t]);
   const resultados = useConsulta(
     async () => {
       if (t.length < 2) return [] as Venta[];
+      const limite = todo ? 0 : Date.now() - 90 * 86_400_000;
       const monto = /^\$?\s*[\d.]+$/.test(t) ? Number(t.replace(/\D/g, '')) : 0;
       const nq = normalizarTexto(t);
       const encontradas: Venta[] = [];
@@ -128,14 +132,19 @@ function BuscarVentas() {
       await db.ventas
         .orderBy('fecha')
         .reverse()
-        .until(() => encontradas.length >= 30)
+        .until((v) => encontradas.length >= 30 || v.fecha < limite)
         .each((v) => {
           if (monto > 0 ? v.total === monto : v.items.some((i) => normalizarTexto(i.nombre).includes(nq))) encontradas.push(v);
         });
       return encontradas;
     },
-    [t],
+    [t, todo],
     [] as Venta[],
+  );
+  const masAtras = !todo && t.length >= 2 && resultados.length < 30 && (
+    <button type="button" className="boton boton-chico" onClick={() => setTodo(true)}>
+      Buscar también antes de los últimos 3 meses
+    </button>
   );
   return (
     <section className="tarjeta historial buscar-ventas">
@@ -145,7 +154,8 @@ function BuscarVentas() {
         <Icono nombre="buscar" tam={18} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ej.: coca o 3450" aria-label="Buscar una venta" />
       </div>
-      {t.length >= 2 && (resultados.length === 0 ? <p className="texto-suave">No encontré ventas con «{t}».</p> : <VentasDelTurno ventas={resultados} soloDevolver conFecha />)}
+      {t.length >= 2 && (resultados.length === 0 ? <p className="texto-suave">No encontré ventas con «{t}»{todo ? '' : ' en los últimos 3 meses'}.</p> : <VentasDelTurno ventas={resultados} soloDevolver conFecha />)}
+      {masAtras}
     </section>
   );
 }
@@ -802,8 +812,28 @@ function ControlMercadoPago({ turno, ventas, resumen }: { turno: Turno; ventas: 
   const [verCobros, setVerCobros] = useState(false);
   const cobros = cobrosDeMedio(ventas, 'mercadopago');
   const deFiado = resumen.cobrosFiado.mercadopago;
-  const anotado = resumen.porMedio.mercadopago + deFiado;
-  if (anotado === 0) return null;
+  // La cuenta de Mercado Pago es una sola: lo que cobraron los otros equipos (el celular del dueño, otra caja)
+  // desde que abrió este turno también aparece en la app. Y lo devuelto por MP se reintegra en la app.
+  const otros = useConsulta(
+    async () => {
+      const desde = turno.apertura;
+      const ventasOtros = (await db.ventas.where('fecha').aboveOrEqual(desde).toArray()).filter((v) => v.turnoId !== turno.id);
+      const fiadoOtros = await db.movimientosFiado
+        .filter((m) => m.tipo === 'pago' && m.medio === 'mercadopago' && !m.anulado && m.fecha >= desde && m.turnoId !== turno.id)
+        .toArray();
+      const eventos = await db.eventos.where('fecha').aboveOrEqual(desde).filter((e) => e.tipo === 'devolucion' && e.ventaId !== undefined).toArray();
+      const devueltas = await db.ventas.bulkGet([...new Set(eventos.map((e) => e.ventaId!))]);
+      return {
+        cobrado: cobrosDeMedio(ventasOtros, 'mercadopago').reduce((a, c) => a + c.monto, 0) + fiadoOtros.reduce((a, m) => a + m.monto, 0),
+        devuelto: devueltas.flatMap((v) => v?.devoluciones ?? []).filter((d) => d.medio === 'mercadopago' && d.fecha >= desde).reduce((a, d) => a + d.monto, 0),
+      };
+    },
+    [turno.id, turno.apertura],
+    { cobrado: 0, devuelto: 0 },
+  );
+  const deEsteTurno = resumen.porMedio.mercadopago + deFiado;
+  const anotado = deEsteTurno + otros.cobrado - otros.devuelto;
+  if (deEsteTurno === 0 && otros.cobrado === 0) return null;
   const resultado = enLaApp === null ? null : diferenciaConApp(anotado, enLaApp);
   return (
     <section className="tarjeta control-mp">
@@ -811,9 +841,11 @@ function ControlMercadoPago({ turno, ventas, resumen }: { turno: Turno; ventas: 
         <Icono nombre={ICONO_MEDIO.mercadopago} tam={20} /> Controlar Mercado Pago
       </h2>
       <p className="texto-suave">
-        En este turno se anotaron <strong className="texto-normal importe">{formatPesos(anotado)}</strong> por Mercado Pago ({cobros.length}{' '}
+        Desde que abrió esta caja se anotaron <strong className="texto-normal importe">{formatPesos(anotado)}</strong> por Mercado Pago ({cobros.length}{' '}
         {cobros.length === 1 ? 'cobro' : 'cobros'}
-        {deFiado > 0 && ` y ${formatPesos(deFiado)} de fiado cobrado`}). En la app, mirá la actividad de hoy desde las {hora(turno.apertura)} y poné el total.
+        {deFiado > 0 && ` y ${formatPesos(deFiado)} de fiado cobrado`}
+        {otros.cobrado > 0 && `, más ${formatPesos(otros.cobrado)} en otros equipos`}
+        {otros.devuelto > 0 && `, menos ${formatPesos(otros.devuelto)} devueltos por Mercado Pago`}). En la app, mirá la actividad de hoy desde las {hora(turno.apertura)} y poné el total.
       </p>
       <CampoPesos etiqueta="¿Cuánto dice la app de Mercado Pago?" valor={enLaApp} onCambio={setEnLaApp} maximo={50_000_000} />
       {resultado && (

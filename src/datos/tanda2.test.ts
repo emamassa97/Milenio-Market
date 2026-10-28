@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cobrosDeMedio, diferenciaConApp } from '../dominio/caja';
-import { itemDeProducto, repetirVenta } from '../dominio/carrito';
+import { itemDeProducto, itemMontoLibre, repetirVenta } from '../dominio/carrito';
 import { formatPesos } from '../dominio/dinero';
 import { mapaPorCodigo } from '../dominio/entrada';
 import { diasDeDeuda, mensajeRecordatorio } from '../dominio/fiado';
@@ -79,6 +79,12 @@ describe('repetir lo de la última vez', () => {
     expect(items[0]).toMatchObject({ productoId: 1, cantidad: 2, precioUnitario: 100 });
     expect(items[1]).toMatchObject({ productoId: 3, gramos: 250, precioUnitario: 1000 });
     expect(faltan).toEqual(['P9']);
+  });
+  it('repite un monto libre (una recarga) como monto libre, no dice que "ya no está cargado"', () => {
+    const venta = { items: [itemMontoLibre(2000, 'Recarga SUBE'), itemDeProducto(producto(1), 1)] };
+    const { items, faltan } = repetirVenta(venta, [producto(1)]);
+    expect(faltan).toEqual([]);
+    expect(items[0]).toMatchObject({ productoId: null, nombre: 'Recarga SUBE', precioUnitario: 2000, cantidad: 1 });
   });
 });
 

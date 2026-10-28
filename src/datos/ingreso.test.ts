@@ -34,13 +34,13 @@ describe('un usuario para todos los equipos', () => {
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       if (new Headers(init?.headers).get('x-ingreso') === '1') return respuesta({ clave: 'CLAVE', usuarios, dispositivo: 'pc' });
       if (String(url).includes('equipo=1')) return respuesta({ n: 3 });
-      if (String(url).includes('cambios=')) {
+      if (String(url).includes('desde=')) {
         return respuesta({
           filas: [
             { tabla: 'productos', id: '7', datos: { id: 7, nombre: 'Alfajor', precio: 900, stock: 4, _v: 5 }, borrado: false, seq: 1 },
             { tabla: 'ajustes', id: 'usuarios', datos: { clave: 'usuarios', valor: usuarios, _v: 6 }, borrado: false, seq: 2 },
           ],
-          hasta: 2,
+          hasta: '800:2',
           mas: false,
         });
       }
@@ -51,7 +51,7 @@ describe('un usuario para todos los equipos', () => {
     expect(await db.productos.count()).toBe(1);
     expect(await leerAjuste(db, 'nube.clave', '')).toBe('CLAVE');
     expect(await leerAjuste(db, 'nube.n', null)).toBe(3);
-    expect(await leerAjuste(db, 'nube.cursor', 0)).toBe(2);
+    expect(await leerAjuste(db, 'nube.cursor', 0)).toBe('800:2');
   });
 
   it('sin internet entra con lo guardado en el equipo', async () => {

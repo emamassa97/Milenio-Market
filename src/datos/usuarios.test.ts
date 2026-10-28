@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 describe('usuarios', () => {
-  it('empezar de cero borra usuarios y datos pero deja la nube andando', async () => {
+  it('empezar de cero borra usuarios y datos, y desconecta el equipo de la nube', async () => {
     await crearUsuario(db, { usuario: 'ema', nombre: '', clave: '4826', admin: true });
     await guardarAjuste(db, 'nube.clave', 'ABC-123');
     await guardarAjuste(db, 'nube.marcas', { productos: 5 });
@@ -24,7 +24,8 @@ describe('usuarios', () => {
     await empezarDeCero(db);
     expect(await leerUsuarios(db)).toEqual([]);
     expect(await resumenEquipo(db)).toEqual({ productos: 0, ventas: 0, clientes: 0, sinSubir: 0 });
-    expect(await leerAjuste(db, 'nube.clave', '')).toBe('ABC-123');
+    // Si quedara la clave de la nube, cualquiera con la compu a mano se hacía dueño en todos los equipos.
+    expect(await leerAjuste(db, 'nube.clave', '')).toBe('');
     expect(await leerAjuste(db, 'nube.marcas', null)).toBeNull();
   });
 

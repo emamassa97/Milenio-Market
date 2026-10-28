@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { db } from '../datos/db';
-import { ingresar } from '../datos/usuarios';
-import { Icono, Modal } from './componentes';
+import { comprobarDueño } from '../datos/ingreso';
+import { errorATexto, Icono, Modal } from './componentes';
 import { useSesion } from './sesion';
 
 // El dueño hace todo. Un empleado cobra y cierra su caja; para anular una venta
@@ -71,7 +71,13 @@ function ClaveDelDueño({ motivo, onListo }: { motivo: string; onListo: (u: stri
           const espera = esperaPorFallos();
           if (espera > 0) return setError(`Demasiadas claves mal seguidas: esperá ${Math.ceil(espera / 1000)} segundos.`);
           setEnCurso(true);
-          const u = await ingresar(db, usuario.trim().toLowerCase(), clave).catch(() => null);
+          let u: Awaited<ReturnType<typeof comprobarDueño>>;
+          try {
+            u = await comprobarDueño(db, usuario, clave);
+          } catch (err) {
+            setEnCurso(false);
+            return setError(errorATexto(err));
+          }
           setEnCurso(false);
           if (!u || !u.admin) {
             if (!u) anotarFallo();

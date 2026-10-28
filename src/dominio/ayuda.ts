@@ -464,7 +464,7 @@ export const TEMAS_AYUDA: TemaAyuda[] = [
     resumen: 'Hay salida.',
     pasos: [
       'Si estás adentro en algún equipo, cambiala en Ajustes → "Cambiar mi clave". Sirve en todos lados.',
-      'Si no, en la pantalla de entrada tocá "¿Te olvidaste el usuario o la clave?".',
+      'Si no, en la compu del kiosco tocá "¿Te olvidaste el usuario o la clave?" → "Cambiar la clave del dueño con la clave de la nube". La clave de la nube está en Ajustes → Nube: tenela anotada.',
       'Un empleado que se olvidó la clave: el dueño se la cambia en Ajustes → Usuarios.',
     ],
     palabras: 'clave contraseña olvide usuario entrar',

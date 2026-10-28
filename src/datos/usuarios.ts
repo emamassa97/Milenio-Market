@@ -1,4 +1,4 @@
-import type { BaseKiosco } from './db';
+import { olvidarRango, type BaseKiosco } from './db';
 import { pendientes, sincronizarAhora } from './nube';
 import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
 
@@ -76,7 +76,8 @@ export async function crearUsuario(
 /** Devuelve el usuario si la clave es correcta; si no, null. */
 export async function ingresar(db: BaseKiosco, usuario: string, clave: string): Promise<Usuario | null> {
   const u = (await leerUsuarios(db)).find((x) => x.usuario === normalizar(usuario));
-  if (!u) return null;
+  // Sin hash: en un equipo de empleado la nube no manda el de los demás (ahí lo comprueba la nube).
+  if (!u || !u.hash || !u.sal) return null;
   return (await derivar(clave, u.sal)) === u.hash ? u : null;
 }
 
@@ -123,18 +124,31 @@ export async function resumenEquipo(db: BaseKiosco): Promise<{ productos: number
 }
 
 /**
- * Para el dueño que se olvidó la clave: borra todo lo guardado en este equipo
- * (usuarios incluidos) y vuelve a la pantalla de crear el usuario. Con la nube,
- * los datos vuelven solos y la clave nueva del dueño llega a todos los equipos.
+ * Para cuando nadie puede entrar: borra todo lo guardado en este equipo (usuarios incluidos) y vuelve a la
+ * pantalla del principio. El equipo también se desconecta de la nube: si no, cualquiera que tuviera la
+ * compu a mano podía crearse un dueño nuevo y pasar a ser dueño en todos los equipos. Para volver a la nube
+ * hay que entrar con un usuario que ya exista ahí (o cambiar la clave del dueño con la clave de la nube).
  */
 export async function empezarDeCero(db: BaseKiosco): Promise<void> {
   // Lo que falte subir se sube antes (si hay internet), así no se pierde.
   await sincronizarAhora(db).catch(() => null);
   await db.transaction('rw', db.tables, async () => {
-    // Se conserva la nube: al crear el usuario nuevo, este equipo vuelve a traer todo de ahí
-    // (y la clave nueva del dueño pasa a valer en todos los equipos).
-    const guardar = (await db.ajustes.toArray()).filter((x) => x.clave === 'nube.clave' || x.clave === 'nube.id');
     for (const t of db.tables) await t.clear();
-    if (guardar.length) await db.ajustes.bulkPut(guardar);
   });
+  olvidarRango(db);
+}
+
+/**
+ * El dueño se olvidó la clave en todos lados: con la clave de la nube (la que figura en Ajustes, que un
+ * empleado no ve) se le pone una clave nueva. Llega a todos los equipos en la próxima vuelta.
+ */
+export async function cambiarClaveConLaNube(db: BaseKiosco, claveNube: string, usuario: string, nueva: string): Promise<void> {
+  const guardada = await leerAjuste<string>(db, 'nube.clave', '');
+  if (!guardada || guardada.startsWith('e.')) throw new ErrorKiosco('Este equipo no tiene la clave de la nube: hacelo desde la compu del kiosco.');
+  if (claveNube.trim() !== guardada) throw new ErrorKiosco('La clave de la nube no es esa. Está en Ajustes → Nube de un equipo donde hayas entrado como dueño.');
+  const quien = normalizar(usuario);
+  const u = (await leerUsuarios(db)).find((x) => x.usuario === quien);
+  if (!u) throw new ErrorKiosco('Ese usuario no existe.');
+  if (!u.admin) throw new ErrorKiosco('Ese usuario no es dueño: la clave de un empleado se cambia desde Ajustes.');
+  await cambiarClave(db, quien, nueva);
 }

@@ -43,5 +43,10 @@ export default defineConfig({
     }),
   ],
   build: { assetsInlineLimit: 100_000 },
-  test: { environment: 'node', exclude: ['**/node_modules/**', '.claude/**', 'dist/**'] },
+  test: {
+    environment: 'node',
+    // Las pruebas de la nube arrancan un Postgres (PGlite) la primera vez: tarda unos segundos.
+    testTimeout: 20_000,
+    exclude: ['**/node_modules/**', '.claude/**', 'dist/**'],
+  },
 });

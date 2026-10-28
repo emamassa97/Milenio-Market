@@ -3,3 +3,4 @@ dist
 *.local
 dist-demo
 .claude
+tsconfig.tsbuildinfo

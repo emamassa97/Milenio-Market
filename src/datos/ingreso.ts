@@ -63,6 +63,51 @@ async function guardarUsuariosDeLaNube(db: BaseKiosco, usuarios: Usuario[]): Pro
   });
 }
 
+/**
+ * A un empleado la nube le manda los demás usuarios sin sal ni hash. En un equipo que ya los tiene (la
+ * compu donde entró el dueño), esos no se pierden por que entre un empleado.
+ */
+function completarUsuarios(deLaNube: Usuario[], locales: Usuario[]): Usuario[] {
+  return deLaNube.map((u) => {
+    if (u.hash) return u;
+    const local = locales.find((x) => x.usuario === u.usuario && x.hash);
+    return local ? { ...u, sal: local.sal, hash: local.hash } : u;
+  });
+}
+
+/**
+ * La clave de un dueño, para autorizar algo en la caja. En un equipo de empleado no está el hash del dueño
+ * (la nube no se lo manda): ahí la comprueba la nube. Devuelve el usuario, o null si la clave no es esa.
+ */
+export async function comprobarDueño(db: BaseKiosco, usuario: string, clave: string, url = URL_NUBE): Promise<Usuario | null> {
+  const nombre = usuario.trim().toLowerCase();
+  const u = (await leerUsuarios(db)).find((x) => x.usuario === nombre);
+  if (!u) return null;
+  if (u.hash) return ingresar(db, nombre, clave);
+  const claveNube = await leerAjuste<string>(db, 'nube.clave', '');
+  if (!claveNube) return null;
+  const corte = new AbortController();
+  const reloj = setTimeout(() => corte.abort(), ESPERA_MS);
+  let r: Response;
+  try {
+    r = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-autorizar': '1', 'x-clave': claveNube },
+      body: JSON.stringify({ usuario: nombre, clave }),
+      signal: corte.signal,
+    });
+  } catch {
+    throw new ErrorKiosco('Sin internet no se puede comprobar la clave del dueño en este equipo. Probá de nuevo cuando vuelva.');
+  } finally {
+    clearTimeout(reloj);
+  }
+  const cuerpo = (await r.json().catch(() => ({}))) as { ok?: boolean; admin?: boolean; error?: string };
+  if (r.ok && cuerpo.ok) return { ...u, admin: Boolean(cuerpo.admin) };
+  if (r.status === 429) throw new ErrorKiosco(cuerpo.error ?? 'Demasiadas claves mal seguidas: esperá unos minutos.');
+  if (r.status === 401) return null;
+  throw new ErrorKiosco('La nube no responde ahora: no se puede comprobar la clave del dueño en este equipo.');
+}
+
 /** Si ya hay usuarios en la nube: un equipo nuevo tiene que pedir ingresar, no crear otro dueño. null: no se sabe (sin internet o la nube no responde). */
 export async function hayUsuariosEnLaNube(url = URL_NUBE): Promise<boolean | null> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
@@ -123,9 +168,11 @@ export async function ingresarDondeSea(db: BaseKiosco, usuario: string, clave: s
       // Misma nube: el dueño deja en el equipo su clave (la de un empleado sirve para menos).
       if (claveLocal !== nube.clave && (claveLocal === '' || claveLocal.startsWith('e.')) ) await activarNube(db, nube.clave, nube.nube);
       else if (!(await leerAjuste<string>(db, 'nube.id', ''))) await guardarAjuste(db, 'nube.id', nube.nube);
-      if (!(await usuariosSinSubir(db)) && JSON.stringify(await leerUsuarios(db)) !== JSON.stringify(nube.usuarios)) {
+      const locales = await leerUsuarios(db);
+      const lista = completarUsuarios(nube.usuarios, locales);
+      if (!(await usuariosSinSubir(db)) && JSON.stringify(locales) !== JSON.stringify(lista)) {
         // Una clave cambiada o un empleado nuevo en otro equipo llega a éste.
-        await guardarUsuariosDeLaNube(db, nube.usuarios);
+        await guardarUsuariosDeLaNube(db, lista);
       }
     }
     return u;

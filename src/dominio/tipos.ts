@@ -183,4 +183,6 @@ export interface Evento {
   monto: Pesos;
   detalle: string;
   usuario?: string;
+  /** En una devolución, la venta (para buscar lo devuelto por fecha sin recorrer todas las ventas). */
+  ventaId?: number;
 }

@@ -1,3 +1,4 @@
+import { BordeDeError } from './ui/BordeDeError';
 import { AVISO_SIN_SERVIDOR } from './datos/nube';
 import { useCallback, useEffect, useState } from 'react';
 import logo from './assets/logo-oscuro.svg';
@@ -39,12 +40,20 @@ function leerHash(): IdPantalla {
   return PANTALLAS.find((p) => p.id === h)?.id ?? 'caja';
 }
 
+/** "Nube sin activar: escribí la clave…" → "Escribí la clave…". */
+function sinPrefijo(texto: string): string {
+  const m = /^Nube sin activar: (.)(.*)$/s.exec(texto);
+  return m ? m[1]!.toUpperCase() + m[2] : texto;
+}
+
 export function App() {
   return (
     <ProveedorSesion>
       <ProveedorAvisos>
         <ProveedorPermisos>
-          <Contenido />
+          <BordeDeError>
+            <Contenido />
+          </BordeDeError>
         </ProveedorPermisos>
       </ProveedorAvisos>
     </ProveedorSesion>
@@ -158,7 +167,8 @@ function Sistema() {
         <Icono nombre={nube.error ? 'nube-no' : 'nube'} tam={16} />
         <span>{nube.error === 'Nube sin activar' ? 'Nube sin activar' : nube.error ? 'Nube: revisar' : nube.pendientes ? 'Subiendo a la nube' : 'Nube al día'}</span>
       </a>
-      {motivoNube && <small className="estado-nube-motivo">{motivoNube}</small>}
+      {/* Sin repetir lo que ya dice el chip ("Nube sin activar: escribí…" → "Escribí…"). */}
+      {motivoNube && <small className="estado-nube-motivo">{sinPrefijo(motivoNube)}</small>}
     </>
   );
   const estadoRed = (
