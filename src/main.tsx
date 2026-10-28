@@ -5,6 +5,8 @@ import '@fontsource/poppins/latin-400.css';
 import '@fontsource/poppins/latin-500.css';
 import '@fontsource/poppins/latin-600.css';
 import '@fontsource/poppins/latin-700.css';
+// Escucha desde el arranque el aviso de Chrome/Edge de que la caja se puede instalar.
+import './ui/instalar';
 import { App } from './App';
 import './estilos.css';
 

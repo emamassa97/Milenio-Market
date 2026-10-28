@@ -15,6 +15,8 @@ export default defineConfig({
       injectRegister: false,
       includeAssets: ['icono.svg', 'apple-touch-icon.png'],
       manifest: {
+        // `id` fijo: aunque cambie start_url, Chrome la sigue reconociendo como la misma aplicación instalada.
+        id: '/',
         name: 'Milenio Market',
         short_name: 'Milenio',
         description: 'Caja del kiosco Milenio Market. Funciona sin internet.',
@@ -22,6 +24,9 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         display: 'standalone',
+        // Si ya está abierta, el ícono trae esa ventana al frente en vez de abrir otra caja.
+        launch_handler: { client_mode: ['focus-existing', 'auto'] },
+        categories: ['business', 'finance', 'shopping'],
         theme_color: '#E30613',
         background_color: '#ffffff',
         icons: [
@@ -29,9 +34,22 @@ export default defineConfig({
           { src: 'pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
           { src: 'pwa-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
+        // Clic derecho en el ícono de la barra de tareas: ir directo a una pantalla.
+        shortcuts: [
+          { name: 'Caja', short_name: 'Caja', url: '/#caja', icons: [{ src: 'pwa-192.png', sizes: '192x192' }] },
+          { name: 'Cierre de caja', short_name: 'Cierre', url: '/#cierre', icons: [{ src: 'pwa-192.png', sizes: '192x192' }] },
+          { name: 'Productos', short_name: 'Productos', url: '/#productos', icons: [{ src: 'pwa-192.png', sizes: '192x192' }] },
+        ],
+        // La ventana "Instalar" de Chrome/Edge muestra estas capturas: se ve como un programa de verdad.
+        screenshots: [
+          { src: 'captura-caja.png', sizes: '1366x768', type: 'image/png', form_factor: 'wide', label: 'La caja: cobrar con el lector, vuelto y medios de pago' },
+          { src: 'captura-celular.png', sizes: '390x844', type: 'image/png', form_factor: 'narrow', label: 'La caja en el celular' },
+        ],
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff,woff2,webmanifest}'],
+        // Las capturas sólo las usa la ventana "Instalar": no hace falta guardarlas para usar sin internet.
+        globIgnores: ['**/captura-*.png'],
         navigateFallback: 'index.html',
         // La nube nunca sale de la caché: siempre va al servidor (o falla).
         navigateFallbackDenylist: [/^\/api\//],

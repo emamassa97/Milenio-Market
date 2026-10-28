@@ -1354,3 +1354,16 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
 .borde-error .tarjeta {
   max-width: 440px;
 }
+
+/* ---------- Instalar en esta compu ---------- */
+.instalar { display: flex; flex-direction: column; gap: 12px; }
+.instalar-cabeza { display: flex; gap: 14px; align-items: center; }
+.instalar-cabeza img { border-radius: 12px; flex: none; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.instalar-cabeza strong { display: block; font-size: 1rem; }
+.instalar-cabeza p { margin: 2px 0 0; }
+.instalar-pasos { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--borde); padding-top: 12px; }
+.instalar-pasos p { margin: 0; }
+.instalar-listo { margin: 0; display: flex; gap: 8px; align-items: flex-start; color: var(--verde); font-weight: 500; line-height: 1.5; }
+.instalar-listo svg { flex: none; margin-top: 2px; }
+.aviso-instalar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.aviso-instalar .instalar-compacto { flex: 1 1 420px; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; }

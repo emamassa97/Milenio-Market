@@ -65,6 +65,7 @@ import {
   CircleHelp,
   Repeat,
   Lightbulb,
+  MonitorDown,
   type LucideIcon,
 } from 'lucide-react';
 import { CANTIDAD_MAXIMA, RENGLON_MAXIMO } from '../dominio/carrito';
@@ -509,6 +510,7 @@ export function CampoCantidad({
 // ---------- Íconos (Lucide, heredan el color del texto) ----------
 
 const ICONOS = {
+  instalar: MonitorDown,
   cerrar: X,
   camara: ScanBarcode,
   mas: Plus,
