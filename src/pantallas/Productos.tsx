@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { BotonAyuda } from '../ui/Ayuda';
 import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/csv';
 import { formatPesos } from '../dominio/dinero';
-import { cantidadDeTexto, codigoEscaneado, normalizarTexto as normalizar } from '../dominio/entrada';
+import { cantidadDeTexto, codigoEscaneado, normalizarTexto as normalizar, mapaPorCodigo } from '../dominio/entrada';
 import { aplicarAumento, margen, precioParaMargen, type Redondeo } from '../dominio/precios';
 import type { Producto } from '../dominio/tipos';
 import { diasParaVencer } from '../dominio/reportes';
@@ -15,6 +15,7 @@ import {
   cargarPlanilla,
   guardarProducto,
   ingresarMercaderia,
+  quitarCodigoAlt,
   resumenDeTurno,
   STOCK_MAXIMO,
   turnoAbierto,
@@ -348,6 +349,7 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
   const [stockTexto, setStockTexto] = useState(producto ? String(producto.stock).replace('.', ',') : '0');
   const stockAlEntrar = useRef(stockTexto);
   const codigoAlEntrar = useRef(producto?.codigo ?? '');
+  const [otrosCodigos, setOtrosCodigos] = useState(producto?.codigosAlt ?? []);
   const minimoAlEntrar = useRef(producto?.stockMinimo ?? 0);
   const [promoCant, setPromoCant] = useState(producto?.promo ? String(producto.promo.cantidad) : '');
   const [promoPrecio, setPromoPrecio] = useState<number | null>(producto?.promo?.precio ?? null);
@@ -414,6 +416,28 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
             </button>
           </div>
         </label>
+        {producto?.id !== undefined && otrosCodigos.length > 0 && (
+          <p className="texto-suave otros-codigos">
+            También lo reconoce con:{' '}
+            {otrosCodigos.map((c) => (
+              <span key={c} className="chip-codigo">
+                {c}
+                <button
+                  type="button"
+                  aria-label={`Quitar el código ${c}`}
+                  title="Quitar este código"
+                  onClick={() =>
+                    quitarCodigoAlt(db, producto.id!, c)
+                      .then(() => setOtrosCodigos((l) => l.filter((x) => x !== c)))
+                      .catch((e) => avisar({ texto: errorATexto(e), tipo: 'error' }))
+                  }
+                >
+                  <Icono nombre="cerrar" tam={14} />
+                </button>
+              </span>
+            ))}
+          </p>
+        )}
         <div className="fila-campos">
           <CampoPesos etiqueta={d.porPeso ? 'Precio por kilo' : 'Precio de venta'} valor={precio} onCambio={setPrecio} />
           <CampoPesos etiqueta={d.porPeso ? 'Costo por kilo (opcional)' : 'Costo (opcional)'} valor={costo} onCambio={setCosto} />
@@ -1036,7 +1060,7 @@ export function IngresoMercaderia({ productos, proveedores, onCerrar, soloStock 
     const ya = new Set(renglones.map((r) => r.p.id));
     return productos.filter((p) => !ya.has(p.id) && (p.codigo === q.trim() || normalizar(p.nombre).includes(t))).slice(0, 6);
   }, [q, productos, renglones]);
-  const porCodigo = useMemo(() => new Map(productos.filter((p) => p.codigo).map((p) => [p.codigo, p])), [productos]);
+  const porCodigo = useMemo(() => mapaPorCodigo(productos), [productos]);
   const sumar = (p: Producto) => {
     setRenglones((r) => (r.some((x) => x.p.id === p.id) ? r : [...r, { p, cantidad: '', costo: p.costo > 0 ? p.costo : null, mantenerMargen: dueño }]));
     setQ('');

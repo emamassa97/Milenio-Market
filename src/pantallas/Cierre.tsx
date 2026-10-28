@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BotonAyuda } from '../ui/Ayuda';
-import { DENOMINACIONES, resumirTurno, textoCierre, totalConteo, type ResumenTurno } from '../dominio/caja';
+import { cobrosDeMedio, DENOMINACIONES, diferenciaConApp, resumirTurno, textoCierre, totalConteo, type ResumenTurno } from '../dominio/caja';
 import { carritoVacio, pagosDeVenta, totalCarrito, type Carrito } from '../dominio/carrito';
 import { describirItems, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
@@ -10,7 +10,7 @@ import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket'
 import { db } from '../datos/db';
 import { anularVenta, cerrarTurno, pasarTurno, registrarMovimientoCaja, resumenDeTurno, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
 import { leerUsuarios, type Usuario } from '../datos/usuarios';
-import { CampoCantidad, CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
+import { CampoCantidad, CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, ICONO_MEDIO, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
@@ -372,6 +372,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
             </dl>
           </section>
 
+          <ControlMercadoPago turno={turno} ventas={ventas} resumen={resumen} />
           <VentasDelTurno ventas={ventas} />
         </div>
 
@@ -789,5 +790,63 @@ export function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
         </button>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * Lo cobrado por Mercado Pago contra lo que dice la app: el efectivo se cuenta, Mercado Pago se compara.
+ * No se guarda: es una cuenta para hacer en el momento, con la app abierta en el celular.
+ */
+function ControlMercadoPago({ turno, ventas, resumen }: { turno: Turno; ventas: Venta[]; resumen: ResumenTurno }) {
+  const [enLaApp, setEnLaApp] = useState<number | null>(null);
+  const [verCobros, setVerCobros] = useState(false);
+  const cobros = cobrosDeMedio(ventas, 'mercadopago');
+  const deFiado = resumen.cobrosFiado.mercadopago;
+  const anotado = resumen.porMedio.mercadopago + deFiado;
+  if (anotado === 0) return null;
+  const resultado = enLaApp === null ? null : diferenciaConApp(anotado, enLaApp);
+  return (
+    <section className="tarjeta control-mp">
+      <h2 className="titulo-chico">
+        <Icono nombre={ICONO_MEDIO.mercadopago} tam={20} /> Controlar Mercado Pago
+      </h2>
+      <p className="texto-suave">
+        En este turno se anotaron <strong className="texto-normal importe">{formatPesos(anotado)}</strong> por Mercado Pago ({cobros.length}{' '}
+        {cobros.length === 1 ? 'cobro' : 'cobros'}
+        {deFiado > 0 && ` y ${formatPesos(deFiado)} de fiado cobrado`}). En la app, mirá la actividad de hoy desde las {hora(turno.apertura)} y poné el total.
+      </p>
+      <CampoPesos etiqueta="¿Cuánto dice la app de Mercado Pago?" valor={enLaApp} onCambio={setEnLaApp} maximo={50_000_000} />
+      {resultado && (
+        <p className={`control-mp-resultado ${resultado.diferencia === 0 ? 'control-mp-justo' : 'control-mp-distinto'}`} role="status">
+          <Icono nombre={resultado.diferencia === 0 ? 'check' : 'alerta'} tam={18} />
+          <span>
+            {resultado.diferencia !== 0 && (
+              <strong>
+                {resultado.diferencia > 0 ? `Hay ${formatPesos(resultado.diferencia)} de más en la app. ` : `Faltan ${formatPesos(-resultado.diferencia)} en la app. `}
+              </strong>
+            )}
+            {resultado.texto}
+          </span>
+        </p>
+      )}
+      {cobros.length > 0 && (
+        <>
+          <Desplegable abierto={verCobros} titulo="Los cobros uno por uno" texto={verCobros ? 'Ocultar' : 'Ver'} onClick={() => setVerCobros(!verCobros)} />
+          {verCobros && (
+            <ul className="movimientos">
+              {cobros.map((c, i) => (
+                <li key={`${c.ventaId}-${i}`}>
+                  <span>
+                    {hora(c.fecha)}
+                    {c.dividido ? ' · parte de un pago dividido' : ''}
+                  </span>
+                  <span className="importe">{formatPesos(c.monto)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
   );
 }

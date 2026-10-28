@@ -62,6 +62,7 @@ import {
   WifiOff,
   X,
   CircleHelp,
+  Repeat,
   Lightbulb,
   type LucideIcon,
 } from 'lucide-react';
@@ -513,6 +514,7 @@ const ICONOS = {
   camion: Truck,
   vence: CalendarClock,
   ayuda: CircleHelp,
+  repetir: Repeat,
   consejo: Lightbulb,
   lector: ScanBarcode,
   abrir: ChevronDown,

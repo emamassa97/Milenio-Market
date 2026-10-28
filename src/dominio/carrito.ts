@@ -197,3 +197,20 @@ export function pagosSugeridos(total: Pesos): Pesos[] {
 export function esPagoRedondo(opcion: Pesos, total: Pesos): boolean {
   return opcion !== total && opcion % 1000 !== 0;
 }
+
+/**
+ * "Lo de siempre": los renglones de una venta anterior, con los precios de hoy.
+ * Lo que ya no está cargado (o un monto libre) no se repite: se nombra para avisarlo.
+ */
+export function repetirVenta(venta: Pick<Venta, 'items'>, productos: Producto[]): { items: ItemVenta[]; faltan: string[] } {
+  const porId = new Map(productos.map((p) => [p.id, p]));
+  const items: ItemVenta[] = [];
+  const faltan: string[] = [];
+  for (const it of venta.items) {
+    const p = it.productoId === null ? undefined : porId.get(it.productoId);
+    if (!p) faltan.push(it.nombre);
+    else if (it.gramos) for (let i = 0; i < it.cantidad; i++) items.push(itemPorPeso(p, it.gramos));
+    else items.push(itemDeProducto(p, it.cantidad));
+  }
+  return { items, faltan };
+}

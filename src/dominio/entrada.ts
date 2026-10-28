@@ -51,3 +51,11 @@ export function telefonoWhatsApp(telefono: string): string | null {
 export function normalizarTexto(texto: string): string {
   return texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
+
+/** Producto por cada uno de sus códigos, el principal y los otros. El principal gana si se repite. */
+export function mapaPorCodigo<P extends { codigo: string; codigosAlt?: string[] }>(productos: P[]): Map<string, P> {
+  const mapa = new Map<string, P>();
+  for (const p of productos) for (const c of p.codigosAlt ?? []) if (c) mapa.set(c, p);
+  for (const p of productos) if (p.codigo) mapa.set(p.codigo, p);
+  return mapa;
+}

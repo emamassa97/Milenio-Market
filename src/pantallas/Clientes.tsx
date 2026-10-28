@@ -4,7 +4,7 @@ import { pagosDeVenta } from '../dominio/carrito';
 import { describirItems, describirPagos, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
 import { telefonoWhatsApp, normalizarTexto as normalizar } from '../dominio/entrada';
-import { deudaDesde, saldoCliente } from '../dominio/fiado';
+import { DIAS_PARA_AVISAR, deudaDesde, diasDeDeuda, mensajeRecordatorio, saldoCliente } from '../dominio/fiado';
 import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type MovimientoFiado, type Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { anularPagoFiado, anularVenta, guardarCliente, registrarPagoFiado, turnoAbierto } from '../datos/operaciones';
@@ -51,7 +51,7 @@ export function PantallaClientes() {
     [elegido],
     new Map<number, Venta>(),
   );
-  const [modal, setModal] = useState<null | { tipo: 'cliente'; cliente?: Cliente } | { tipo: 'pago'; fila: Fila }>(null);
+  const [modal, setModal] = useState<null | { tipo: 'cliente'; cliente?: Cliente } | { tipo: 'pago'; fila: Fila } | { tipo: 'avisar' }>(null);
   const bajando = useBajando();
   const visibles = useMemo(() => filas.filter((f) => normalizar(f.cliente.nombre).includes(normalizar(q.trim()))), [filas, q]);
   const total = filas.reduce((s, f) => s + Math.max(0, f.saldo), 0);
@@ -59,8 +59,7 @@ export function PantallaClientes() {
   const aFavor = filas.filter((f) => f.saldo < 0);
   const detalle = filas.find((f) => f.cliente.id === elegido) ?? null;
   const whatsapp = detalle ? telefonoWhatsApp(detalle.cliente.telefono) : null;
-  // "Marta (la del 3° B)" → "Marta" para el saludo.
-  const nombreCorto = detalle ? detalle.cliente.nombre.replace(/\s*\(.*?\)\s*/g, ' ').trim().split(' ')[0] : '';
+  const paraAvisar = filas.filter((f) => f.saldo > 0 && diasDeDeuda(f.desde) > DIAS_PARA_AVISAR);
   // En el celular la cuenta queda abajo de la lista: al elegir, la traemos a la vista.
   const refDetalle = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -87,6 +86,11 @@ export function PantallaClientes() {
               </>
             )}
           </p>
+          {paraAvisar.length > 0 && (
+            <button type="button" className="boton boton-chico avisar-deudores" onClick={() => setModal({ tipo: 'avisar' })}>
+              <Icono nombre="whatsapp" tam={16} /> Avisar a {paraAvisar.length === 1 ? 'quien debe' : `los ${paraAvisar.length} que deben`} hace más de una semana
+            </button>
+          )}
         </div>
         <button type="button" className="boton boton-primario solo-pc" onClick={() => setModal({ tipo: 'cliente' })}>
           <Icono nombre="mas" tam={18} /> Nuevo cliente
@@ -152,7 +156,7 @@ export function PantallaClientes() {
                       target="_blank"
                       rel="noreferrer"
                       href={`https://wa.me/${whatsapp}?text=${encodeURIComponent(
-                        `Hola ${nombreCorto}! Te escribo de Milenio Market. Te quedó un saldo de ${formatPesos(detalle.saldo)}. Cuando puedas pasá. Gracias!`,
+                        mensajeRecordatorio(detalle.cliente.nombre, detalle.saldo, formatPesos),
                       )}`}
                     >
                       <Icono nombre="whatsapp" tam={18} /> Recordarle por WhatsApp
@@ -241,7 +245,82 @@ export function PantallaClientes() {
 
       {modal?.tipo === 'cliente' && <EditarCliente cliente={modal.cliente} onCerrar={() => setModal(null)} onGuardado={(id) => setElegido(id)} />}
       {modal?.tipo === 'pago' && <RegistrarPago cliente={modal.fila.cliente} saldo={modal.fila.saldo} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'avisar' && (
+        <AvisarDeudores
+          filas={paraAvisar}
+          onCerrar={() => setModal(null)}
+          onCargarTelefono={(c) => setModal({ tipo: 'cliente', cliente: c })}
+        />
+      )}
     </div>
+  );
+}
+
+// Cuándo se le mandó el último recordatorio a cada cliente, en este equipo: para no mandarle dos el mismo día.
+const LLAVE_AVISADOS = 'milenio.avisados';
+function leerAvisados(): Record<string, number> {
+  try {
+    const v = JSON.parse(localStorage.getItem(LLAVE_AVISADOS) ?? '{}') as unknown;
+    return v && typeof v === 'object' ? (v as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** WhatsApp no deja mandar en lote desde la web: se abre un chat por cliente, con el mensaje ya escrito. */
+function AvisarDeudores({ filas, onCerrar, onCargarTelefono }: { filas: Fila[]; onCerrar: () => void; onCargarTelefono: (c: Cliente) => void }) {
+  const [avisados, setAvisados] = useState(leerAvisados);
+  const marcar = (id: number) => {
+    const nuevos = { ...avisados, [id]: Date.now() };
+    setAvisados(nuevos);
+    try {
+      localStorage.setItem(LLAVE_AVISADOS, JSON.stringify(nuevos));
+    } catch {
+      /* sin almacenamiento: queda marcado mientras esté abierta la ventana */
+    }
+  };
+  const ordenadas = [...filas].sort((a, b) => (a.desde ?? 0) - (b.desde ?? 0));
+  return (
+    <Modal titulo="Avisar a los que deben" onCerrar={onCerrar}>
+      <div className="formulario">
+        <p className="texto-suave">
+          Los que deben hace más de una semana. Tocá "Mandar" y se abre WhatsApp con el mensaje escrito: sólo tenés que enviarlo y volver acá para el siguiente.
+        </p>
+        <ul className="lista-avisar">
+          {ordenadas.map((f) => {
+            const tel = telefonoWhatsApp(f.cliente.telefono);
+            const cuando = avisados[f.cliente.id!];
+            const hoy = cuando !== undefined && Date.now() - cuando < 86_400_000;
+            return (
+              <li key={f.cliente.id} className={hoy ? 'avisado' : ''}>
+                <span>
+                  <strong>{f.cliente.nombre}</strong>
+                  <small className="texto-suave">
+                    {formatPesos(f.saldo)} · {f.desde ? desdeCuando(f.desde) : ''}
+                    {cuando !== undefined && ` · avisado ${hoy ? 'hoy' : `el ${fechaCorta(cuando)}`}`}
+                  </small>
+                </span>
+                {tel ? (
+                  <a
+                    className={`boton boton-chico ${hoy ? '' : 'boton-primario'}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    href={`https://wa.me/${tel}?text=${encodeURIComponent(mensajeRecordatorio(f.cliente.nombre, f.saldo, formatPesos))}`}
+                    onClick={() => marcar(f.cliente.id!)}
+                  >
+                    {hoy ? <><Icono nombre="check" tam={16} /> Mandado</> : <><Icono nombre="whatsapp" tam={16} /> Mandar</>}
+                  </a>
+                ) : (
+                  <button type="button" className="boton boton-chico" onClick={() => onCargarTelefono(f.cliente)}>
+                    Cargar WhatsApp
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </Modal>
   );
 }
 

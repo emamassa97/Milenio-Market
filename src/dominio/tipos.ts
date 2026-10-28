@@ -22,6 +22,8 @@ export function nombreMedio(medio: MedioPago): string {
 export interface Producto {
   id?: number;
   codigo: string;
+  /** Otros códigos del mismo producto (el mismo alfajor con otra caja, otro proveedor). */
+  codigosAlt?: string[];
   nombre: string;
   precio: Pesos;
   costo: Pesos;
