@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { BotonAyuda } from '../ui/Ayuda';
 import { esGastoDelLocal } from '../dominio/caja';
 import { formatPesos } from '../dominio/dinero';
 import { saldoCliente } from '../dominio/fiado';
@@ -130,7 +131,9 @@ export function PantallaReportes() {
   return (
     <div className="pagina">
       <div className="pagina-cabecera">
-        <h1>Reportes</h1>
+        <h1>
+          Reportes <BotonAyuda tema="reportes" que="cómo leer los reportes" />
+        </h1>
         <div className="filtros-periodo">
           <div className="segmentos" role="group" aria-label="Período">
             {PERIODOS.map((p) => (

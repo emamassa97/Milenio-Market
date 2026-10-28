@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { BotonAyuda } from '../ui/Ayuda';
 import { pagosDeVenta } from '../dominio/carrito';
 import { describirItems, describirPagos, totalDevuelto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
@@ -70,7 +71,9 @@ export function PantallaClientes() {
     <div className="pagina">
       <div className="pagina-cabecera">
         <div>
-          <h1>Clientes y fiado</h1>
+          <h1>
+            Clientes y fiado <BotonAyuda tema="clientes" que="cómo funciona el fiado" />
+          </h1>
           <p className="texto-suave">
             {deudores === 0 ? (
               <>

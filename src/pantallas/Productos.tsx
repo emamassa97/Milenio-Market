@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { BotonAyuda } from '../ui/Ayuda';
 import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/csv';
 import { formatPesos } from '../dominio/dinero';
 import { cantidadDeTexto, codigoEscaneado, normalizarTexto as normalizar } from '../dominio/entrada';
@@ -141,7 +142,9 @@ export function PantallaProductos() {
     <div className="pagina">
       <div className="pagina-cabecera cabecera-productos">
         <div>
-          <h1>Productos</h1>
+          <h1>
+            Productos <BotonAyuda tema="producto" que="cómo cargar productos" />
+          </h1>
           <p className="texto-suave">
             {productos.length} cargados
             {cuantosReponer > 0 && (

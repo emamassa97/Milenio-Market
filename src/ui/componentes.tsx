@@ -61,6 +61,8 @@ import {
   Wifi,
   WifiOff,
   X,
+  CircleHelp,
+  Lightbulb,
   type LucideIcon,
 } from 'lucide-react';
 import { CANTIDAD_MAXIMA, RENGLON_MAXIMO } from '../dominio/carrito';
@@ -510,6 +512,9 @@ const ICONOS = {
   peso: Scale,
   camion: Truck,
   vence: CalendarClock,
+  ayuda: CircleHelp,
+  consejo: Lightbulb,
+  lector: ScanBarcode,
   abrir: ChevronDown,
   promo: Tag,
   sube: TrendingUp,

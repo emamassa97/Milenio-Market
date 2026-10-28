@@ -1,5 +1,5 @@
 import { AVISO_SIN_SERVIDOR } from './datos/nube';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import logo from './assets/logo-oscuro.svg';
 import { db } from './datos/db';
 import { estaVacia } from './datos/copia';
@@ -20,6 +20,7 @@ import { ProveedorSesion, useSesion } from './ui/sesion';
 import { useConexion, useCopiaEnLaNube, useEstadoNube } from './ui/hooks';
 import { revalidarSesion } from './datos/usuarios';
 import { turnoAbierto } from './datos/operaciones';
+import { CentroAyuda, GuiaPrimerUso, guiaVista, marcarGuiaVista, useAbrirAyuda } from './ui/Ayuda';
 
 const PANTALLAS = [
   { id: 'caja', nombre: 'Caja', corto: 'Caja', icono: 'caja', dueño: false },
@@ -67,6 +68,28 @@ function Sistema() {
   const estado = useEstadoNube();
   const nube = estado.activa || estado.sinActivar ? { error: estado.sinActivar ? (estado.aviso === AVISO_SIN_SERVIDOR ? 'Nube sin conexión' : 'Nube sin activar') : estado.error, aviso: estado.aviso, pendientes: estado.pendientes } : null;
   useCopiaEnLaNube(!import.meta.env.VITE_DEMO);
+
+  // Ayuda: F1, el botón del menú o cualquier pantalla que la pida en un tema ("¿Primera vez con el lector?").
+  const [ayuda, setAyuda] = useState<{ tema?: string } | null>(null);
+  const abrirLaAyuda = useCallback((tema?: string) => setAyuda({ tema }), []);
+  useAbrirAyuda(abrirLaAyuda);
+  useEffect(() => {
+    const tecla = (e: KeyboardEvent) => {
+      if (e.key !== 'F1') return;
+      e.preventDefault();
+      setAyuda((a) => a ?? {});
+    };
+    window.addEventListener('keydown', tecla);
+    return () => window.removeEventListener('keydown', tecla);
+  }, []);
+  // La guía de primer uso sale una sola vez por usuario en cada equipo; después queda en la ayuda.
+  const usuarioGuia = sesion?.usuario ?? 'prueba';
+  const [guia, setGuia] = useState(() => !guiaVista(usuarioGuia));
+  useEffect(() => setGuia(!guiaVista(usuarioGuia)), [usuarioGuia]);
+  const terminarGuia = useCallback(() => {
+    marcarGuiaVista(usuarioGuia);
+    setGuia(false);
+  }, [usuarioGuia]);
 
   // Si borraron al usuario o le sacaron el permiso de dueño, se corta la sesión.
   useEffect(() => {
@@ -161,6 +184,11 @@ function Sistema() {
           ))}
         </nav>
         <div className="lateral-pie">
+          <button type="button" className="lateral-ayuda" onClick={() => setAyuda({})} title="Ayuda (F1)">
+            <Icono nombre="ayuda" tam={20} />
+            <span>Ayuda</span>
+            <kbd>F1</kbd>
+          </button>
           <div className="lateral-estados">
             {estadoRed}
             {estadoNube}
@@ -195,6 +223,9 @@ function Sistema() {
             <Icono nombre="nube-no" tam={18} />
           </a>
         )}
+        <button type="button" className="boton-icono" onClick={() => setAyuda({})} aria-label="Ayuda" title="Ayuda">
+          <Icono nombre="ayuda" tam={22} />
+        </button>
         {sesion && (
           <span className="avatar" title={`${sesion.nombre} (${sesion.admin ? 'dueño' : 'empleado'})`} aria-label={`Atiende ${sesion.nombre}`}>
             {sesion.nombre.trim().charAt(0).toUpperCase() || '?'}
@@ -242,6 +273,17 @@ function Sistema() {
                 {p.nombre}
               </a>
             ))}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMenuMas(false);
+                setAyuda({});
+              }}
+            >
+              <Icono nombre="ayuda" tam={22} />
+              Ayuda
+            </button>
             {sesion && (
               <>
                 <button
@@ -276,6 +318,19 @@ function Sistema() {
           </div>
         </>
       )}
+      {ayuda && (
+        <CentroAyuda
+          pantalla={pantalla}
+          dueño={dueño}
+          temaInicial={ayuda.tema}
+          onCerrar={() => setAyuda(null)}
+          onVerGuia={() => {
+            setAyuda(null);
+            setGuia(true);
+          }}
+        />
+      )}
+      {guia && !ayuda && <GuiaPrimerUso dueño={dueño} nombre={sesion?.nombre} onTerminar={terminarGuia} onAbrirAyuda={() => setAyuda({})} />}
     </div>
   );
 }
