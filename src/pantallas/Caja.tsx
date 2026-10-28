@@ -1,4 +1,5 @@
 import { useSesion } from '../ui/sesion';
+import { BotonAyuda, abrirAyuda } from '../ui/Ayuda';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   agregarItem,
@@ -45,7 +46,7 @@ import {
   traerCajaAEsteEquipo,
 } from '../datos/operaciones';
 import { CampoCantidad, CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
-import { Escaner } from '../ui/Escaner';
+import { Escaner, camaraDisponible } from '../ui/Escaner';
 import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, LLAVE_PAGA_CON, LLAVE_ULTIMA, pitido, resumenEspera, useConsulta, useMedia, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { NuevoMovimiento } from './Cierre';
@@ -170,7 +171,9 @@ function AbrirCaja() {
   return (
     <div className="pagina pagina-angosta">
       <form className="tarjeta abrir-caja" onSubmit={abrir}>
-        <h1>Abrir la caja</h1>
+        <h1>
+          Abrir la caja <BotonAyuda tema="abrir" que="cómo abrir la caja" />
+        </h1>
         <p className="texto-suave">Contá el cambio con el que arrancás. Al cerrar, el sistema te dice si falta o sobra plata.</p>
         <label className="campo">
           <span className="campo-etiqueta">¿Quién atiende?</span>
@@ -960,6 +963,9 @@ function Caja() {
               </span>
               <p className="vacio-titulo">Listo para cobrar</p>
               <p className="texto-suave">Pasá el primer producto por el lector o tocá un botón rápido.</p>
+              <button type="button" className="enlace enlace-ayuda" onClick={() => abrirAyuda(camaraDisponible() && !window.matchMedia('(pointer: fine)').matches ? 'camara' : 'lector')}>
+                <Icono nombre="ayuda" tam={16} /> ¿Cómo se usa el lector o la cámara?
+              </button>
               {/* En el celular, las otras cosas que pasan en el mostrador sin tener que bajar hasta el fondo. */}
               <div className="acciones-vacia solo-movil-bloque">
                 <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'cobrarFiado' })}>

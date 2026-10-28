@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { BotonAyuda } from '../ui/Ayuda';
 import { DENOMINACIONES, resumirTurno, textoCierre, totalConteo, type ResumenTurno } from '../dominio/caja';
 import { carritoVacio, pagosDeVenta, totalCarrito, type Carrito } from '../dominio/carrito';
 import { describirItems, totalDevuelto } from '../dominio/devoluciones';
@@ -243,7 +244,9 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
     <>
       <div className="pagina-cabecera">
         <div>
-          <h1>Cierre de caja</h1>
+          <h1>
+            Cierre de caja <BotonAyuda tema="cerrar" que="cómo cerrar la caja" />
+          </h1>
           <p className="texto-suave">
             Abierta a las {hora(turno.apertura)} por {turno.cajero} · {resumen.cantidadVentas} ventas
           </p>

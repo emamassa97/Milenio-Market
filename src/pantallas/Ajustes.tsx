@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { BotonAyuda } from '../ui/Ayuda';
 import { db } from '../datos/db';
 import { estaVacia, exportarTodo, restaurarCopia } from '../datos/copia';
 import { borrarTodo, cargarEjemplo } from '../datos/ejemplo';
@@ -40,7 +41,9 @@ export function PantallaAjustes() {
   const soloEmpleado = Boolean(sesion && !sesion.admin);
   return (
     <div className={`pagina ${soloEmpleado ? 'pagina-angosta' : 'pagina-ajustes'}`}>
-      <h1>Ajustes</h1>
+      <h1>
+        Ajustes <BotonAyuda que="qué se configura acá" />
+      </h1>
 
       <div className="ajustes-columna">
       {sesion ? (
