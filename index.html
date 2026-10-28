@@ -9,7 +9,8 @@
     <title>Milenio Market · Caja</title>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Mientras carga la app: el logo sobre el fondo de siempre, en vez de una pantalla en blanco. React lo reemplaza al arrancar. -->
+    <div id="root"><div style="min-height:100vh;display:grid;place-items:center;background:#f2f3f5"><img src="/icono.svg" alt="Milenio Market" width="72" height="72" style="border-radius:18px" /></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

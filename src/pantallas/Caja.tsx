@@ -28,6 +28,7 @@ import {
 import { formatPesos } from '../dominio/dinero';
 import { codigoAlFinal, codigoEscaneado, gramosDeTexto, normalizarTexto as normalizar, mapaPorCodigo } from '../dominio/entrada';
 import { saldoCliente } from '../dominio/fiado';
+import { itemsNetos } from '../dominio/devoluciones';
 import { MEDIOS, nombreMedio, type Cliente, type MedioPago, type Pago, type Producto, type Venta } from '../dominio/tipos';
 import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
 import { db } from '../datos/db';
@@ -47,7 +48,7 @@ import {
   traerCajaAEsteEquipo,
   sumarCodigo,
 } from '../datos/operaciones';
-import { CampoCantidad, CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
+import { AvisoEnLinea, CampoCantidad, CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
 import { Escaner, camaraDisponible } from '../ui/Escaner';
 import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, LLAVE_PAGA_CON, LLAVE_ULTIMA, pitido, resumenEspera, useConsulta, useMedia, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
@@ -392,13 +393,14 @@ function Caja() {
     async () => {
       if (cliente?.id === undefined) return null;
       const suyas = await db.ventas.where('clienteId').equals(cliente.id).sortBy('fecha');
-      return suyas.reverse().find((v) => !v.anulada && v.items.length > 0) ?? null;
+      // Lo que devolvió no cuenta: si devolvió todo, se busca la compra anterior.
+      return suyas.reverse().find((v) => !v.anulada && itemsNetos(v).length > 0) ?? null;
     },
     [cliente?.id],
     null as Venta | null,
   );
   const repetirCompra = (v: Venta) => {
-    const { items, faltan } = repetirVenta(v, productos);
+    const { items, faltan } = repetirVenta({ items: itemsNetos(v) }, productos);
     if (items.length === 0) {
       avisar({ texto: 'Lo de la última vez ya no está cargado en Productos.', tipo: 'error' });
       return;
@@ -840,9 +842,9 @@ function Caja() {
               <Icono nombre="repetir" tam={18} />
               <span>
                 <strong>Repetir lo de la última vez</strong>
-                <small className="texto-suave">
-                  {resumenItems(ultimaDelCliente)} · {cuando(ultimaDelCliente.fecha)}
-                </small>
+                {/* Cuándo fue va en su línea: es lo que confirma que es "lo de siempre" (antes se cortaba). */}
+                <small className="texto-suave repetir-cuando">{cuando(ultimaDelCliente.fecha).replace(/^./, (c) => c.toUpperCase())}</small>
+                <small className="texto-suave">{resumenItems({ ...ultimaDelCliente, items: itemsNetos(ultimaDelCliente) })}</small>
               </span>
             </button>
           )}
@@ -1122,6 +1124,7 @@ function Caja() {
             <strong className="importe">{formatPesos(cobrado.vuelto && cobrado.vuelto > 0 ? cobrado.vuelto : cobrado.total)}</strong>
             {(cobrado.pagoFiado || (cobrado.fiado && !cobrado.dividido)) && <small>{textoQueda(cobrado.queda)}</small>}
             {cobrado.dividido && cobrado.fiado && cobrado.fiado > 0 ? <small>{formatPesos(cobrado.fiado)} anotados a {primerNombre(cobrado.cliente ?? '')}</small> : null}
+            <AvisoEnLinea />
             <button
               type="button"
               className="boton boton-chico total-siguiente"
@@ -1137,10 +1140,12 @@ function Caja() {
           <div className="total">
             <span>Total a cobrar</span>
             <strong className="importe">{formatPesos(total)}</strong>
-            <small>
+            <small className="total-detalle">
               {unidades(carrito)} {unidades(carrito) === 1 ? 'producto' : 'productos'}
               {carrito.descuento ? ` · ${formatPesos(sumaCarrito(carrito))} menos ${formatPesos(carrito.descuento)} de descuento` : ''}
             </small>
+            {/* En la PC los avisos de la caja salen acá, en vez de flotar encima del total. */}
+            <AvisoEnLinea />
           </div>
         )}
 

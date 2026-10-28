@@ -164,7 +164,9 @@ async function confirmarStock(db: BaseKiosco, enviadas: Record<string, unknown>[
       } else {
         base = Number(f.stock);
       }
-      await db.productos.update(id, { _s: base, _ov: undefined, _dv: undefined } as never);
+      // Si no cambió nada después de mandarlo, los campos anotados (`_c`) ya llegaron.
+      const igual = actual._v === f._v;
+      await db.productos.update(id, { _s: base, _ov: undefined, _dv: undefined, ...(igual ? { _c: undefined } : {}) } as never);
       if (redondearStock(actual.stock - base) !== 0) repetir.push(id);
     }
   });
@@ -215,13 +217,13 @@ export async function aplicarRemotas(db: BaseKiosco, filas: FilaRemota[], migrac
         }
         continue;
       }
-      const { _o, _ov, _dv, ...datos } = f.datos;
-      void _o, _ov, _dv;
+      const { _o, _ov, _dv, _c, ...datos } = f.datos;
+      void _o, _ov, _dv, _c;
       if (migracion && t === 'ajustes' && f.id === 'usuarios' && local && Array.isArray(local.valor) && Array.isArray(datos.valor)) {
-        // Un equipo que se une con sus propios usuarios no borra los de la nube (ni al revés):
-        // se juntan, y en el mismo usuario gana la lista más nueva. Queda para subir.
-        const [nueva, vieja] = remotaGana ? [datos.valor, local.valor] : [local.valor, datos.valor];
-        await tabla.put({ clave: 'usuarios', valor: combinarUsuarios(nueva as Usuario[], vieja as Usuario[]), _v: nuevaMarca() });
+        // Un equipo que se une con sus propios usuarios no borra los de la nube (ni al revés): se juntan.
+        // En el mismo usuario gana siempre la nube: un equipo que se armó de nuevo (o al que le hicieron
+        // "empezar de cero") no puede cambiar la clave del dueño de todos. Queda para subir.
+        await tabla.put({ clave: 'usuarios', valor: combinarUsuarios(datos.valor as Usuario[], local.valor as Usuario[]), _v: nuevaMarca() });
         aplicadas++;
         continue;
       }
@@ -233,7 +235,11 @@ export async function aplicarRemotas(db: BaseKiosco, filas: FilaRemota[], migrac
         // congelada ya llegó (la nube devuelve su id), ya está adentro del número de la nube.
         const llego = typeof local!._ov === 'string' && f.datos._ov === local!._ov;
         const base = llego ? redondearStock((local!._s as number) + Number(local!._dv ?? 0)) : (local!._s as number);
-        const fila: Record<string, unknown> = { ...local, stock: redondearStock(datos.stock + (local!.stock as number) - base), _s: datos.stock };
+        // Los campos que este equipo no cambió (no están en su `_c`) vienen de la nube: un precio nuevo
+        // cargado en otro equipo llega aunque acá se haya vendido mientras tanto.
+        const propios = Array.isArray(local!._c) ? new Set(local!._c as string[]) : null;
+        const deLaNube = propios ? Object.fromEntries(Object.entries(datos).filter(([k]) => !propios.has(k) && k !== 'stock' && !k.startsWith('_'))) : {};
+        const fila: Record<string, unknown> = { ...local, ...deLaNube, stock: redondearStock(datos.stock + (local!.stock as number) - base), _s: datos.stock };
         if (llego) delete fila._ov, delete fila._dv;
         await tabla.put(fila);
         aplicadas++;
@@ -492,16 +498,18 @@ async function apartarChocadas(db: BaseKiosco, filas: FilaRemota[]): Promise<voi
 
 /** Baja de la nube todo lo que cambió desde la última vez y lo aplica. Devuelve cuántas filas cambiaron acá. */
 export async function bajarCambios(db: BaseKiosco, clave: string, url = '/api/sincronizar', migracion = false): Promise<number> {
-  let cursor = await leerAjuste<number>(db, 'nube.cursor', 0);
+  // El cursor es "tx:seq". Un número es el de antes (sólo seq): la nube lo convierte la primera vez.
+  const guardado = await leerAjuste<string | number>(db, 'nube.cursor', CURSOR_INICIAL);
+  let cursor = typeof guardado === 'number' ? (guardado > 0 ? `seq:${guardado}` : CURSOR_INICIAL) : guardado;
   let aplicadas = 0;
   for (;;) {
-    const r = await pedir(`${url}?v=2&cambios=${cursor}`, { headers: { 'x-clave': clave } });
+    const r = await pedir(`${url}?v=2&desde=${encodeURIComponent(cursor)}`, { headers: { 'x-clave': clave } });
     if (!r.ok) throw new Error(await mensajeServidor(r));
-    const pagina = (await r.json()) as { filas?: FilaRemota[]; hasta?: number; mas?: boolean };
+    const pagina = (await r.json()) as { filas?: FilaRemota[]; hasta?: string; mas?: boolean };
     const filas = Array.isArray(pagina.filas) ? pagina.filas : [];
     if (migracion && filas.length > 0) await apartarChocadas(db, filas);
     if (filas.length > 0) aplicadas += await aplicarRemotas(db, filas, migracion);
-    if (typeof pagina.hasta === 'number' && pagina.hasta > cursor) {
+    if (typeof pagina.hasta === 'string' && pagina.hasta !== cursor) {
       cursor = pagina.hasta;
       await guardarAjuste(db, 'nube.cursor', cursor);
     }
@@ -509,6 +517,9 @@ export async function bajarCambios(db: BaseKiosco, clave: string, url = '/api/si
   }
   return aplicadas;
 }
+
+/** Desde el principio: todo lo que hay en la nube. */
+export const CURSOR_INICIAL = '0:-1';
 
 /**
  * Une a la nube un equipo vacío (una compu nueva, el celular) y se trae todo.
@@ -522,7 +533,7 @@ export async function recuperarDeLaNube(db: BaseKiosco, clave: string, url = '/a
     await guardarAjuste(db, 'nube.clave', '');
     throw new ErrorKiosco(e instanceof Error ? e.message : 'No se pudo conectar con la nube.');
   }
-  await guardarAjuste(db, 'nube.cursor', 0);
+  await guardarAjuste(db, 'nube.cursor', CURSOR_INICIAL);
   const total = await bajarCambios(db, clave, url);
   await guardarAjuste(db, 'nube.v2', true);
   return total;

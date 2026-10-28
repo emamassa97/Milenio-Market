@@ -1067,13 +1067,24 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
 .buscador-error .enlace { color: inherit; font-weight: 600; }
 @media (max-width: 1400px) { .caja-izquierda .buscador-error { order: -2; } }
 
-/* Avisos de la caja en PC: arriba a la derecha, sobre el total (grande y que no se toca). Abajo tapaban los rápidos y
-   las acciones del pie a 1024–1280. */
-@media (min-width: 901px) {
-  body:has(.caja) .avisos { top: 16px; bottom: auto; left: auto; right: 28px; width: 392px; }
+/* Avisos de la caja en PC: una línea dentro del panel del total (AvisoEnLinea), en vez de flotar. Abajo tapaban
+   los rápidos y las acciones del pie; arriba, el total. */
+.aviso-en-linea {
+  display: flex; align-items: center; gap: 10px; margin-top: 6px; padding: 5px 8px 5px 12px;
+  border-radius: var(--radio-chico); background: rgba(255, 255, 255, 0.08); border-left: 3px solid #fbbf24;
+  color: #fff; font-size: 0.88rem; font-weight: 500; line-height: 1.3; animation: entra 0.18s ease-out;
 }
-@media (min-width: 901px) and (max-width: 1280px) {
-  body:has(.caja) .avisos { width: 340px; }
+.aviso-en-linea-ok { border-left-color: #4ade80; }
+.aviso-en-linea-error { border-left-color: #f87171; }
+.aviso-en-linea-texto { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.aviso-en-linea .aviso-accion { min-height: 28px; padding: 0 10px; }
+.total:has(.aviso-en-linea) .total-detalle { display: none; }
+@media (prefers-reduced-motion: reduce) { .aviso-en-linea { animation: none; } }
+@media (min-width: 901px) {
+  body:has(.caja .aviso-en-linea) .avisos { display: none; }
+}
+@media (max-width: 900px) {
+  .aviso-en-linea { display: none; }
 }
 /* Celular y tablet: arriba de la barra de cobro y las pestañas, centrados; arriba tapaban el buscador. */
 @media (max-width: 900px) {
@@ -1081,6 +1092,14 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
     top: auto; bottom: calc(140px + env(safe-area-inset-bottom)); left: 50%; right: auto; transform: translateX(-50%);
     width: min(420px, calc(100vw - 16px));
   }
+  /* En el ingreso, arriba, sobre la marca: abajo tapaba "Entrar". */
+  body:has(.ingreso) .avisos { top: calc(12px + env(safe-area-inset-top)); bottom: auto; }
+  /* En la caja, como mucho dos líneas: tapa lo menos posible y se va solo. */
+  body:has(.caja) .aviso > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+}
+/* Tablet: a la derecha y angosto, no centrado sobre la grilla de medios de pago. */
+@media (min-width: 600px) and (max-width: 900px) {
+  .avisos, body:has(.ingreso) .avisos { left: auto; right: 16px; transform: none; width: 360px; }
 }
 
 /* Piso táctil de 44 px también para las tres reglas compactas de PC que le ganaban. */
@@ -1205,6 +1224,7 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
 .boton-ayuda::after { content: ''; position: absolute; inset: -6px; }
 @media (hover: hover) { .boton-ayuda:hover { background: var(--gris); color: var(--texto); } }
 .enlace-ayuda { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--suave); min-height: 40px; font-size: 0.9rem; cursor: pointer; }
+@media (pointer: coarse) { .enlace-ayuda { min-height: 44px; } }
 @media (hover: hover) { .enlace-ayuda:hover { color: var(--texto); } }
 
 .lateral-ayuda {
@@ -1227,6 +1247,10 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
 .ayuda-buscar:focus-within { border-color: var(--grafito); box-shadow: 0 0 0 3px rgba(27, 30, 36, 0.12); }
 .ayuda-buscar svg { color: var(--suave); flex: none; }
 .ayuda-buscar input { border: none; outline: none; flex: 1; min-height: 46px; font: inherit; background: none; min-width: 0; }
+/* El anillo lo dibuja el contenedor: sin esto se veían dos. */
+.ayuda-buscar input:focus { box-shadow: none; }
+/* Al filtrar, la ventana no se achica ni salta al centro. */
+.ayuda { min-height: min(560px, 70dvh); }
 .ayuda-seccion { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--suave); margin: 0 0 8px; }
 .ayuda-lista { display: flex; flex-direction: column; border: 1px solid var(--borde); border-radius: var(--radio); overflow: hidden; }
 .ayuda-tema + .ayuda-tema { border-top: 1px solid var(--borde); }
@@ -1318,3 +1342,15 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
 .control-mp-justo { background: var(--verde-suave); color: var(--verde); }
 .control-mp-distinto { background: var(--ambar-suave); color: var(--texto); }
 .control-mp-distinto svg { color: var(--ambar); }
+
+/* Pantalla que falló al dibujarse (BordeDeError) */
+.borde-error {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--fondo, #f5f5f7);
+}
+.borde-error .tarjeta {
+  max-width: 440px;
+}

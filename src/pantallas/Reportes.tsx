@@ -96,7 +96,17 @@ export function PantallaReportes() {
   const cajeros = useMemo(() => porCajero(ventas, new Map(usuarios.map((u) => [u.usuario, u.nombre]))), [ventas, usuarios]);
   // Las devoluciones se cuentan por el día en que se hicieron, sea de cuándo sea la venta.
   const ventasParaDevoluciones = useConsulta(
-    () => db.ventas.filter((v) => !!v.devoluciones?.some((d) => d.fecha >= desde && d.fecha < hasta)).toArray(),
+    async () => {
+      // Por los eventos de devolución del período (tienen índice por fecha), no recorriendo el año de ventas.
+      const eventos = await db.eventos.where('fecha').between(desde, hasta, true, false).filter((e) => e.tipo === 'devolucion').toArray();
+      if (eventos.length === 0) return [];
+      // Las devoluciones de antes no anotaban la venta: para ésas, como antes.
+      if (eventos.some((e) => e.ventaId === undefined)) {
+        return db.ventas.filter((v) => !!v.devoluciones?.some((d) => d.fecha >= desde && d.fecha < hasta)).toArray();
+      }
+      const ventasDevueltas = await db.ventas.bulkGet([...new Set(eventos.map((e) => e.ventaId!))]);
+      return ventasDevueltas.filter((v): v is Venta => v !== undefined);
+    },
     [desde, hasta],
     [] as Venta[],
   );

@@ -151,6 +151,18 @@ export async function pasarTurno(
 /** Lo que se anota a mano desde el cierre; las devoluciones las anota `devolverProductos`. */
 export type MovimientoManual = Exclude<TipoMovimientoCaja, 'devolucion'>;
 
+/** Plata válida para guardar: pesos enteros, de 0 al tope de un renglón (más es un código leído en el campo). */
+function esPesos(n: number): boolean {
+  return Number.isFinite(n) && n >= 0 && n <= RENGLON_MAXIMO;
+}
+
+/** Un monto que se va a guardar: pesos enteros mayores a cero y con tope. La pantalla ya lo cuida; acá se garantiza. */
+function montoValido(monto: number): Pesos {
+  if (!Number.isFinite(monto) || !(monto > 0)) throw new ErrorKiosco('Poné un monto mayor a cero.');
+  if (monto > RENGLON_MAXIMO) throw new ErrorKiosco('Ese monto es demasiado alto: parece un código de barras.');
+  return Math.round(monto);
+}
+
 export async function registrarMovimientoCaja(
   db: BaseKiosco,
   tipo: MovimientoManual,
@@ -159,7 +171,7 @@ export async function registrarMovimientoCaja(
   usuario?: string,
   mercaderia = false,
 ): Promise<number> {
-  if (!(monto > 0)) throw new ErrorKiosco('Poné un monto mayor a cero.');
+  monto = montoValido(monto);
   return db.transaction('rw', db.turnos, db.movimientosCaja, async () => {
     const turno = await turnoAbierto(db);
     if (!turno) throw new ErrorKiosco('Primero abrí la caja.');
@@ -396,7 +408,7 @@ export async function devolverProductos(
     };
     await db.ventas.update(ventaId, { devoluciones: [...(venta.devoluciones ?? []), devolucion] });
     // Para el panel del día: las devoluciones se cuentan por el día en que se hicieron, aunque la venta sea vieja.
-    await db.eventos.add({ fecha: devolucion.fecha, tipo: 'devolucion', turnoId: turno.id!, monto, detalle, ...quien('usuario', usuario) });
+    await db.eventos.add({ fecha: devolucion.fecha, tipo: 'devolucion', turnoId: turno.id!, monto, detalle, ventaId, ...quien('usuario', usuario) });
     for (const s of stockQueVuelve(venta, pedidos)) {
       await db.productos
         .where('id')
@@ -487,7 +499,7 @@ export const STOCK_MAXIMO = 99_999;
 
 export async function buscarPorCodigo(db: BaseKiosco, codigo: string): Promise<Producto | undefined> {
   if (!codigo) return undefined;
-  return (await db.productos.where('codigo').equals(codigo).first()) ?? db.productos.filter((p) => !!p.codigosAlt?.includes(codigo)).first();
+  return (await db.productos.where('codigo').equals(codigo).first()) ?? db.productos.where('codigosAlt').equals(codigo).first();
 }
 
 /** Saca uno de los otros códigos de un producto (el principal se cambia en el formulario). */
@@ -600,35 +612,37 @@ export interface ResultadoCarga {
  */
 export async function cargarPlanilla(db: BaseKiosco, filas: FilaImportada[]): Promise<ResultadoCarga> {
   for (const f of filas) {
-    if (!f.nombre.trim() || !(f.precio >= 0) || !(f.costo >= 0) || !Number.isFinite(f.stock)) {
+    if (!f.nombre.trim() || !esPesos(f.precio) || !esPesos(f.costo) || !Number.isFinite(f.stock) || Math.abs(f.stock) > STOCK_MAXIMO) {
       throw new ErrorKiosco(`La fila de "${f.nombre}" tiene datos no válidos.`);
     }
   }
   return db.transaction('rw', db.productos, async () => {
     let nuevos = 0;
     let actualizados = 0;
+    // Los productos sin código se buscan por nombre: se arma la lista una sola vez, no por cada fila.
+    const sinCodigo = await db.productos.filter((p) => !p.codigo).toArray();
     for (const f of filas) {
       // Sin código, se busca un producto sin código con el mismo nombre,
       // para que bajar la planilla y volver a cargarla no duplique nada.
       const existente = f.codigo
         ? await buscarPorCodigo(db, f.codigo)
-        : await db.productos.filter((p) => !p.codigo && mismoNombre(p.nombre, f.nombre)).first();
+        : sinCodigo.find((p) => mismoNombre(p.nombre, f.nombre));
       if (existente) {
         await db.productos.update(existente.id!, {
           nombre: f.nombre,
-          precio: f.precio,
-          ...(f.costo > 0 ? { costo: f.costo } : {}),
+          precio: Math.round(f.precio),
+          ...(f.costo > 0 ? { costo: Math.round(f.costo) } : {}),
           ...(f.categoria ? { categoria: f.categoria } : {}),
           ...(f.proveedor ? { proveedor: f.proveedor.trim() } : {}),
           actualizado: ahora(),
         });
         actualizados++;
       } else {
-        await db.productos.add({
+        const nuevo: Producto = {
           codigo: f.codigo,
           nombre: f.nombre,
-          precio: f.precio,
-          costo: f.costo,
+          precio: Math.round(f.precio),
+          costo: Math.round(f.costo),
           stock: f.stock,
           stockMinimo: 0,
           categoria: f.categoria,
@@ -636,7 +650,9 @@ export async function cargarPlanilla(db: BaseKiosco, filas: FilaImportada[]): Pr
           rapido: false,
           creado: ahora(),
           actualizado: ahora(),
-        });
+        };
+        nuevo.id = await db.productos.add(nuevo);
+        if (!f.codigo) sinCodigo.push(nuevo);
         nuevos++;
       }
     }
@@ -646,6 +662,8 @@ export async function cargarPlanilla(db: BaseKiosco, filas: FilaImportada[]): Pr
 
 /** Suma (o resta) stock al recibir mercadería o corregir un conteo. */
 export async function ajustarStock(db: BaseKiosco, id: number, cantidad: number): Promise<void> {
+  // Un NaN quedaría en el stock para siempre (y la nube no lo puede sumar).
+  if (!Number.isFinite(cantidad) || Math.abs(cantidad) > STOCK_MAXIMO) throw new ErrorKiosco('La cantidad no es válida.');
   const n = await db.productos
     .where('id')
     .equals(id)
@@ -743,8 +761,8 @@ export async function guardarCliente(
 ): Promise<number> {
   const nombre = datos.nombre.trim().replace(/\s+/g, ' ');
   if (!nombre) throw new ErrorKiosco('Poné el nombre del cliente.');
-  if (!(datos.limite >= 0)) throw new ErrorKiosco('El límite no puede ser negativo.');
-  const limpio = { nombre, telefono: datos.telefono.trim(), limite: datos.limite };
+  if (!esPesos(datos.limite)) throw new ErrorKiosco('El límite no es válido (de $ 0 a $ 5.000.000).');
+  const limpio = { nombre, telefono: datos.telefono.trim(), limite: Math.round(datos.limite) };
   if (id === undefined) return db.clientes.add({ ...limpio, creado: ahora() });
   await db.clientes.update(id, limpio);
   return id;
@@ -771,8 +789,7 @@ export async function registrarPagoFiado(
   medio: Exclude<MedioPago, 'fiado'>,
   nota = '',
 ): Promise<number> {
-  if (!(monto > 0)) throw new ErrorKiosco('Poné un monto mayor a cero.');
-  if (monto > RENGLON_MAXIMO) throw new ErrorKiosco('Ese monto es demasiado alto: parece un código de barras.');
+  monto = montoValido(monto);
   return db.transaction('rw', [db.turnos, db.clientes, db.movimientosFiado], async () => {
     if (!(await db.clientes.get(clienteId))) throw new ErrorKiosco('Ese cliente ya no existe.');
     const turno = await turnoAbierto(db);

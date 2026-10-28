@@ -88,7 +88,7 @@ export function PantallaClientes() {
           </p>
           {paraAvisar.length > 0 && (
             <button type="button" className="boton boton-chico avisar-deudores" onClick={() => setModal({ tipo: 'avisar' })}>
-              <Icono nombre="whatsapp" tam={16} /> Avisar a {paraAvisar.length === 1 ? 'quien debe' : `los ${paraAvisar.length} que deben`} hace más de una semana
+              <Icono nombre="whatsapp" tam={16} /> Avisar a {paraAvisar.length === 1 ? 'quien debe' : `los que deben (${paraAvisar.length})`}
             </button>
           )}
         </div>

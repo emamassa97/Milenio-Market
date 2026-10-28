@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -81,14 +82,24 @@ interface Aviso {
 }
 
 const ContextoAvisos = createContext<(a: Omit<Aviso, 'id'>) => void>(() => {});
+const ContextoAvisosActuales = createContext<{ avisos: Aviso[]; quitar: (id: number) => void }>({ avisos: [], quitar: () => {} });
 
 export function useAvisar() {
   return useContext(ContextoAvisos);
 }
 
+/** El navegador se quedó sin lugar para la base (IndexedDB): reintentar no sirve. */
+function sinLugar(e: unknown): boolean {
+  for (let x = e as { name?: string; inner?: unknown } | undefined, i = 0; x && i < 4; x = x.inner as typeof x, i++) {
+    if (x.name === 'QuotaExceededError') return true;
+  }
+  return false;
+}
+
 export function errorATexto(e: unknown): string {
   if (e instanceof ErrorKiosco) return e.message;
   console.error(e);
+  if (sinLugar(e)) return 'El navegador se quedó sin lugar y no se guardó. Bajá una copia en Ajustes y liberá espacio en el equipo (fotos, descargas).';
   return 'Algo falló y no se guardó. Probá de nuevo.';
 }
 
@@ -102,9 +113,11 @@ export function ProveedorAvisos({ children }: { children: ReactNode }) {
     setAvisos((lista) => [...lista.filter((x) => x.tipo !== a.tipo && !(a.tipo === 'ok' && x.tipo === 'error')).slice(-1), { ...a, id }]);
     window.setTimeout(() => setAvisos((lista) => lista.filter((x) => x.id !== id)), a.accion ? 6000 : 3000);
   }, []);
+  const quitar = useCallback((id: number) => setAvisos((lista) => lista.filter((x) => x.id !== id)), []);
+  const actuales = useMemo(() => ({ avisos, quitar }), [avisos, quitar]);
   return (
     <ContextoAvisos.Provider value={avisar}>
-      {children}
+      <ContextoAvisosActuales.Provider value={actuales}>{children}</ContextoAvisosActuales.Provider>
       <div className="avisos" aria-live="polite">
         {avisos.map((a) => (
           <div key={a.id} className={`aviso aviso-${a.tipo}`} role={a.tipo === 'error' ? 'alert' : 'status'}>
@@ -125,6 +138,33 @@ export function ProveedorAvisos({ children }: { children: ReactNode }) {
         ))}
       </div>
     </ContextoAvisos.Provider>
+  );
+}
+
+/**
+ * El último aviso como una línea dentro de otro panel (el total de la caja en la PC), en vez de flotando
+ * encima de algo. Con `en-linea` presente, el CSS esconde los avisos flotantes de esa pantalla.
+ */
+export function AvisoEnLinea({ className = '' }: { className?: string }) {
+  const { avisos, quitar } = useContext(ContextoAvisosActuales);
+  const a = avisos[avisos.length - 1];
+  if (!a) return null;
+  return (
+    <span className={`aviso-en-linea aviso-en-linea-${a.tipo} ${className}`} role={a.tipo === 'error' ? 'alert' : 'status'}>
+      <span className="aviso-en-linea-texto">{a.texto}</span>
+      {a.accion && (
+        <button
+          type="button"
+          className="aviso-accion"
+          onClick={() => {
+            a.accion!.hacer();
+            quitar(a.id);
+          }}
+        >
+          {a.accion.texto}
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -155,15 +195,17 @@ export function Modal({
       // React ya enfocó el campo con autoFocus; showModal() lo movería a la ✕.
       const previo = document.activeElement as HTMLElement | null;
       d.showModal();
+      // Un botón con data-autofocus gana (autoFocus no llega porque el diálogo todavía está cerrado).
       // En una pantalla táctil un campo enfocado abre el teclado encima de la hoja: ahí sólo se enfoca lo pedido con autoFocus.
       const tactil = !window.matchMedia('(pointer: fine)').matches;
       const elegido =
         previo && d.contains(previo) && !previo.closest('.modal-cabecera')
           ? previo
-          : tactil
-            ? null
-            : d.querySelector<HTMLElement>('.modal-cuerpo input:not([type=checkbox]), .modal-cuerpo select, .modal-cuerpo textarea') ??
-              d.querySelector<HTMLElement>('.modal-cuerpo button');
+          : d.querySelector<HTMLElement>('[data-autofocus]') ??
+            (tactil
+              ? null
+              : d.querySelector<HTMLElement>('.modal-cuerpo input:not([type=checkbox]), .modal-cuerpo select, .modal-cuerpo textarea') ??
+                d.querySelector<HTMLElement>('.modal-cuerpo button'));
       elegido?.focus();
     }
     const cancelar = (e: Event) => {
@@ -192,7 +234,7 @@ export function Modal({
  * El lector de códigos tipea todas las cifras en milisegundos; una persona, no. Contando las teclas que llegaron
  * de corrido se sabe qué parte de lo escrito fue el lector (y qué parte, si la hay, se tecleó a mano antes).
  */
-const PAUSA_ENTRE_TECLAS = 100;
+export const PAUSA_ENTRE_TECLAS = 100;
 function useRafaga() {
   const rafaga = useRef({ ultimo: 0, n: 0 });
   return {

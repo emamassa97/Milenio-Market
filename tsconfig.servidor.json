@@ -1,0 +1,19 @@
+{
+  // La función de Vercel (api/ y servidor/) corre como módulo ES de Node, que no adivina extensiones:
+  // con NodeNext, un import relativo sin ".js" no compila (ya rompió la nube una vez).
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.servidor.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["api", "servidor"]
+}

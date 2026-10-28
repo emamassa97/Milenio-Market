@@ -202,12 +202,18 @@ export function esPagoRedondo(opcion: Pesos, total: Pesos): boolean {
  * "Lo de siempre": los renglones de una venta anterior, con los precios de hoy.
  * Lo que ya no está cargado (o un monto libre) no se repite: se nombra para avisarlo.
  */
+/** Para repetir una venta con devoluciones, pasarle `{ items: itemsNetos(venta) }`: lo devuelto no se repite. */
 export function repetirVenta(venta: Pick<Venta, 'items'>, productos: Producto[]): { items: ItemVenta[]; faltan: string[] } {
   const porId = new Map(productos.map((p) => [p.id, p]));
   const items: ItemVenta[] = [];
   const faltan: string[] = [];
   for (const it of venta.items) {
-    const p = it.productoId === null ? undefined : porId.get(it.productoId);
+    // Un monto libre (una recarga, "varios") se repite igual: no es un producto cargado.
+    if (it.productoId === null) {
+      for (let i = 0; i < it.cantidad; i++) items.push(itemMontoLibre(it.precioUnitario, it.nombre));
+      continue;
+    }
+    const p = porId.get(it.productoId);
     if (!p) faltan.push(it.nombre);
     else if (it.gramos) for (let i = 0; i < it.cantidad; i++) items.push(itemPorPeso(p, it.gramos));
     else items.push(itemDeProducto(p, it.cantidad));

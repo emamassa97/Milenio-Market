@@ -5,7 +5,7 @@ import { BaseKiosco, RANGO } from './db';
 import { abrirTurno, borrarProducto, guardarProducto, leerAjuste, registrarVenta, traerCajaAEsteEquipo, turnoAbierto } from './operaciones';
 import { pedirAlta, sincronizarAhora } from './nube';
 import { ingresarDondeSea } from './ingreso';
-import { cambiarClave, crearUsuario, empezarDeCero, leerUsuarios } from './usuarios';
+import { cambiarClave, cambiarClaveConLaNube, crearUsuario, empezarDeCero, leerUsuarios } from './usuarios';
 
 // Dos equipos (la PC del kiosco y el celular del dueño) contra una nube falsa
 // en memoria que responde las consultas reales del servidor.
@@ -23,7 +23,7 @@ const vender = (db: BaseKiosco, productoId: number, cantidad: number, precio = 1
 afterEach(() => vi.unstubAllGlobals());
 
 async function escenario() {
-  const nube = crearNube();
+  const nube = await crearNube();
   vi.stubGlobal('fetch', nube.fetchFalso);
   const pc = await nueva();
   await crearUsuario(pc, { usuario: 'ema', nombre: 'Ema', clave: '4826', admin: true });
@@ -115,7 +115,7 @@ describe('sincronización entre equipos', () => {
     });
     // La fila se ignora sin trabar el resto del lote: juan sigue sin ser dueño.
     expect(subida.status).toBe(200);
-    expect(nube.v2.get('ajustes\u0000usuarios')!.datos.valor.find((u: { usuario: string }) => u.usuario === 'juan').admin).toBeFalsy();
+    expect((await nube.filas()).find((f) => f.tabla === 'ajustes' && f.id === 'usuarios')!.datos.valor.find((u: { usuario: string }) => u.usuario === 'juan').admin).toBeFalsy();
     // Con la clave vieja de la nube tampoco se puede usar la copia vieja.
     const vieja = await nube.fetchFalso('/api/sincronizar?desde=', { headers: { 'x-clave': clave } });
     expect(vieja.status).toBe(401);
@@ -134,7 +134,7 @@ describe('sincronización entre equipos', () => {
   });
 
   it('una PC que ya subía con la versión anterior se pasa sola, con su caja abierta', async () => {
-    const nube = crearNube();
+    const nube = await crearNube();
     vi.stubGlobal('fetch', nube.fetchFalso);
     const pc = await nueva();
     await crearUsuario(pc, { usuario: 'ema', nombre: 'Ema', clave: '4826', admin: true });
@@ -145,7 +145,7 @@ describe('sincronización entre equipos', () => {
     // Como estaba antes: clave guardada, sin número de equipo ni versión 2.
     await pc.ajustes.put({ clave: 'nube.v2', valor: false });
     await sincronizarAhora(pc);
-    expect([...nube.v2.values()].filter((f) => f.tabla === 'ventas')).toHaveLength(1);
+    expect((await nube.filas()).filter((f) => f.tabla === 'ventas')).toHaveLength(1);
     expect((await turnoAbierto(pc))?.equipo).toBe(1);
     await vender(pc, coca, 1);
     const cel = await nueva();
@@ -169,20 +169,32 @@ describe('sincronización entre equipos', () => {
     const nombres = (await leerUsuarios(pc)).map((u) => u.usuario).sort();
     expect(nombres).toEqual(['ema', 'juan', 'lucia']);
     await expect(ingresarDondeSea(pc, 'ema', '4826')).resolves.toBeTruthy();
-    expect([...nube.v2.values()].some((f) => f.tabla === 'productos' && f.datos.nombre === 'Del otro')).toBe(true);
+    expect((await nube.filas()).some((f) => f.tabla === 'productos' && f.datos.nombre === 'Del otro')).toBe(true);
   });
 
-  it('empezar de cero trae todo de vuelta de la nube y la clave nueva del dueño vale en todos lados', async () => {
-    const { pc, cel, coca } = await escenario();
-    await empezarDeCero(cel);
-    expect(await cel.ventas.count()).toBe(0);
-    await crearUsuario(cel, { usuario: 'ema', nombre: 'Ema', clave: '5931', admin: true });
-    await sincronizarAhora(cel);
-    expect(await cel.ventas.count()).toBe(1);
-    expect((await cel.productos.get(coca))!.stock).toBe(9);
+  it('empezar de cero no deja hacerse dueño de la nube (jurado 10)', async () => {
+    const { pc } = await escenario();
+    // Alguien con la PC a mano: "¿No podés entrar?" → empezar de cero → crea un dueño con el mismo nombre.
+    await empezarDeCero(pc);
+    await crearUsuario(pc, { usuario: 'ema', nombre: 'Ema', clave: '1357', admin: true });
+    expect(await sincronizarAhora(pc)).toBeNull(); // ya no tiene la clave de la nube: no sube nada
+    const otro = await nueva();
+    await expect(ingresarDondeSea(otro, 'ema', '1357')).rejects.toThrow();
+    await expect(ingresarDondeSea(otro, 'ema', '4826')).resolves.toBeTruthy();
+    expect(await otro.ventas.count()).toBe(1);
+  });
+
+  it('el dueño que se olvidó la clave la cambia con la clave de la nube y vale en todos lados', async () => {
+    const { pc, cel } = await escenario();
+    const claveNube = await leerAjuste<string>(pc, 'nube.clave', '');
+    await expect(cambiarClaveConLaNube(pc, 'otra', 'ema', '5931')).rejects.toThrow(/no es esa/);
+    await expect(cambiarClaveConLaNube(pc, claveNube, 'juan', '5931')).rejects.toThrow(/no es dueño/);
+    await cambiarClaveConLaNube(pc, claveNube, 'ema', '5931');
     await sincronizarAhora(pc);
-    await expect(ingresarDondeSea(pc, 'ema', '5931')).resolves.toBeTruthy();
-    expect((await leerUsuarios(pc)).map((u) => u.usuario).sort()).toEqual(['ema', 'juan']);
+    await sincronizarAhora(cel);
+    await expect(ingresarDondeSea(cel, 'ema', '5931')).resolves.toBeTruthy();
+    const otro = await nueva();
+    await expect(ingresarDondeSea(otro, 'ema', '5931')).resolves.toBeTruthy();
   });
 
   it('si se corta la respuesta de la nube, el reintento no descuenta el stock dos veces', async () => {
@@ -203,7 +215,7 @@ describe('sincronización entre equipos', () => {
     await sincronizarAhora(pc);
     await sincronizarAhora(cel);
     // 10 − 1 − 3 − 1 = 5 en la nube, la PC y el celular.
-    expect([...nube.v2.values()].find((f) => f.tabla === 'productos')!.datos.stock).toBe(5);
+    expect((await nube.filas()).find((f) => f.tabla === 'productos')!.datos.stock).toBe(5);
     expect((await pc.productos.get(coca))!.stock).toBe(5);
     expect((await cel.productos.get(coca))!.stock).toBe(5);
   });
@@ -241,7 +253,7 @@ describe('sincronización entre equipos', () => {
     await sincronizarAhora(pc);
     expect(await vieja.ventas.count()).toBe(2);
     expect(await pc.ventas.count()).toBe(2);
-    expect([...nube.v2.values()].filter((f) => f.tabla === 'ventas' && !f.borrado)).toHaveLength(2);
+    expect((await nube.filas()).filter((f) => f.tabla === 'ventas' && !f.borrado)).toHaveLength(2);
     // La venta mudada sigue apuntando a su caja (también mudada), no a la de la PC.
     const mia = (await vieja.ventas.toArray()).find((v) => v.items[0]!.cantidad === 2)!;
     expect(mia.id).toBeGreaterThanOrEqual(RANGO);
