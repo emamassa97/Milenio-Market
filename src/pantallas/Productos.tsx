@@ -1,10 +1,11 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { BotonAyuda } from '../ui/Ayuda';
 import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/csv';
+import { alcanzaPara, costoDeComponentes, describirComponentes, esCombo } from '../dominio/combos';
 import { formatPesos } from '../dominio/dinero';
 import { cantidadDeTexto, codigoEscaneado, normalizarTexto as normalizar, mapaPorCodigo } from '../dominio/entrada';
 import { aplicarAumento, margen, precioParaMargen, type Redondeo } from '../dominio/precios';
-import type { Producto } from '../dominio/tipos';
+import type { Componente, Producto } from '../dominio/tipos';
 import { diasParaVencer } from '../dominio/reportes';
 import { db } from '../datos/db';
 import {
@@ -29,7 +30,7 @@ import { pitido, useBajando, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 
-type Filtro = 'todos' | 'reponer' | 'vencen' | 'promos' | 'rapidos' | 'sinCodigo' | 'sinCosto';
+type Filtro = 'todos' | 'reponer' | 'vencen' | 'promos' | 'rapidos' | 'sinCodigo' | 'sinCosto' | 'combos';
 
 const FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'todos', nombre: 'Todos' },
@@ -42,6 +43,7 @@ const MAS_FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'rapidos', nombre: 'Rápidos' },
   { id: 'sinCodigo', nombre: 'Sin código' },
   { id: 'sinCosto', nombre: 'Sin costo' },
+  { id: 'combos', nombre: 'Combos' },
 ];
 
 const necesitaReponer = (p: Producto) => p.stockMinimo > 0 && p.stock <= p.stockMinimo;
@@ -100,6 +102,7 @@ export function PantallaProductos() {
     () => productos.map((p) => ({ p, texto: normalizar(`${p.nombre} ${p.codigo} ${p.categoria}`) })).sort((a, b) => a.p.nombre.localeCompare(b.p.nombre)),
     [productos],
   );
+  const porId = useMemo(() => new Map(productos.filter((p) => p.id !== undefined).map((p) => [p.id!, p])), [productos]);
   const qDiferida = useDeferredValue(q);
   const visibles = useMemo(() => {
     const palabras = normalizar(qDiferida.trim()).split(/\s+/).filter(Boolean);
@@ -112,6 +115,7 @@ export function PantallaProductos() {
         if (filtro === 'promos' && !p.promo) return false;
         if (filtro === 'sinCodigo' && p.codigo) return false;
         if (filtro === 'sinCosto' && p.costo > 0) return false;
+        if (filtro === 'combos' && !esCombo(p)) return false;
         return palabras.every((w) => texto.includes(w));
       })
       .map(({ p }) => p);
@@ -265,8 +269,13 @@ export function PantallaProductos() {
                       {p.categoria || 'Sin categoría'}
                       <span className="codigo"> · {p.codigo || 'sin código'}</span>
                     </small>
-                    {(p.porPeso || p.promo || p.vence) && (
+                    {(p.porPeso || p.promo || p.vence || esCombo(p)) && (
                       <span className="insignias">
+                        {esCombo(p) && (
+                          <span className="insignia insignia-combo" title="Al venderlo se descuenta el stock de lo que lleva">
+                            Combo: {describirComponentes(p.componentes!, porId)}
+                          </span>
+                        )}
                         {p.porPeso && <span className="insignia">Por kilo</span>}
                         {p.promo && (
                           <span className="insignia insignia-promo">
@@ -280,9 +289,13 @@ export function PantallaProductos() {
                   <span className="importe fila-precio">{formatPesos(p.precio)}</span>
                   <span className="importe fila-costo texto-suave">{p.costo > 0 ? formatPesos(p.costo) : '—'}</span>
                   <span className="fila-margen">{m !== null && p.costo > 0 ? `${m}%` : ''}</span>
-                  <button type="button" className={`stock ${p.stock <= 0 ? 'stock-cero' : necesitaReponer(p) ? 'stock-bajo' : ''}`} onClick={() => setModal({ tipo: 'stock', producto: p })} aria-label={`Stock de ${p.nombre}: ${p.stock}. Sumar o corregir`}>
-                    {textoStock(p)}
-                  </button>
+                  {esCombo(p) ? (
+                    <ComboAlcanza combo={p} porId={porId} onClick={() => setModal({ tipo: 'editar', producto: p })} />
+                  ) : (
+                    <button type="button" className={`stock ${p.stock <= 0 ? 'stock-cero' : necesitaReponer(p) ? 'stock-bajo' : ''}`} onClick={() => setModal({ tipo: 'stock', producto: p })} aria-label={`Stock de ${p.nombre}: ${p.stock}. Sumar o corregir`}>
+                      {textoStock(p)}
+                    </button>
+                  )}
                   <div className="fila-acciones">
                     <button type="button" className={`boton-icono ${p.rapido ? 'estrella-activa' : ''}`} onClick={() => alternarRapido(p)} aria-pressed={p.rapido} aria-label={p.rapido ? `Sacar ${p.nombre} de rápidos` : `Poner ${p.nombre} en rápidos`} title="Botón rápido en la caja">
                       <Icono nombre="estrella" tam={20} />
@@ -303,7 +316,7 @@ export function PantallaProductos() {
         </div>
       )}
 
-      {modal?.tipo === 'editar' && <EditarProducto producto={modal.producto} categorias={categorias} proveedores={proveedores} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'editar' && <EditarProducto producto={modal.producto} productos={productos} categorias={categorias} proveedores={proveedores} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'aumento' && (
         <AumentoPrecios
           productos={productos}
@@ -318,14 +331,31 @@ export function PantallaProductos() {
       )}
       {modal?.tipo === 'planilla' && <Planilla productos={productos} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'stock' && <SumarStock producto={modal.producto} onCerrar={() => setModal(null)} />}
-      {modal?.tipo === 'compra' && <IngresoMercaderia productos={productos} proveedores={proveedores} onCerrar={() => setModal(null)} />}
-      {modal?.tipo === 'pedido' && <PedidoProveedor productos={productos} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'compra' && <IngresoMercaderia productos={productos.filter((p) => !esCombo(p))} proveedores={proveedores} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'pedido' && <PedidoProveedor productos={productos.filter((p) => !esCombo(p))} onCerrar={() => setModal(null)} />}
     </div>
   );
 }
 
-function EditarProducto({ producto, categorias, proveedores, onCerrar }: { producto?: Producto; categorias: string[]; proveedores: string[]; onCerrar: () => void }) {
+function EditarProducto({
+  producto,
+  productos,
+  categorias,
+  proveedores,
+  onCerrar,
+}: {
+  producto?: Producto;
+  productos: Producto[];
+  categorias: string[];
+  proveedores: string[];
+  onCerrar: () => void;
+}) {
   const avisar = useAvisar();
+  const [componentes, setComponentes] = useState<Componente[]>(producto?.componentes ?? []);
+  const [verCombo, setVerCombo] = useState(esCombo(producto));
+  const porId = useMemo(() => new Map(productos.filter((p) => p.id !== undefined).map((p) => [p.id!, p])), [productos]);
+  const combo = componentes.length > 0;
+  const costoCombo = costoDeComponentes(componentes, porId);
   const [d, setD] = useState<DatosProducto>(
     producto
       ? {
@@ -365,8 +395,16 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
       try {
         const cant = Number(promoCant) || 0;
         const promo = cant > 1 && promoPrecio ? { cantidad: cant, precio: promoPrecio } : null;
-        const stock = Number(stockTexto.replace(',', '.')) || 0;
-        await guardarProducto(db, { ...d, stock, promo, precio: precio ?? 0, costo: costo ?? 0 }, producto?.id, producto?.stock);
+        // Un combo no lleva stock propio: lo ponen los productos que lleva.
+        const stock = combo ? (producto?.stock ?? 0) : Number(stockTexto.replace(',', '.')) || 0;
+        // Sin costo cargado, el del combo es lo que cuestan sus productos (así el reporte de ganancia da bien).
+        const costoFinal = costo ?? (combo ? costoCombo : 0);
+        await guardarProducto(
+          db,
+          { ...d, stock, promo, precio: precio ?? 0, costo: costoFinal, componentes, ...(combo ? { porPeso: false, stockMinimo: 0 } : {}) },
+          producto?.id,
+          producto?.stock,
+        );
         avisar({ texto: producto ? 'Cambios guardados.' : `"${d.nombre.trim()}" cargado.`, tipo: 'ok' });
         onCerrar();
       } catch (err) {
@@ -443,6 +481,11 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
           <CampoPesos etiqueta={d.porPeso ? 'Costo por kilo (opcional)' : 'Costo (opcional)'} valor={costo} onCambio={setCosto} />
         </div>
         {m !== null && <p className="texto-suave">Ganás {formatPesos((precio ?? 0) - (costo ?? 0))} por {d.porPeso ? 'kilo' : 'unidad'} ({m}% del precio).</p>}
+        {combo ? (
+          <p className="texto-suave combo-stock">
+            <Icono nombre="productos" tam={16} /> Es un combo: no lleva stock propio. Al venderlo se descuenta {describirComponentes(componentes, porId)}.
+          </p>
+        ) : (
         <div className="fila-campos">
           <label className="campo">
             <span className="campo-etiqueta">{d.porPeso ? 'Stock (kilos)' : 'Stock actual'}</span>
@@ -478,6 +521,7 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
             />
           </label>
         </div>
+        )}
         <div className="fila-campos">
           <label className="campo">
             <span className="campo-etiqueta">Categoría</span>
@@ -502,11 +546,24 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
           <input type="checkbox" checked={d.rapido} onChange={(e) => setD({ ...d, rapido: e.target.checked })} />
           <span>Botón rápido en la caja (para lo que más sale)</span>
         </label>
+        <Desplegable abierto={verCombo} titulo={combo ? `Combo (${componentes.length} ${componentes.length === 1 ? 'producto' : 'productos'})` : 'Es un combo (descuenta el stock de lo que lleva)'} onClick={() => setVerCombo(!verCombo)} />
+        {verCombo && (
+          <ArmarCombo
+            componentes={componentes}
+            onCambio={setComponentes}
+            productos={productos}
+            porId={porId}
+            propio={producto?.id}
+            costo={costo}
+            costoCombo={costoCombo}
+            onUsarCosto={() => setCosto(costoCombo)}
+          />
+        )}
         <Desplegable abierto={masOpciones} titulo="Venta por peso, promo y vencimiento" onClick={() => setMasOpciones(!masOpciones)} />
         {masOpciones && (
           <div className="formulario opciones-producto">
             <label className="casilla">
-              <input type="checkbox" checked={!!d.porPeso} onChange={(e) => setD({ ...d, porPeso: e.target.checked })} />
+              <input type="checkbox" checked={!!d.porPeso && !combo} disabled={combo} onChange={(e) => setD({ ...d, porPeso: e.target.checked })} />
               <span>Se vende por peso (fiambre, queso, golosinas sueltas): en la caja pide los gramos</span>
             </label>
             <div className="fila-campos">
@@ -548,6 +605,126 @@ function EditarProducto({ producto, categorias, proveedores, onCerrar }: { produ
         />
       )}
     </Modal>
+  );
+}
+
+/** En la lista: un combo muestra cuántos se pueden armar con el stock de lo que lleva. */
+function ComboAlcanza({ combo, porId, onClick }: { combo: Producto; porId: Map<number, Producto>; onClick: () => void }) {
+  const n = alcanzaPara(combo, porId) ?? 0;
+  return (
+    <button type="button" className={`stock stock-combo ${n <= 0 ? 'stock-cero' : ''}`} onClick={onClick} aria-label={`${combo.nombre}: alcanza para ${n} combos. Editar el combo`} title="Cuántos se pueden armar con lo que hay">
+      {n}
+    </button>
+  );
+}
+
+/** Qué lleva el combo: se busca cada producto y se le pone la cantidad. */
+function ArmarCombo({
+  componentes,
+  onCambio,
+  productos,
+  porId,
+  propio,
+  costo,
+  costoCombo,
+  onUsarCosto,
+}: {
+  componentes: Componente[];
+  onCambio: (c: Componente[]) => void;
+  productos: Producto[];
+  porId: Map<number, Producto>;
+  propio?: number;
+  costo: number | null;
+  costoCombo: number;
+  onUsarCosto: () => void;
+}) {
+  const [q, setQ] = useState('');
+  const opciones = useMemo(() => {
+    const palabras = normalizar(q.trim()).split(/\s+/).filter(Boolean);
+    if (palabras.length === 0) return [];
+    return productos
+      .filter((p) => p.id !== undefined && p.id !== propio && !esCombo(p) && !p.porPeso && !componentes.some((c) => c.productoId === p.id))
+      .filter((p) => palabras.every((w) => normalizar(`${p.nombre} ${p.codigo} ${p.categoria}`).includes(w)))
+      .slice(0, 6);
+  }, [q, productos, propio, componentes]);
+  const cambiar = (i: number, cantidad: number) => onCambio(componentes.map((c, j) => (j === i ? { ...c, cantidad: Math.min(99, Math.max(1, cantidad)) } : c)));
+  const sumar = (p: Producto) => {
+    onCambio([...componentes, { productoId: p.id!, cantidad: 1 }]);
+    setQ('');
+  };
+  return (
+    <div className="formulario opciones-producto armar-combo">
+      <p className="texto-suave">Cargá lo que lleva cada combo. Al venderlo se descuenta del stock cada producto, no el combo.</p>
+      {componentes.length > 0 && (
+        <ul className="combo-lista">
+          {componentes.map((c, i) => {
+            const p = porId.get(c.productoId);
+            return (
+              <li key={c.productoId}>
+                <span className="combo-nombre">
+                  <strong>{p ? p.nombre : 'Producto borrado'}</strong>
+                  {p && <small className="texto-suave">stock {p.stock}</small>}
+                </span>
+                <span className="combo-cantidad">
+                  <button type="button" className="boton boton-cuadrado" onClick={() => cambiar(i, c.cantidad - 1)} disabled={c.cantidad <= 1} aria-label={`Uno menos de ${p?.nombre ?? 'este producto'}`}>
+                    −
+                  </button>
+                  <input
+                    inputMode="numeric"
+                    value={c.cantidad}
+                    aria-label={`Cantidad de ${p?.nombre ?? 'este producto'} por combo`}
+                    onChange={(e) => cambiar(i, Number(e.target.value.replace(/\D/g, '').slice(0, 2)) || 1)}
+                  />
+                  <button type="button" className="boton boton-cuadrado" onClick={() => cambiar(i, c.cantidad + 1)} disabled={c.cantidad >= 99} aria-label={`Uno más de ${p?.nombre ?? 'este producto'}`}>
+                    +
+                  </button>
+                </span>
+                <button type="button" className="boton-icono" onClick={() => onCambio(componentes.filter((_, j) => j !== i))} aria-label={`Sacar ${p?.nombre ?? 'este producto'} del combo`} title="Sacar del combo">
+                  <Icono nombre="cerrar" tam={18} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <label className="campo">
+        <span className="campo-etiqueta">{componentes.length === 0 ? 'Agregar un producto al combo' : 'Agregar otro producto'}</span>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Buscá por nombre o pasá el código"
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            const exacto = productos.find((p) => p.codigo === q.trim() || p.codigosAlt?.includes(q.trim()));
+            const elegido = exacto && opciones.some((o) => o.id === exacto.id) ? exacto : opciones[0];
+            if (elegido) sumar(elegido);
+          }}
+        />
+      </label>
+      {opciones.length > 0 && (
+        <ul className="combo-opciones">
+          {opciones.map((p) => (
+            <li key={p.id}>
+              <button type="button" onClick={() => sumar(p)}>
+                <span>{p.nombre}</span>
+                <small className="texto-suave">stock {p.stock}</small>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {componentes.length > 0 && costoCombo > 0 && (
+        <p className="texto-suave">
+          Lo que lleva te cuesta {formatPesos(costoCombo)}.{' '}
+          {costo !== costoCombo && (
+            <button type="button" className="boton boton-chico boton-texto" onClick={onUsarCosto}>
+              Usarlo como costo del combo
+            </button>
+          )}
+        </p>
+      )}
+    </div>
   );
 }
 

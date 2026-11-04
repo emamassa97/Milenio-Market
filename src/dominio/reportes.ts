@@ -1,3 +1,4 @@
+import { esCombo, stockQueMueve } from './combos';
 import { pagosDeVenta, stockQueUsa, subtotal } from './carrito';
 import { itemsNetos, totalNeto } from './devoluciones';
 import type { MedioPago, Pesos, Producto, Venta } from './tipos';
@@ -148,7 +149,7 @@ export function masDevueltos(ventas: Venta[], desde = -Infinity, hasta = Infinit
 
 export function paraReponer(productos: Producto[]): Producto[] {
   return productos
-    .filter((p) => p.stockMinimo > 0 && p.stock <= p.stockMinimo)
+    .filter((p) => !esCombo(p) && p.stockMinimo > 0 && p.stock <= p.stockMinimo)
     .sort((a, b) => a.stock - a.stockMinimo - (b.stock - b.stockMinimo) || a.stock - b.stock);
 }
 
@@ -157,9 +158,10 @@ export function sinMovimiento(productos: Producto[], ventas: Venta[]): Producto[
   const vendidos = new Set<number>();
   for (const v of ventas) {
     if (v.anulada) continue;
-    for (const it of v.items) if (it.productoId !== null) vendidos.add(it.productoId);
+    // Lo que salió dentro de un combo también se vendió.
+    for (const it of v.items) for (const m of stockQueMueve(it)) vendidos.add(m.productoId);
   }
-  return productos.filter((p) => p.id !== undefined && p.stock > 0 && !vendidos.has(p.id));
+  return productos.filter((p) => p.id !== undefined && !esCombo(p) && p.stock > 0 && !vendidos.has(p.id));
 }
 
 /** Días que faltan para la fecha 'AAAA-MM-DD' (negativo si ya venció). */
@@ -173,7 +175,7 @@ export function diasParaVencer(vence: string, hoy = new Date()): number {
 /** Productos con stock que vencen dentro de `dias` (o ya vencieron), el más urgente primero. */
 export function porVencer(productos: Producto[], dias = 15, hoy = new Date()): (Producto & { faltan: number })[] {
   return productos
-    .filter((p) => p.vence && p.stock > 0)
+    .filter((p) => p.vence && !esCombo(p) && p.stock > 0)
     .map((p) => ({ ...p, faltan: diasParaVencer(p.vence!, hoy) }))
     .filter((p) => p.faltan <= dias)
     .sort((a, b) => a.faltan - b.faltan);

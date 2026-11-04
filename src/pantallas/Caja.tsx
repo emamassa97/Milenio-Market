@@ -25,6 +25,7 @@ import {
   repetirVenta,
   type Carrito,
 } from '../dominio/carrito';
+import { conStockDeCombos, esCombo } from '../dominio/combos';
 import { formatPesos } from '../dominio/dinero';
 import { codigoAlFinal, codigoEscaneado, gramosDeTexto, normalizarTexto as normalizar, mapaPorCodigo } from '../dominio/entrada';
 import { saldoCliente } from '../dominio/fiado';
@@ -239,7 +240,9 @@ interface Espera {
 
 function Caja() {
   const avisar = useAvisar();
-  const productos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
+  const crudos = useConsulta(() => db.productos.toArray(), [], [] as Producto[]);
+  // Un combo muestra como stock cuántos se pueden armar con lo que lleva.
+  const productos = useMemo(() => conStockDeCombos(crudos), [crudos]);
   const pedirDueño = usePedirDueño();
   const { sesion } = useSesion();
   const carritoDeAfuera = useRef<Carrito | null>(null);
@@ -1397,7 +1400,7 @@ function Caja() {
       )}
       {modal?.tipo === 'mercaderia' && (
         <IngresoMercaderia
-          productos={productos}
+          productos={crudos.filter((p) => !esCombo(p))}
           proveedores={[...new Set(productos.map((p) => p.proveedor?.trim()).filter((x): x is string => !!x))].sort()}
           soloStock={!dueño}
           onCerrar={() => {

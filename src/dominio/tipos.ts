@@ -40,8 +40,19 @@ export interface Producto {
   vence?: string | null;
   /** A quién se le compra, para armar el pedido por proveedor. */
   proveedor?: string;
+  /**
+   * Combo: al venderlo se descuenta el stock de cada producto que lo forma (ej. 1 Fernet + 2 Coca),
+   * no el del combo. Vacío o sin cargar: es un producto común.
+   */
+  componentes?: Componente[] | null;
   creado: number;
   actualizado: number;
+}
+
+/** Un producto que forma parte de un combo, y cuántas unidades lleva cada combo. */
+export interface Componente {
+  productoId: number;
+  cantidad: number;
 }
 
 export interface Promo {
@@ -65,6 +76,8 @@ export interface ItemVenta {
   /** Venta por peso: cuántos gramos. El precio unitario ya es el de esos gramos. */
   gramos?: number;
   promo?: Promo | null;
+  /** Combo: lo que llevaba cada unidad al venderse. Anular o devolver repone justo eso, aunque después cambie el combo. */
+  componentes?: Componente[];
 }
 
 /** Parte de una venta que volvió: el cliente devolvió o cambió algo ya cobrado. */

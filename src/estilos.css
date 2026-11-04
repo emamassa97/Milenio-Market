@@ -1367,3 +1367,19 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
 .instalar-listo svg { flex: none; margin-top: 2px; }
 .aviso-instalar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .aviso-instalar .instalar-compacto { flex: 1 1 420px; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+
+/* ---------- Combos: un producto que descuenta el stock de lo que lleva ---------- */
+.insignia-combo { background: var(--rojo-suave); color: var(--rojo, #c40511); white-space: normal; }
+.stock-combo { border-style: dashed; }
+.combo-stock { display: flex; align-items: flex-start; gap: 8px; margin: 0; }
+.combo-stock svg { flex: none; margin-top: 3px; }
+.combo-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.combo-lista li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); padding: 6px 6px 6px 12px; }
+.combo-nombre { flex: 1 1 150px; min-width: 0; display: flex; flex-direction: column; }
+.combo-nombre strong { overflow-wrap: anywhere; }
+.combo-cantidad { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
+.combo-cantidad .boton-cuadrado { width: 44px; min-height: 44px; font-size: 1.2rem; }
+.combo-cantidad input { width: 52px; min-height: 44px; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
+.combo-opciones { list-style: none; margin: -4px 0 0; padding: 6px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); }
+.combo-opciones button { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: left; background: none; border: none; padding: 8px 10px; border-radius: var(--radio); min-height: 44px; }
+@media (hover: hover) { .combo-opciones button:hover { background: var(--gris); } }

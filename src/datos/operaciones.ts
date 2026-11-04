@@ -1,5 +1,6 @@
 import { resumirTurno, totalConteo } from '../dominio/caja';
-import { CANTIDAD_MAXIMA, COMPRA_MAXIMA, RENGLON_MAXIMO, stockQueUsa, subtotal, VUELTO_MAXIMO } from '../dominio/carrito';
+import { CANTIDAD_MAXIMA, COMPRA_MAXIMA, RENGLON_MAXIMO, subtotal, VUELTO_MAXIMO } from '../dominio/carrito';
+import { COMPONENTE_MAXIMO, esCombo, stockQueMueve } from '../dominio/combos';
 import { formatPesos } from '../dominio/dinero';
 import type { FilaImportada } from '../dominio/csv';
 import { cantidadDevuelta, describirItems, detalleDevolucion, efectivoDisponible, fiadoDisponible, montoDevolucion, stockQueVuelve, type RenglonDevuelto } from '../dominio/devoluciones';
@@ -205,6 +206,20 @@ export interface DatosVenta {
   idCarrito?: string;
 }
 
+/** Suma (signo 1) o resta (-1) stock; lo del mismo producto se junta en un solo cambio. */
+async function moverStock(db: BaseKiosco, movimientos: { productoId: number; cantidad: number }[], signo: 1 | -1): Promise<void> {
+  const porProducto = new Map<number, number>();
+  for (const m of movimientos) porProducto.set(m.productoId, (porProducto.get(m.productoId) ?? 0) + m.cantidad);
+  for (const [id, cantidad] of porProducto) {
+    await db.productos
+      .where('id')
+      .equals(id)
+      .modify((p) => {
+        p.stock = redondearStock(p.stock + signo * cantidad);
+      });
+  }
+}
+
 /**
  * Guarda la venta y descuenta el stock en un solo paso: o se hace todo o
  * no se hace nada. El stock puede quedar negativo (pasa cuando el conteo
@@ -280,16 +295,16 @@ export async function registrarVenta(db: BaseKiosco, datos: DatosVenta, usuario?
         ...(pagos ? { pagos } : {}),
         ...quien('usuario', usuario),
       };
+      // Un combo guarda lo que lleva en este momento: anular o devolver repone eso aunque después se cambie el combo.
+      venta.items = await Promise.all(
+        items.map(async (it) => {
+          if (it.productoId === null) return it;
+          const p = await db.productos.get(it.productoId);
+          return p && esCombo(p) ? { ...it, componentes: p.componentes!.map((c) => ({ productoId: c.productoId, cantidad: c.cantidad })) } : it;
+        }),
+      );
       venta.id = await db.ventas.add(venta);
-      for (const it of items) {
-        if (it.productoId === null) continue;
-        await db.productos
-          .where('id')
-          .equals(it.productoId)
-          .modify((p) => {
-            p.stock = redondearStock(p.stock - stockQueUsa(it));
-          });
-      }
+      await moverStock(db, venta.items.flatMap((it) => stockQueMueve(it)), -1);
       if (clienteId !== null) {
         await db.movimientosFiado.add({
           clienteId,
@@ -323,15 +338,7 @@ export async function anularVenta(db: BaseKiosco, ventaId: number, usuario?: str
       throw new ErrorKiosco('Sólo se pueden anular ventas de la caja abierta. Para una venta de otro día, usá "Devolver".');
     }
     await db.ventas.update(ventaId, { anulada: true, anuladaFecha: ahora(), ...quien('anuladaPor', usuario) });
-    for (const it of venta.items) {
-      if (it.productoId === null) continue;
-      await db.productos
-        .where('id')
-        .equals(it.productoId)
-        .modify((p) => {
-          p.stock = redondearStock(p.stock + stockQueUsa(it));
-        });
-    }
+    await moverStock(db, venta.items.flatMap((it) => stockQueMueve(it)), 1);
     await db.movimientosFiado
       .where('ventaId')
       .equals(ventaId)
@@ -409,14 +416,7 @@ export async function devolverProductos(
     await db.ventas.update(ventaId, { devoluciones: [...(venta.devoluciones ?? []), devolucion] });
     // Para el panel del día: las devoluciones se cuentan por el día en que se hicieron, aunque la venta sea vieja.
     await db.eventos.add({ fecha: devolucion.fecha, tipo: 'devolucion', turnoId: turno.id!, monto, detalle, ventaId, ...quien('usuario', usuario) });
-    for (const s of stockQueVuelve(venta, pedidos)) {
-      await db.productos
-        .where('id')
-        .equals(s.productoId)
-        .modify((p) => {
-          p.stock = redondearStock(p.stock + s.cantidad);
-        });
-    }
+    await moverStock(db, stockQueVuelve(venta, pedidos), 1);
     if (monto > 0 && medio === 'efectivo') {
       await db.movimientosCaja.add({
         turnoId: turno.id!,
@@ -494,6 +494,29 @@ function validarProducto(p: DatosProducto) {
   }
 }
 
+/** Un combo lleva productos comunes que existen, en cantidades enteras, y no se vende por peso. */
+async function validarComponentes(db: BaseKiosco, p: DatosProducto, id?: number): Promise<void> {
+  const lista = p.componentes ?? [];
+  if (lista.length === 0) return;
+  if (p.porPeso) throw new ErrorKiosco('Un combo no se puede vender por peso.');
+  if (lista.length > 20) throw new ErrorKiosco('Un combo puede llevar hasta 20 productos distintos.');
+  for (const c of lista) {
+    if (!Number.isInteger(c.cantidad) || c.cantidad < 1 || c.cantidad > COMPONENTE_MAXIMO) {
+      throw new ErrorKiosco(`La cantidad de cada producto del combo va de 1 a ${COMPONENTE_MAXIMO}.`);
+    }
+    if (id !== undefined && c.productoId === id) throw new ErrorKiosco('El combo no puede llevarse a sí mismo.');
+    const parte = await db.productos.get(c.productoId);
+    if (!parte) throw new ErrorKiosco('Uno de los productos del combo ya no existe: sacalo y volvé a elegirlo.');
+    if (esCombo(parte)) throw new ErrorKiosco(`"${parte.nombre}" ya es un combo: armalo con los productos sueltos.`);
+    if (parte.porPeso) throw new ErrorKiosco(`"${parte.nombre}" se vende por peso: no puede ir en un combo.`);
+  }
+  // Los combos no se arman con combos: si este producto ya va dentro de otro combo, no puede pasar a ser uno.
+  if (id !== undefined) {
+    const dentro = await db.productos.filter((x) => x.id !== id && !!x.componentes?.some((c) => c.productoId === id)).first();
+    if (dentro) throw new ErrorKiosco(`Este producto va dentro del combo "${dentro.nombre}": no puede ser un combo también.`);
+  }
+}
+
 /** Ningún kiosco tiene cien mil unidades de algo: más que esto es un código leído en el campo equivocado. */
 export const STOCK_MAXIMO = 99_999;
 
@@ -541,8 +564,12 @@ export async function guardarProducto(
   id?: number,
   stockOriginal?: number,
 ): Promise<number> {
+  // Lo mismo dos veces en el combo se junta en un renglón.
+  const componentes = new Map<number, number>();
+  for (const c of datos.componentes ?? []) componentes.set(c.productoId, (componentes.get(c.productoId) ?? 0) + c.cantidad);
   const limpio: DatosProducto = {
     ...datos,
+    componentes: componentes.size > 0 ? [...componentes].map(([productoId, cantidad]) => ({ productoId, cantidad })) : undefined,
     codigo: datos.codigo.trim(),
     nombre: datos.nombre.trim().replace(/\s+/g, ' '),
     categoria: datos.categoria.trim(),
@@ -552,6 +579,7 @@ export async function guardarProducto(
   };
   validarProducto(limpio);
   return db.transaction('rw', db.productos, async () => {
+    await validarComponentes(db, limpio, id);
     if (limpio.codigo) {
       const otro = await buscarPorCodigo(db, limpio.codigo);
       if (otro && otro.id !== id) throw new ErrorKiosco(`El código ${limpio.codigo} ya es de "${otro.nombre}".`);
