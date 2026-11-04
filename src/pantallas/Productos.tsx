@@ -639,6 +639,7 @@ function ArmarCombo({
   onUsarCosto: () => void;
 }) {
   const [q, setQ] = useState('');
+  const buscar = useRef<HTMLInputElement>(null);
   const opciones = useMemo(() => {
     const palabras = normalizar(q.trim()).split(/\s+/).filter(Boolean);
     if (palabras.length === 0) return [];
@@ -651,6 +652,8 @@ function ArmarCombo({
   const sumar = (p: Producto) => {
     onCambio([...componentes, { productoId: p.id!, cantidad: 1 }]);
     setQ('');
+    // Sigue en el buscador: se carga el próximo producto sin volver a tocar el campo.
+    buscar.current?.focus();
   };
   return (
     <div className="formulario opciones-producto armar-combo">
@@ -690,6 +693,7 @@ function ArmarCombo({
       <label className="campo">
         <span className="campo-etiqueta">{componentes.length === 0 ? 'Agregar un producto al combo' : 'Agregar otro producto'}</span>
         <input
+          ref={buscar}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Buscá por nombre o pasá el código"
