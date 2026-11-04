@@ -284,6 +284,24 @@ export const TEMAS_AYUDA: TemaAyuda[] = [
     palabras: 'producto nuevo cargar alta articulo precio costo stock minimo boton rapido peso promo',
   },
   {
+    id: 'combo',
+    titulo: 'Armar un combo (Fernet + Coca)',
+    pantallas: ['productos', 'caja'],
+    soloDueño: true,
+    resumen: 'Al vender el combo se descuenta del stock cada cosa que lleva.',
+    pasos: [
+      'En Productos abrí el combo (o cargalo nuevo con su nombre y su precio).',
+      'Abrí "Es un combo" y buscá cada producto que lleva: por ejemplo Fernet y Coca-Cola.',
+      'Con − y + poné cuántas unidades de cada uno lleva un combo, y tocá Guardar.',
+    ],
+    consejos: [
+      'El combo no tiene stock propio: en la lista ves cuántos se pueden armar con lo que hay.',
+      'Si anulás o te devuelven un combo, vuelve al stock lo que llevaba cuando se vendió.',
+      'Sin costo cargado, el costo del combo es lo que cuestan sus productos.',
+    ],
+    palabras: 'combo promo pack fernet coca gaseosa componentes descontar stock armar kit',
+  },
+  {
     id: 'planilla',
     titulo: 'Cargar muchos productos de una vez',
     pantallas: ['productos'],

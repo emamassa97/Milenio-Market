@@ -1,4 +1,5 @@
-import { pagosDeVenta, stockQueUsa, subtotal } from './carrito';
+import { pagosDeVenta, subtotal } from './carrito';
+import { stockQueMueve } from './combos';
 import { formatPesos } from './dinero';
 import { nombreMedio, type ItemVenta, type Pago, type Pesos, type Venta } from './tipos';
 
@@ -93,8 +94,8 @@ export function stockQueVuelve(venta: Pick<Venta, 'items'>, renglones: RenglonDe
   const salida: { productoId: number; cantidad: number }[] = [];
   for (const r of renglones) {
     const it = venta.items[r.indice];
-    if (!it || it.productoId === null || r.cantidad <= 0) continue;
-    salida.push({ productoId: it.productoId, cantidad: stockQueUsa({ ...it, cantidad: r.cantidad }) });
+    if (!it) continue;
+    salida.push(...stockQueMueve(it, r.cantidad));
   }
   return salida;
 }
