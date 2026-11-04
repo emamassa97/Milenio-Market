@@ -595,6 +595,23 @@ export async function aumentoMasivo(
   });
 }
 
+/**
+ * Pone la categoría a varios productos de una vez. Sólo a los que siguen sin categoría:
+ * si alguien le puso una mientras tanto (en este u otro equipo), esa queda.
+ */
+export async function asignarCategorias(db: BaseKiosco, cambios: { id: number; categoria: string }[]): Promise<number> {
+  const porId = new Map(cambios.filter((c) => c.categoria.trim()).map((c) => [c.id, c.categoria.trim()]));
+  if (porId.size === 0) return 0;
+  return db.transaction('rw', db.productos, async () => {
+    return db.productos
+      .filter((p) => p.id !== undefined && porId.has(p.id) && !p.categoria?.trim())
+      .modify((p) => {
+        p.categoria = porId.get(p.id!)!;
+        p.actualizado = ahora();
+      });
+  });
+}
+
 function mismoNombre(a: string, b: string): boolean {
   const n = (t: string) => t.trim().replace(/\s+/g, ' ').toLowerCase();
   return n(a) === n(b);

@@ -6,9 +6,11 @@ import { cantidadDeTexto, codigoEscaneado, normalizarTexto as normalizar, mapaPo
 import { aplicarAumento, margen, precioParaMargen, type Redondeo } from '../dominio/precios';
 import type { Producto } from '../dominio/tipos';
 import { diasParaVencer } from '../dominio/reportes';
+import { sugerirCategoria } from '../dominio/categorias';
 import { db } from '../datos/db';
 import {
   ajustarStock,
+  asignarCategorias,
   aumentoMasivo,
   borrarProducto,
   buscarPorCodigo,
@@ -29,7 +31,7 @@ import { pitido, useBajando, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 
-type Filtro = 'todos' | 'reponer' | 'vencen' | 'promos' | 'rapidos' | 'sinCodigo' | 'sinCosto';
+type Filtro = 'todos' | 'reponer' | 'vencen' | 'promos' | 'rapidos' | 'sinCodigo' | 'sinCosto' | 'sinCategoria';
 
 const FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'todos', nombre: 'Todos' },
@@ -42,6 +44,7 @@ const MAS_FILTROS: { id: Filtro; nombre: string }[] = [
   { id: 'rapidos', nombre: 'Rápidos' },
   { id: 'sinCodigo', nombre: 'Sin código' },
   { id: 'sinCosto', nombre: 'Sin costo' },
+  { id: 'sinCategoria', nombre: 'Sin categoría' },
 ];
 
 const necesitaReponer = (p: Producto) => p.stockMinimo > 0 && p.stock <= p.stockMinimo;
@@ -81,6 +84,7 @@ export function PantallaProductos() {
     | { tipo: 'stock'; producto: Producto }
     | { tipo: 'pedido' }
     | { tipo: 'compra' }
+    | { tipo: 'categorias' }
   >(null);
   const [menuAcciones, setMenuAcciones] = useState(false);
   const bajando = useBajando();
@@ -112,6 +116,7 @@ export function PantallaProductos() {
         if (filtro === 'promos' && !p.promo) return false;
         if (filtro === 'sinCodigo' && p.codigo) return false;
         if (filtro === 'sinCosto' && p.costo > 0) return false;
+        if (filtro === 'sinCategoria' && p.categoria?.trim()) return false;
         return palabras.every((w) => texto.includes(w));
       })
       .map(({ p }) => p);
@@ -120,6 +125,8 @@ export function PantallaProductos() {
   useEffect(() => setTope(POR_PAGINA), [qDiferida, filtro, categoria]);
 
   const cuantosReponer = productos.filter(necesitaReponer).length;
+  const dueño = useEsDueño();
+  const sinCategoria = useMemo(() => productos.filter((p) => !p.categoria?.trim()), [productos]);
 
   const alternarRapido = async (p: Producto) => {
     try {
@@ -137,6 +144,8 @@ export function PantallaProductos() {
     { id: 'aumento', texto: 'Aumentar precios', icono: 'porcentaje', deshabilitado: productos.length === 0 },
     { id: 'lista', texto: 'Lista de precios', icono: 'impresora', deshabilitado: productos.length === 0 },
     { id: 'planilla', texto: 'Planilla Excel', icono: 'subir', deshabilitado: false },
+    // Cambiar la categoría de lo que ya existe es cosa del dueño (la nube no se lo acepta al empleado).
+    ...(dueño && sinCategoria.length > 0 ? [{ id: 'categorias', texto: 'Poner categorías', icono: 'etiquetas', deshabilitado: false } as const] : []),
   ] as const;
 
   return (
@@ -320,6 +329,7 @@ export function PantallaProductos() {
       {modal?.tipo === 'stock' && <SumarStock producto={modal.producto} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'compra' && <IngresoMercaderia productos={productos} proveedores={proveedores} onCerrar={() => setModal(null)} />}
       {modal?.tipo === 'pedido' && <PedidoProveedor productos={productos} onCerrar={() => setModal(null)} />}
+      {modal?.tipo === 'categorias' && <PonerCategorias sinCategoria={sinCategoria} categorias={categorias} onCerrar={() => setModal(null)} />}
     </div>
   );
 }
@@ -694,6 +704,93 @@ function AumentoPrecios({
         {!valido && <p className="texto-suave texto-centrado">Poné el porcentaje para ver cómo quedan los precios.</p>}
         <button className="boton boton-primario boton-grande" type="submit" disabled={!valido || elegidos.length === 0 || aplicando}>
           {valido ? `${pct > 0 ? 'Aumentar' : 'Bajar'} ${Math.abs(pct)}% a ${elegidos.length} productos` : 'Aplicar a los precios'}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Categorías para los productos que no tienen: se sugieren por el nombre, el dueño las revisa
+ * (puede cambiar cualquiera o dejarla sin categoría) y se guardan todas juntas.
+ */
+function PonerCategorias({ sinCategoria, categorias, onCerrar }: { sinCategoria: Producto[]; categorias: string[]; onCerrar: () => void }) {
+  const avisar = useAvisar();
+  const [elegidas, setElegidas] = useState<Map<number, string>>(
+    () => new Map(sinCategoria.map((p) => [p.id!, sugerirCategoria(p.nombre, categorias, p.proveedor) ?? ''])),
+  );
+  const [guardando, setGuardando] = useState(false);
+  // Las opciones: las del kiosco y las nuevas que se sugieren, en orden alfabético.
+  const opciones = useMemo(
+    () => [...new Set([...categorias, ...[...elegidas.values()].filter(Boolean)])].sort((a, b) => a.localeCompare(b)),
+    // Sólo al abrir: si no, al dejar una sin categoría su opción desaparece de la lista.
+    [],
+  );
+  const grupos = useMemo(() => {
+    const g = new Map<string, Producto[]>();
+    const inicial = new Map(sinCategoria.map((p) => [p.id!, sugerirCategoria(p.nombre, categorias, p.proveedor) ?? '']));
+    for (const p of [...sinCategoria].sort((a, b) => a.nombre.localeCompare(b.nombre))) {
+      const c = inicial.get(p.id!) ?? '';
+      g.set(c, [...(g.get(c) ?? []), p]);
+    }
+    // Las que no se pudieron adivinar van al final.
+    return [...g.entries()].sort(([a], [b]) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)));
+  }, [sinCategoria, categorias]);
+  const conCategoria = [...elegidas.values()].filter(Boolean).length;
+  const nuevas = opciones.filter((c) => !categorias.includes(c) && [...elegidas.values()].includes(c));
+
+  return (
+    <Modal titulo="Poner categorías" onCerrar={onCerrar} ancho="ancho">
+      <form
+        className="formulario"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (guardando || conCategoria === 0) return;
+          setGuardando(true);
+          try {
+            const n = await asignarCategorias(db, [...elegidas.entries()].map(([id, categoria]) => ({ id, categoria })));
+            avisar({ texto: `Listo: ${n} productos con categoría.`, tipo: 'ok' });
+            onCerrar();
+          } catch (err) {
+            avisar({ texto: errorATexto(err), tipo: 'error' });
+            setGuardando(false);
+          }
+        }}
+      >
+        <p className="texto-suave">
+          {sinCategoria.length} productos no tienen categoría. Les puse una según el nombre
+          {nuevas.length > 0 ? ` (nuevas: ${nuevas.join(', ')})` : ''}. Revisá y cambiá la que no te guste antes de guardar.
+        </p>
+        <div className="poner-categorias">
+          {grupos.map(([grupo, lista]) => (
+            <section key={grupo || '-'}>
+              <p className="titulo-chico">
+                {grupo || 'No supe cuál ponerles'} ({lista.length})
+              </p>
+              <ul>
+                {lista.map((p) => (
+                  <li key={p.id}>
+                    <span className="poner-categorias-nombre">{p.nombre}</span>
+                    <select
+                      value={elegidas.get(p.id!) ?? ''}
+                      aria-label={`Categoría de ${p.nombre}`}
+                      onChange={(e) => setElegidas((m) => new Map(m).set(p.id!, e.target.value))}
+                    >
+                      <option value="">Sin categoría</option>
+                      {opciones.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+        <button className="boton boton-primario boton-grande" type="submit" disabled={guardando || conCategoria === 0}>
+          {conCategoria === 0 ? 'Elegí al menos una categoría' : `Guardar la categoría de ${conCategoria} productos`}
         </button>
       </form>
     </Modal>

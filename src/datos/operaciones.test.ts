@@ -247,3 +247,21 @@ describe('quién hizo qué', () => {
     expect('usuario' in (await db.movimientosCaja.get(movId))!).toBe(false);
   });
 });
+
+describe('asignarCategorias', () => {
+  it('pone la categoría sólo a los que siguen sin categoría', async () => {
+    const { asignarCategorias, guardarProducto: guardar } = await import('./operaciones');
+    const { BaseKiosco } = await import('./db');
+    const base = new BaseKiosco(`cat-${Math.random()}`);
+    const a = await guardar(base, { codigo: '', nombre: 'Alfajor', precio: 1, costo: 0, stock: 0, stockMinimo: 0, categoria: '', rapido: false });
+    const b = await guardar(base, { codigo: '', nombre: 'Coca', precio: 1, costo: 0, stock: 0, stockMinimo: 0, categoria: 'Gaseosas', rapido: false });
+    const n = await asignarCategorias(base, [
+      { id: a, categoria: 'Golosinas' },
+      { id: b, categoria: 'Bebidas' },
+    ]);
+    expect(n).toBe(1);
+    expect((await base.productos.get(a))?.categoria).toBe('Golosinas');
+    expect((await base.productos.get(b))?.categoria).toBe('Gaseosas');
+    base.close();
+  });
+});

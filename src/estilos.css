@@ -1367,3 +1367,11 @@ textarea { border: 1px solid var(--borde-fuerte); border-radius: var(--radio); p
 .instalar-listo svg { flex: none; margin-top: 2px; }
 .aviso-instalar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .aviso-instalar .instalar-compacto { flex: 1 1 420px; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+
+/* Poner categorías: una lista por categoría sugerida, con el selector a la derecha. */
+.poner-categorias { display: flex; flex-direction: column; gap: 14px; max-height: min(58vh, 560px); overflow-y: auto; padding-right: 4px; }
+.poner-categorias ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.poner-categorias li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--borde); }
+.poner-categorias-nombre { min-width: 0; overflow-wrap: anywhere; }
+.poner-categorias select { flex: 0 0 auto; width: 230px; min-height: 44px; }
+@media (max-width: 560px) { .poner-categorias select { width: 175px; } }
