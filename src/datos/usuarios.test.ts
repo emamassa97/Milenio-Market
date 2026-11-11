@@ -34,7 +34,11 @@ describe('usuarios', () => {
     expect((await ingresar(db, 'ema', '4826'))?.nombre).toBe('Emanuel');
     expect(await ingresar(db, 'ema', '9999')).toBeNull();
     expect(await ingresar(db, 'otro', '4826')).toBeNull();
-    expect(JSON.stringify(await leerUsuarios(db))).not.toContain('4826');
+    // La sal y el hash son hexadecimales al azar: pueden traer "4826" de casualidad, así que se miran aparte.
+    const guardados = await leerUsuarios(db);
+    expect(JSON.stringify(guardados.map(({ sal: _s, hash: _h, ...resto }) => resto))).not.toContain('4826');
+    expect(guardados[0]?.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(guardados[0]?.sal).toMatch(/^[0-9a-f]{32}$/);
   });
   it('valida usuario, clave y duplicados', async () => {
     await expect(crearUsuario(db, { usuario: 'con espacio', nombre: '', clave: '4826', admin: true })).rejects.toThrow();

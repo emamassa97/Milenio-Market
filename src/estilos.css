@@ -536,6 +536,9 @@ body:has(.ingreso) .avisos { left: auto; right: 24px; }
 .historial-fila .desplegable-indicador { flex: none; font-size: 0.85rem; }
 .historial-fila .desplegable-indicador svg { transition: transform 0.15s; }
 .historial-abierto .historial-fila .desplegable-indicador svg { transform: rotate(180deg); }
+.historial-montos { display: flex; flex-direction: column; align-items: flex-end; flex: none; line-height: 1.25; }
+.historial-montos small { font-size: 0.8rem; }
+.historial-resumen { margin: 4px 0 8px; padding: 10px 12px; background: var(--gris); border-radius: var(--radio); }
 .historial-abierto .ventas-turno { margin: 0 0 12px; padding-left: 12px; border-left: 3px solid var(--borde); }
 .movimiento-fiado-texto { display: flex; flex-direction: column; min-width: 0; }
 .movimiento-fiado-monto { display: flex; align-items: center; gap: 8px; flex: none; }

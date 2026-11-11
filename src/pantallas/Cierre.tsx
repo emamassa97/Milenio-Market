@@ -55,6 +55,16 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
     [] as Turno[],
   );
 
+  // Lo vendido en cada cierre anterior, para verlo de un vistazo en la lista (sólo el dueño).
+  const vendidos = useConsulta(
+    async () => {
+      const total: Record<number, number> = {};
+      for (const t of historial) total[t.id!] = (await resumenDeTurno(db, t)).resumen.vendidoNeto;
+      return total;
+    },
+    [historial],
+    {} as Record<number, number>,
+  );
   const [resultado, setResultado] = useState<Resultado | null>(null);
   const [abierto, setAbierto] = useState<number | null>(null);
   const dueño = useEsDueño();
@@ -87,8 +97,11 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
                       {t.nota && <small className="texto-suave"> · {t.nota}</small>}
                     </span>
                     {dueño ? (
-                      <span className={`importe ${dif === null ? 'texto-suave' : dif < 0 ? 'texto-alerta' : dif > 0 ? 'texto-aviso' : ''}`}>
-                        {dif === null ? 'Sin contar' : dif === 0 ? 'Justo' : dif < 0 ? `Faltaron ${formatPesos(-dif)}` : `Sobraron ${formatPesos(dif)}`}
+                      <span className="historial-montos">
+                        {vendidos[t.id!] !== undefined && <strong className="importe">{formatPesos(vendidos[t.id!]!)}</strong>}
+                        <small className={`importe ${dif === null ? 'texto-suave' : dif < 0 ? 'texto-alerta' : dif > 0 ? 'texto-aviso' : ''}`}>
+                          {dif === null ? 'Sin contar' : dif === 0 ? 'Justo' : dif < 0 ? `Faltaron ${formatPesos(-dif)}` : `Sobraron ${formatPesos(dif)}`}
+                        </small>
                       </span>
                     ) : (
                       <span className="texto-suave">Cerrada</span>
@@ -97,7 +110,7 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
                       {abierto === t.id ? 'Ocultar' : 'Ver ventas'} <Icono nombre="abrir" tam={16} />
                     </span>
                   </button>
-                  {abierto === t.id && <VentasDeCierre turnoId={t.id!} />}
+                  {abierto === t.id && <VentasDeCierre turno={t} conMontos={dueño} />}
                 </li>
               );
             })}
@@ -700,10 +713,62 @@ function VentasDelTurno({ ventas, soloDevolver = false, conFecha = false }: { ve
 }
 
 /** Las ventas de un cierre anterior: sólo para devolver o reimprimir (anular ya no se puede). */
-function VentasDeCierre({ turnoId }: { turnoId: number }) {
-  const ventas = useConsulta(() => db.ventas.where('turnoId').equals(turnoId).toArray(), [turnoId], null as Venta[] | null);
-  if (ventas === null) return <p className="texto-suave">Cargando…</p>;
-  return <VentasDelTurno ventas={ventas} soloDevolver />;
+function VentasDeCierre({ turno, conMontos }: { turno: Turno; conMontos: boolean }) {
+  const datos = useConsulta(() => resumenDeTurno(db, turno), [turno.id], null as Awaited<ReturnType<typeof resumenDeTurno>> | null);
+  if (datos === null) return <p className="texto-suave">Cargando…</p>;
+  const { ventas, resumen } = datos;
+  const fiadoCobrado = Object.values(resumen.cobrosFiado).reduce((a, b) => a + b, 0);
+  return (
+    <>
+      {conMontos && (
+        <dl className="cuentas historial-resumen">
+          {(['efectivo', 'mercadopago', 'tarjeta', 'transferencia', 'fiado'] as const)
+            .filter((m) => resumen.porMedio[m] !== 0)
+            .map((m) => (
+              <div key={m}>
+                <dt>{m === 'fiado' ? 'Fiado (a cobrar)' : nombreMedio(m)}</dt>
+                <dd className="importe">{formatPesos(resumen.porMedio[m])}</dd>
+              </div>
+            ))}
+          {resumen.devuelto > 0 && (
+            <div>
+              <dt>Devuelto</dt>
+              <dd className="importe">− {formatPesos(resumen.devuelto)}</dd>
+            </div>
+          )}
+          <div className="cuentas-total">
+            <dt>Total vendido · {resumen.cantidadVentas} {resumen.cantidadVentas === 1 ? 'venta' : 'ventas'}</dt>
+            <dd className="importe">{formatPesos(resumen.vendidoNeto)}</dd>
+          </div>
+          {fiadoCobrado > 0 && (
+            <div>
+              <dt>Fiado cobrado</dt>
+              <dd className="importe texto-positivo">{formatPesos(fiadoCobrado)}</dd>
+            </div>
+          )}
+          {resumen.retiros + resumen.gastos > 0 && (
+            <div>
+              <dt>Retiros y gastos</dt>
+              <dd className="importe">− {formatPesos(resumen.retiros + resumen.gastos)}</dd>
+            </div>
+          )}
+          <div>
+            <dt>Cambio inicial</dt>
+            <dd className="importe">{formatPesos(turno.fondoInicial)}</dd>
+          </div>
+          <div className="cuentas-total">
+            <dt>Efectivo que debería haber quedado</dt>
+            <dd className="importe">{formatPesos(turno.esperado ?? resumen.efectivoEsperado)}</dd>
+          </div>
+          <div>
+            <dt>Contado al cerrar</dt>
+            <dd className="importe">{turno.contado === null ? 'No se contó' : formatPesos(turno.contado)}</dd>
+          </div>
+        </dl>
+      )}
+      <VentasDelTurno ventas={ventas} soloDevolver />
+    </>
+  );
 }
 
 export function NuevoMovimiento({ onCerrar }: { onCerrar: () => void }) {
