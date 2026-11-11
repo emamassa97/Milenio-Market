@@ -12,7 +12,7 @@ import { anularVenta, cerrarTurno, pasarTurno, registrarMovimientoCaja, resumenD
 import { leerUsuarios, type Usuario } from '../datos/usuarios';
 import { CampoCantidad, CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, ICONO_MEDIO, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
-import { useEsDueño, usePedirDueño } from '../ui/permisos';
+import { useEsDueño, usePedirDueño, useVeCuentasDeCaja } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 import { DevolverVenta } from './Devolver';
 
@@ -57,7 +57,7 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
 
   const [resultado, setResultado] = useState<Resultado | null>(null);
   const [abierto, setAbierto] = useState<number | null>(null);
-  const dueño = useEsDueño();
+  const veCuentas = useVeCuentasDeCaja();
   if (datos === null) return null;
   return (
     <div className="pagina">
@@ -86,7 +86,7 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
                       {fechaCorta(t.apertura)} a {hora(t.cierre!)} · {t.cajero}
                       {t.nota && <small className="texto-suave"> · {t.nota}</small>}
                     </span>
-                    {dueño ? (
+                    {veCuentas ? (
                       <span className={`importe ${dif === null ? 'texto-suave' : dif < 0 ? 'texto-alerta' : dif > 0 ? 'texto-aviso' : ''}`}>
                         {dif === null ? 'Sin contar' : dif === 0 ? 'Justo' : dif < 0 ? `Faltaron ${formatPesos(-dif)}` : `Sobraron ${formatPesos(dif)}`}
                       </span>
@@ -201,8 +201,9 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
   const usuarios = useConsulta(() => leerUsuarios(db), [], [] as Usuario[]);
   const [cerrando, unaVez] = useUnaVez();
   const { sesion } = useSesion();
-  // El empleado cuenta a ciegas: si viera cuánto debería haber, podría acomodar el número.
-  const dueño = useEsDueño();
+  // El empleado cuenta a ciegas (si viera cuánto debería haber, podría acomodar el número),
+  // salvo que el dueño elija en Ajustes que vea las cuentas.
+  const veCuentas = useVeCuentasDeCaja();
   const contado = totalConteo(conteo);
   const contoAlgo = Object.values(conteo).some((v) => v > 0);
   const diferencia = contado - resumen.efectivoEsperado;
@@ -278,7 +279,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
             <h2 className="titulo-chico">Efectivo en la caja</h2>
             <dl className="cuentas">
               {/* Cierre a ciegas: el empleado no ve las cuentas (con ellas se saca lo que debería haber). */}
-              {dueño ? (
+              {veCuentas ? (
                 <>
               <div>
                 <dt>Cambio inicial</dt>
@@ -314,13 +315,13 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
               ) : (
                 <p className="texto-suave">Contá los billetes y monedas de la caja y anotalos abajo. El dueño ve si coincide con lo vendido.</p>
               )}
-              {dueño && (
+              {veCuentas && (
                 <div className="cuentas-total">
                   <dt>Debería haber</dt>
                   <dd className={`importe ${resumen.efectivoEsperado < 0 ? 'texto-alerta' : ''}`}>{formatPesos(resumen.efectivoEsperado)}</dd>
                 </div>
               )}
-              {dueño && resumen.efectivoEsperado < 0 && (
+              {veCuentas && resumen.efectivoEsperado < 0 && (
                 <p className="texto-alerta">Salió más plata de la que entró: revisá los retiros y gastos anotados, alguno puede estar de más.</p>
               )}
               {contoAlgo && (
@@ -330,7 +331,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
                 </div>
               )}
             </dl>
-            {!dueño && <p className="texto-suave">La diferencia se ve al confirmar el cierre.</p>}
+            {!veCuentas && <p className="texto-suave">La diferencia se ve al confirmar el cierre.</p>}
             {movimientos.length > 0 && (
               <ul className="movimientos">
                 {movimientos.map((m) => (
@@ -416,7 +417,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
               <span>Total contado</span>
               <strong className="importe">{formatPesos(contado)}</strong>
             </div>
-            {contoAlgo && dueño && (
+            {contoAlgo && veCuentas && (
               <div className={`diferencia ${diferencia === 0 ? 'diferencia-justa' : diferencia < 0 ? 'diferencia-falta' : 'diferencia-sobra'}`}>
                 <strong>{diferencia === 0 ? 'Da justo' : diferencia < 0 ? `Faltan ${formatPesos(-diferencia)}` : `Sobran ${formatPesos(diferencia)}`}</strong>
                 {diferencia !== 0 && <input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Motivo (opcional)" aria-label="Motivo de la diferencia" />}
@@ -437,7 +438,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
           {/* En el celular el pie de arriba no puede quedar pegado (son cinco cosas): esta barra sí, como la de cobro. */}
           <div className="cierre-pie-movil" role="status">
             <div>
-              <small>{confirmar && textoCerrar.endsWith('?') ? textoCerrar : contoAlgo && dueño ?(diferencia === 0 ? 'Da justo' : diferencia < 0 ? `Faltan ${formatPesos(-diferencia)}` : `Sobran ${formatPesos(diferencia)}`) : 'Contaste'}</small>
+              <small>{confirmar && textoCerrar.endsWith('?') ? textoCerrar : contoAlgo && veCuentas ?(diferencia === 0 ? 'Da justo' : diferencia < 0 ? `Faltan ${formatPesos(-diferencia)}` : `Sobran ${formatPesos(diferencia)}`) : 'Contaste'}</small>
               <strong className="importe">{formatPesos(contado)}</strong>
             </div>
             <button type="button" className={`boton ${confirmar ? 'boton-peligro' : 'boton-primario'}`} onClick={cerrar} disabled={cerrando}>
@@ -491,11 +492,11 @@ function PasarCaja({
 }) {
   const avisar = useAvisar();
   const { sesion, cambiar } = useSesion();
-  const dueño = useEsDueño();
+  const veCuentas = useVeCuentasDeCaja();
   const otros = usuarios.filter((u) => u.usuario !== sesion?.usuario);
   const [quien, setQuien] = useState(otros[0]?.usuario ?? '');
   // El empleado cuenta a ciegas: si no contó, el cambio de la caja nueva es lo que debería haber, pero no se le muestra.
-  const aCiegas = !dueño && contado === null;
+  const aCiegas = !veCuentas && contado === null;
   // Arranca con lo que quedó en la caja: lo contado o, sin conteo, lo que debería haber.
   const [fondo, setFondo] = useState<number | null>(Math.max(0, contado ?? esperado));
   // Con ventas sin cobrar se pide un segundo toque, igual que al cerrar.
@@ -519,7 +520,7 @@ function PasarCaja({
               const cerrado = await pasarTurno(db, conteo, nota, sesion?.usuario, elegido, arranca);
               const dif = cerrado.contado !== null && cerrado.esperado !== null ? cerrado.contado - cerrado.esperado : null;
               // La diferencia sólo se le dice al dueño: el empleado cuenta a ciegas.
-              const comoCerro = dif === null ? ' sin contar' : !dueño ? '' : dif === 0 ? ' (dio justo)' : dif > 0 ? ` (sobraron ${formatPesos(dif)})` : ` (faltaron ${formatPesos(-dif)})`;
+              const comoCerro = dif === null ? ' sin contar' : !veCuentas ? '' : dif === 0 ? ' (dio justo)' : dif > 0 ? ` (sobraron ${formatPesos(dif)})` : ` (faltaron ${formatPesos(-dif)})`;
               avisar({
                 texto: `Caja de ${turno.cajero} cerrada${comoCerro}. Abierta para ${elegido.nombre}${aCiegas ? '' : ` con ${formatPesos(arranca)}`}: que entre con su clave.`,
                 tipo: 'ok',

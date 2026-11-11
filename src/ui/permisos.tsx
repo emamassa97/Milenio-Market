@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { db } from '../datos/db';
 import { comprobarDueño } from '../datos/ingreso';
+import { leerAjuste } from '../datos/operaciones';
+import { useConsulta } from './hooks';
 import { errorATexto, Icono, Modal } from './componentes';
 import { useSesion } from './sesion';
 
@@ -10,6 +12,19 @@ import { useSesion } from './sesion';
 export function useEsDueño(): boolean {
   const { sesion } = useSesion();
   return !sesion || sesion.admin;
+}
+
+/** Ajuste del dueño: si está prendido, el empleado ve las cuentas del cierre (lo que debería haber y la diferencia). */
+export const AJUSTE_EMPLEADO_VE_CIERRE = 'cierre.empleadoVe';
+
+/**
+ * Quién ve las cuentas de la caja al cerrar. El dueño siempre; el empleado cuenta "a ciegas",
+ * salvo que el dueño haya elegido en Ajustes que también las vea.
+ */
+export function useVeCuentasDeCaja(): boolean {
+  const dueño = useEsDueño();
+  const empleadoVe = useConsulta(async () => (await leerAjuste(db, AJUSTE_EMPLEADO_VE_CIERRE, false)) === true, [], false);
+  return dueño || empleadoVe;
 }
 
 type Pedir = (motivo: string) => Promise<string | null>;

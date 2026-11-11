@@ -260,10 +260,10 @@ export const TEMAS_AYUDA: TemaAyuda[] = [
       'Revisá la diferencia contra lo que debería haber y confirmá.',
     ],
     consejos: [
-      'El empleado cuenta "a ciegas": ve la diferencia recién al confirmar. Así se cuenta de verdad.',
+      'El empleado cuenta "a ciegas": ve la diferencia recién al confirmar. Así se cuenta de verdad. Si preferís que vea los montos, el dueño lo prende en Ajustes, "Cierre de caja".',
       'Si cambia el turno, usá "Cerrar y pasarle la caja a otro": cierra y le abre la caja al que sigue.',
     ],
-    palabras: 'cierre cerrar caja contar billetes arqueo diferencia falta sobra turno',
+    palabras: 'cierre cerrar caja contar billetes arqueo diferencia falta sobra turno montos ciegas ver',
   },
   {
     id: 'producto',

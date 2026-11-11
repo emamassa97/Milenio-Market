@@ -8,6 +8,7 @@ import { guardarAjuste, leerAjuste } from '../datos/operaciones';
 import { copiarTexto, descargarArchivo, errorATexto, fechaCorta, Icono, useAvisar } from '../ui/componentes';
 import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
+import { AJUSTE_EMPLEADO_VE_CIERRE } from '../ui/permisos';
 import { htmlTicket, imprimirTicket, leerAjustesTicket, TICKET_INICIAL, type AjustesTicket } from '../ui/ticket';
 import { borrarUsuario, cambiarClave, crearUsuario, leerUsuarios } from '../datos/usuarios';
 import { pendientes, recuperarDeLaNube, sincronizarAhora, activarNube } from '../datos/nube';
@@ -92,6 +93,8 @@ export function PantallaAjustes() {
           </button>
         </div>
       </section>
+      <CierreDelEmpleado />
+
       <section className="tarjeta formulario ajustes-copia">
         <h2 className="titulo-chico">Copia de seguridad</h2>
         <p className="texto-suave">
@@ -515,6 +518,40 @@ function AjustesDelTicket() {
           }}
         />
       </div>
+    </section>
+  );
+}
+
+/** El dueño elige si el empleado ve las cuentas al cerrar la caja o cuenta a ciegas. */
+function CierreDelEmpleado() {
+  const avisar = useAvisar();
+  const empleadoVe = useConsulta(async () => (await leerAjuste(db, AJUSTE_EMPLEADO_VE_CIERRE, false)) === true, [], false);
+  return (
+    <section className="tarjeta formulario">
+      <h2 className="titulo-chico">
+        Cierre de caja <BotonAyuda tema="cerrar" que="cómo cerrar la caja" />
+      </h2>
+      <p className="texto-suave">
+        {empleadoVe
+          ? 'Los empleados ven las cuentas al cerrar: cuánto debería haber en la caja y si falta o sobra.'
+          : 'Los empleados cuentan a ciegas: anotan los billetes sin ver cuánto debería haber, y la diferencia la ven recién al confirmar. Así cuentan de verdad.'}
+      </p>
+      <label className="casilla">
+        <input
+          type="checkbox"
+          checked={empleadoVe}
+          onChange={async (e) => {
+            const ve = e.target.checked;
+            try {
+              await guardarAjuste(db, AJUSTE_EMPLEADO_VE_CIERRE, ve);
+              avisar({ texto: ve ? 'Listo: los empleados ven los montos del cierre.' : 'Listo: los empleados vuelven a contar a ciegas.', tipo: 'ok' });
+            } catch (err) {
+              avisar({ texto: errorATexto(err), tipo: 'error' });
+            }
+          }}
+        />
+        <span>Los empleados ven los montos al cerrar la caja</span>
+      </label>
     </section>
   );
 }
