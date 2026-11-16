@@ -45,8 +45,6 @@ import {
   registrarCancelacion,
   registrarVenta,
   turnoAbierto,
-  cajasDeOtrosEquipos,
-  traerCajaAEsteEquipo,
   sumarCodigo,
 } from '../datos/operaciones';
 import { AvisoEnLinea, CampoCantidad, CampoPesos, cuando, errorATexto, ICONO_MEDIO, Icono, Modal, sinCortes, useAvisar } from '../ui/componentes';
@@ -146,7 +144,6 @@ function AbrirCaja() {
   const [sugerido, setSugerido] = useState<{ monto: number; fecha: number } | null>(null);
   const [enCurso, unaVez] = useUnaVez();
   const { sesion } = useSesion();
-  const otras = useConsulta(() => cajasDeOtrosEquipos(db), [], []);
   useEffect(() => {
     if (sesion) setCajero(sesion.nombre);
     else leerAjuste(db, 'cajero', '').then((c) => setCajero(String(c)));
@@ -196,38 +193,6 @@ function AbrirCaja() {
           Abrir caja
         </button>
       </form>
-      {otras.length > 0 && (
-        <section className="tarjeta otras-cajas" aria-label="Cajas abiertas en otros equipos">
-          <h2 className="titulo-chico">Abiertas en otros equipos</h2>
-          <p className="texto-suave">Cada equipo vende en su propia caja. Si cambiaste de compu y querés seguir la misma caja acá, traela.</p>
-          <ul className="otras-cajas-lista">
-            {otras.map((t) => (
-              <li key={t.id}>
-                <span>
-                  Caja de <strong>{t.cajero}</strong>, abierta {cuando(t.apertura)} (equipo {t.equipo})
-                </span>
-                <button
-                  type="button"
-                  className="boton boton-chico"
-                  disabled={enCurso}
-                  onClick={() =>
-                    unaVez(async () => {
-                      try {
-                        await traerCajaAEsteEquipo(db, t.id!);
-                        avisar({ texto: `Seguís con la caja de ${t.cajero} en este equipo.`, tipo: 'ok' });
-                      } catch (err) {
-                        avisar({ texto: errorATexto(err), tipo: 'error' });
-                      }
-                    })
-                  }
-                >
-                  Seguir esta caja acá
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </div>
   );
 }

@@ -39,31 +39,44 @@ function quien<K extends string>(campo: K, usuario: string | undefined): Partial
 // ---------- Turnos ----------
 
 /**
- * La caja abierta de ESTE equipo. Con la nube cada equipo ve las cajas de los
- * otros, pero sólo vende en la suya (las de antes de tener número son de todos).
+ * La caja del local. Hay UNA sola caja para todo el kiosco: la PC del mostrador,
+ * el celular o cualquier otra compu venden y cierran la misma. Si por estar sin
+ * internet quedaron dos abiertas, manda la más vieja (la de siempre), igual en todos los equipos.
  */
 export async function turnoAbierto(db: BaseKiosco): Promise<Turno | undefined> {
   // Sin await antes de leer la base: dentro de un liveQuery, esperar otra promesa le hace perder el rastro.
-  const n = equipoDe(db);
-  const abiertos = await db.turnos.filter((t) => t.cierre === null && (t.equipo === undefined || t.equipo === n)).toArray();
-  return abiertos.sort((a, b) => b.apertura - a.apertura)[0];
+  const abiertos = await db.turnos.filter((t) => t.cierre === null).toArray();
+  return abiertos.sort((a, b) => a.apertura - b.apertura || (a.id ?? 0) - (b.id ?? 0))[0];
 }
 
-/** Cajas abiertas en otros equipos (para mostrarlas en el panel, sin vender en ellas). */
-export async function cajasDeOtrosEquipos(db: BaseKiosco): Promise<Turno[]> {
-  const n = equipoDe(db);
-  return db.turnos.filter((t) => t.cierre === null && t.equipo !== undefined && t.equipo !== n).toArray();
-}
-
-/** Seguir acá una caja que quedó abierta a nombre de otro equipo (por ejemplo, si se cambió de compu). */
-export async function traerCajaAEsteEquipo(db: BaseKiosco, turnoId: number): Promise<void> {
-  const n = equipoDe(db);
-  if (n === null) throw new ErrorKiosco('Este equipo todavía no está unido a la nube.');
-  await db.transaction('rw', db.turnos, db.ajustes, async () => {
-    if (await turnoAbierto(db)) throw new ErrorKiosco('Este equipo ya tiene una caja abierta.');
-    const t = await db.turnos.get(turnoId);
-    if (!t || t.cierre !== null) throw new ErrorKiosco('Esa caja ya se cerró.');
-    await db.turnos.update(turnoId, { equipo: n, reclamo: Date.now() });
+/**
+ * Cierra solas las cajas repetidas: las que se abrieron de más (en otro equipo, sin
+ * internet o antes de que hubiera una sola caja) y no tienen ventas ni movimientos.
+ * Devuelve cuántas cerró. Una repetida con ventas no se toca: aparece cuando se cierre la principal.
+ */
+export async function cerrarCajasRepetidas(db: BaseKiosco): Promise<number> {
+  return db.transaction('rw', [db.turnos, db.ventas, db.movimientosCaja, db.movimientosFiado], async () => {
+    const principal = await turnoAbierto(db);
+    if (!principal) return 0;
+    const otras = await db.turnos.filter((t) => t.cierre === null && t.id !== principal.id).toArray();
+    let cerradas = 0;
+    for (const t of otras) {
+      const id = t.id!;
+      const usada =
+        (await db.ventas.where('turnoId').equals(id).count()) > 0 ||
+        (await db.movimientosCaja.where('turnoId').equals(id).count()) > 0 ||
+        (await db.movimientosFiado.where('turnoId').equals(id).count()) > 0;
+      if (usada) continue;
+      await db.turnos.update(id, {
+        cierre: ahora(),
+        conteo: null,
+        contado: null,
+        esperado: t.fondoInicial,
+        nota: 'Caja repetida sin ventas: se cerró sola (el local tiene una sola caja).',
+      });
+      cerradas++;
+    }
+    return cerradas;
   });
 }
 
@@ -462,9 +475,8 @@ export async function registrarCancelacion(db: BaseKiosco, items: ItemVenta[], u
 
 /** Con cuánto cambio conviene abrir: lo que se contó al cerrar la última caja. */
 export async function fondoSugerido(db: BaseKiosco): Promise<{ monto: Pesos; fecha: number } | null> {
-  // La última caja cerrada de este equipo (cada equipo tiene su propio cajón).
-  const n = equipoDe(db);
-  const ultimo = (await db.turnos.orderBy('apertura').reverse().limit(30).toArray()).find((t) => t.cierre !== null && (t.equipo === undefined || t.equipo === n));
+  // La última caja cerrada del local que no sea una repetida que se cerró sola.
+  const ultimo = (await db.turnos.orderBy('apertura').reverse().limit(30).toArray()).find((t) => t.cierre !== null && !t.nota.startsWith('Caja repetida'));
   if (!ultimo) return null;
   const monto = ultimo.contado ?? ultimo.esperado;
   return monto === null || monto < 0 ? null : { monto, fecha: ultimo.cierre! };

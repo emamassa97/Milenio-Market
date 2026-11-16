@@ -438,6 +438,7 @@ export const TEMAS_AYUDA: TemaAyuda[] = [
     pasos: [
       'Abrí milenio-market.vercel.app en el otro equipo.',
       'Entrá con el mismo usuario y clave. Los productos, clientes y ventas se traen solos.',
+      'La caja es una sola para todo el local: si está abierta, en el otro equipo seguís vendiendo en la misma y la podés cerrar desde cualquiera.',
       'Abajo a la izquierda (o en "Más", en el celular) dice "Nube al día" cuando todo está subido.',
     ],
     consejos: ['En el celular, desde el menú de Chrome tocá "Instalar aplicación" y queda con su ícono, como cualquier otra.'],

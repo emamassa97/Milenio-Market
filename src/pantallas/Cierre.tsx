@@ -10,7 +10,7 @@ import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket'
 import { db } from '../datos/db';
 import { anularVenta, cerrarTurno, pasarTurno, registrarMovimientoCaja, resumenDeTurno, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
 import { leerUsuarios, type Usuario } from '../datos/usuarios';
-import { CampoCantidad, CampoPesos, copiarTexto, Desplegable, errorATexto, fechaCorta, hora, ICONO_MEDIO, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
+import { CampoCantidad, CampoPesos, copiarTexto, cuando, Desplegable, errorATexto, fechaCorta, hora, ICONO_MEDIO, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
@@ -271,7 +271,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
             Cierre de caja <BotonAyuda tema="cerrar" que="cómo cerrar la caja" />
           </h1>
           <p className="texto-suave">
-            Abierta a las {hora(turno.apertura)} por {turno.cajero} · {resumen.cantidadVentas} ventas
+            Abierta {cuando(turno.apertura)} por {turno.cajero} · {resumen.cantidadVentas} ventas
           </p>
         </div>
       </div>

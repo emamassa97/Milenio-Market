@@ -260,7 +260,7 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
       ) : (
         <>
           <p className="texto-suave">
-            Cada venta, producto y fiado se guarda también en internet y llega a todos tus equipos: la PC del mostrador, el celular, otra compu. Cada uno tiene su propia caja y todos ven las mismas ventas, el mismo stock y el mismo fiado. Sin conexión la caja sigue andando y se pone al día cuando vuelve. La primera caja se activa sola; en una compu o celular nuevo, entrá con tu usuario de siempre y se trae todo solo.
+            Cada venta, producto y fiado se guarda también en internet y llega a todos tus equipos: la PC del mostrador, el celular, otra compu. La caja es una sola para todo el local: se vende y se cierra desde cualquiera, y todos ven las mismas ventas, el mismo stock y el mismo fiado. Sin conexión la caja sigue andando y se pone al día cuando vuelve. La primera caja se activa sola; en una compu o celular nuevo, entrá con tu usuario de siempre y se trae todo solo.
           </p>
           <label className="campo">
             <span className="campo-etiqueta">Clave de la nube</span>
