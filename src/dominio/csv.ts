@@ -137,3 +137,15 @@ export function exportarCsv(filas: FilaImportada[]): string {
   );
   return '﻿' + [titulos, ...cuerpo].join('\r\n');
 }
+
+/**
+ * El texto de una planilla. Excel en Windows guarda el CSV en "ANSI" (Windows-1252), no en UTF-8:
+ * leído como UTF-8, "Código" queda "C�digo" y se pierden los códigos. Si no es UTF-8 válido, se lee como Windows-1252.
+ */
+export function textoDePlanilla(bytes: ArrayBuffer): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder('windows-1252').decode(bytes);
+  }
+}

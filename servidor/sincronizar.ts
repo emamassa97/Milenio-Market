@@ -139,6 +139,8 @@ async function usuariosDeLaNube(consulta: Consulta): Promise<UsuarioGuardado[]> 
   return Array.isArray(valor) ? (valor as UsuarioGuardado[]).filter((u) => u && typeof u.usuario === 'string' && typeof u.sal === 'string' && typeof u.hash === 'string') : [];
 }
 
+const SAL_FICTICIA = Buffer.alloc(16, 7);
+
 function claveDelUsuario(clave: string, u: UsuarioGuardado): boolean {
   if (!/^[0-9a-f]+$/.test(u.sal) || !/^[0-9a-f]{64}$/.test(u.hash)) return false;
   const calculado = pbkdf2Sync(clave, Buffer.from(u.sal, 'hex'), ITERACIONES, 32, 'sha256');
@@ -161,8 +163,11 @@ async function comprobarClave(pedido: Request, consulta: Consulta, esperada: str
   if (bloqueo.length > 0) return json({ error: `Demasiadas claves mal seguidas: probá de nuevo en ${MINUTOS_BLOQUEO} minutos.` }, 429);
   const usuarios = await usuariosDeLaNube(consulta);
   const u = usuarios.find((x) => x.usuario === usuario);
-  if (!esperada || !u || !claveDelUsuario(cuerpo.clave, u)) {
-    await consulta(
+  // Sin usuario igual se calcula la clave (contra una sal fija): así el tiempo de respuesta no dice qué usuarios existen.
+  const claveBien = u ? claveDelUsuario(cuerpo.clave, u) : (pbkdf2Sync(cuerpo.clave, SAL_FICTICIA, ITERACIONES, 32, 'sha256'), false);
+  if (!esperada || !u || !claveBien) {
+    // Un usuario que no existe no deja intentos anotados: no hay a quién bloquear y sólo llenaría la tabla.
+    if (u) await consulta(
       `insert into intentos_ingreso (usuario, fallos, hasta) values ($1, 1, null)
        on conflict (usuario) do update set
          fallos = case when intentos_ingreso.fallos + 1 >= $2 then 0 else intentos_ingreso.fallos + 1 end,
@@ -399,6 +404,8 @@ type Registro = { tabla: string; id: string; datos: Record<string, unknown> | nu
 
 /** Lo que un empleado puede cambiar de una venta que ya está en la nube: anularla (con la clave del dueño) o devolver. */
 const CAMPOS_VENTA_EMPLEADO = ['anulada', 'anuladaFecha', 'anuladaPor', 'devoluciones'];
+/** Lo que un empleado puede cambiar de la caja abierta: cerrarla. */
+const CAMPOS_CIERRE_EMPLEADO = ['cierre', 'conteo', 'contado', 'esperado', 'nota', 'usuarioCierre', 'vistas', 'absorbidos'];
 /** De un producto que ya existe, el empleado cambia el stock (como operación) y le suma códigos. */
 const CAMPOS_PRODUCTO_EMPLEADO = new Set(['codigosAlt', 'actualizado']);
 
@@ -449,7 +456,12 @@ async function reglasDeEmpleado(registros: Registro[], yo: string, consulta: Con
         }
         break;
       case 'turnos':
-        if (previa.datos.cierre === null || previa.datos.cierre === undefined) salida.push(r);
+        // De la caja abierta, el empleado sólo la cierra (conteo, nota, quién y hasta dónde vio):
+        // el fondo, el cajero o la apertura no los cambia. Una caja cerrada no la toca.
+        if (previa.datos.cierre === null || previa.datos.cierre === undefined) {
+          const cambios = Object.fromEntries(CAMPOS_CIERRE_EMPLEADO.filter((k) => k in datos).map((k) => [k, datos[k]]));
+          salida.push({ ...r, datos: { ...previa.datos, ...cambios, ...marcas } });
+        }
         break;
       case 'ajustes':
         salida.push(r);
@@ -595,10 +607,18 @@ async function sincronizarV2(pedido: Request, consulta: Consulta, rol: Rol, para
              then to_jsonb(round(((filas.datos->>'stock')::numeric + (excluded.datos->>'_dv')::numeric) * 1000) / 1000)
              else filas.datos->'stock' end)
            when filas.tabla = 'productos' and not filas.borrado then milenio_producto(filas.datos, excluded.datos)
-           -- Una caja cerrada no se reabre con una copia vieja.
-           when filas.tabla = 'turnos' and not filas.borrado and filas.datos->>'cierre' is not null and excluded.datos->>'cierre' is null
+           -- Ventas: si dos equipos devolvieron parte de la misma venta, quedan las dos devoluciones (no se pisa una con la otra).
+           when filas.tabla = 'ventas' and not filas.borrado
+             and jsonb_typeof(filas.datos->'devoluciones') = 'array' and jsonb_typeof(excluded.datos->'devoluciones') = 'array'
+           then jsonb_set(excluded.datos, '{devoluciones}', (
+             select coalesce(jsonb_agg(d order by (d->>'fecha')::numeric), '[]'::jsonb) from (
+               select distinct on (e->>'fecha', e->>'turnoId', e->>'monto', e->'items') e as d
+               from jsonb_array_elements((filas.datos->'devoluciones') || (excluded.datos->'devoluciones')) e
+             ) u))
+           -- Una caja cerrada no se reabre con una copia vieja, ni la vuelve a cerrar otro equipo: gana el primer cierre.
+           when filas.tabla = 'turnos' and not filas.borrado and filas.datos->>'cierre' is not null
            then filas.datos
-           -- Una caja abierta es del primer equipo que la tomó, salvo que otro la traiga a mano ("Seguir esta caja acá").
+           -- Una caja abierta no la reescribe otro equipo con una copia suya (sí la puede cerrar: eso entra arriba).
            when filas.tabla = 'turnos' and not filas.borrado and filas.datos->>'cierre' is null and excluded.datos->>'cierre' is null
              and filas.datos->'equipo' is not null and excluded.datos->'equipo' is not null and filas.datos->'equipo' <> excluded.datos->'equipo'
              and coalesce((excluded.datos->>'reclamo')::numeric, 0) <= coalesce((filas.datos->>'reclamo')::numeric, 0)

@@ -228,6 +228,11 @@ export function PantallaReportes() {
                 </li>
               ))}
             </ul>
+            {r.devuelto > 0 && (
+              <p className="texto-suave">
+                Es lo cobrado: menos {formatPesos(r.devuelto)} devueltos da lo que vendiste ({formatPesos(cobradoBruto - r.devuelto)}).
+              </p>
+            )}
           </section>
           <section className="tarjeta">
             <h2 className="titulo-chico">Ventas por hora</h2>

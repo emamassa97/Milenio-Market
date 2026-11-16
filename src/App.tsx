@@ -1,18 +1,20 @@
 import { BordeDeError } from './ui/BordeDeError';
 import { AVISO_SIN_SERVIDOR } from './datos/nube';
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import logo from './assets/logo-oscuro.svg';
 import { db } from './datos/db';
 import { estaVacia } from './datos/copia';
 import { cargarEjemplo } from './datos/ejemplo';
-import { PantallaAjustes } from './pantallas/Ajustes';
 import { PantallaCaja } from './pantallas/Caja';
-import { PantallaCierre } from './pantallas/Cierre';
-import { PantallaClientes } from './pantallas/Clientes';
-import { PantallaProductos } from './pantallas/Productos';
-import { PantallaReportes } from './pantallas/Reportes';
-import { PantallaInicio } from './pantallas/Inicio';
-import { Visor } from './pantallas/Visor';
+import { cargarAparte } from './ui/cargarAparte';
+// La caja abre primero; las demás pantallas se bajan cuando se usan (y el service worker ya las tiene guardadas).
+const PantallaAjustes = cargarAparte(() => import('./pantallas/Ajustes'), 'PantallaAjustes');
+const PantallaCierre = cargarAparte(() => import('./pantallas/Cierre'), 'PantallaCierre');
+const PantallaClientes = cargarAparte(() => import('./pantallas/Clientes'), 'PantallaClientes');
+const PantallaProductos = cargarAparte(() => import('./pantallas/Productos'), 'PantallaProductos');
+const PantallaReportes = cargarAparte(() => import('./pantallas/Reportes'), 'PantallaReportes');
+const PantallaInicio = cargarAparte(() => import('./pantallas/Inicio'), 'PantallaInicio');
+const Visor = cargarAparte(() => import('./pantallas/Visor'), 'Visor');
 import { Icono, ProveedorAvisos, type NombreIcono } from './ui/componentes';
 import { ProveedorPermisos, useEsDueño } from './ui/permisos';
 import logoBolsa from './assets/logo-bolsa.svg';
@@ -63,7 +65,7 @@ export function App() {
 function Contenido() {
   const { sesion } = useSesion();
   // La pantalla para el cliente no lleva sesión: sólo muestra la venta que se está cobrando.
-  if (window.location.hash === '#visor') return <Visor />;
+  if (window.location.hash === '#visor') return <Suspense fallback={null}><Visor /></Suspense>;
   if (!import.meta.env.VITE_DEMO && !sesion) return <PantallaIngreso />;
   return <Sistema />;
 }
@@ -251,6 +253,7 @@ function Sistema() {
         )}
         {!online && <p className="aviso-sin-red">Sin internet. Seguí cobrando normal: todo queda guardado y se sube a la nube cuando vuelva.</p>}
         <main>
+          <Suspense fallback={null}>
           {pantalla === 'caja' && <PantallaCaja />}
           {pantalla === 'inicio' && <PantallaInicio ir={ir} />}
           {pantalla === 'productos' && <PantallaProductos />}
@@ -258,6 +261,7 @@ function Sistema() {
           {pantalla === 'reportes' && <PantallaReportes />}
           {pantalla === 'clientes' && <PantallaClientes />}
           {pantalla === 'ajustes' && <PantallaAjustes />}
+          </Suspense>
         </main>
       </div>
 

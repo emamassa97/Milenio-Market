@@ -1,6 +1,6 @@
 import { useSesion } from '../ui/sesion';
 import { BotonAyuda, abrirAyuda } from '../ui/Ayuda';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   agregarItem,
   aplicarDescuento,
@@ -51,10 +51,12 @@ import { AvisoEnLinea, CampoCantidad, CampoPesos, cuando, errorATexto, ICONO_MED
 import { Escaner, camaraDisponible } from '../ui/Escaner';
 import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, LLAVE_PAGA_CON, LLAVE_ULTIMA, pitido, resumenEspera, useConsulta, useMedia, useUnaVez } from '../ui/hooks';
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
-import { NuevoMovimiento } from './Cierre';
-import { RegistrarPago } from './Clientes';
+import { cargarAparte } from '../ui/cargarAparte';
 import { DevolverVenta } from './Devolver';
-import { IngresoMercaderia } from './Productos';
+// Ventanas que se usan poco desde la caja: se bajan al abrirlas, así la caja abre más rápido.
+const NuevoMovimiento = cargarAparte(() => import('./Cierre'), 'NuevoMovimiento');
+const RegistrarPago = cargarAparte(() => import('./Clientes'), 'RegistrarPago');
+const IngresoMercaderia = cargarAparte(() => import('./Productos'), 'IngresoMercaderia');
 
 // El carrito y las ventas en espera sobreviven a cambiar de pantalla, a recargar y a cerrar el navegador.
 // Si la caja está abierta en otra pestaña, lo que cambia allá se ve acá al instante (y al revés).
@@ -403,6 +405,14 @@ function Caja() {
       return;
     }
     if (p) return agregar(p, cantidad);
+    // Un número corto que no es ningún código, con la venta armada en efectivo, es con cuánto paga el cliente:
+    // pasa cuando el cajero tipea la plata enseguida después de escanear (el Enter apurado se descarta).
+    const conCuantoPaga = /^\d{1,6}$/.test(q) && cantidad === 1 ? Number(q) : null;
+    if (conCuantoPaga !== null && carrito.items.length > 0 && medio === 'efectivo' && pagaCon === null && conCuantoPaga >= total && conCuantoPaga <= total + 50_000) {
+      setEntrada('');
+      setPagaCon(conCuantoPaga);
+      return;
+    }
     if (esCodigo(q)) {
       pitido('error');
       setEntrada('');
@@ -1220,6 +1230,7 @@ function Caja() {
         />
       )}
       {modal?.tipo === 'pagoFiado' && (
+        <Suspense fallback={null}>
         <RegistrarPago
           cliente={modal.cliente}
           saldo={modal.saldo}
@@ -1231,6 +1242,7 @@ function Caja() {
             enfocar();
           }}
         />
+        </Suspense>
       )}
       {modal?.tipo === 'descuento' && (
         <Descuento
@@ -1364,6 +1376,7 @@ function Caja() {
         </Modal>
       )}
       {modal?.tipo === 'mercaderia' && (
+        <Suspense fallback={null}>
         <IngresoMercaderia
           productos={crudos.filter((p) => !esCombo(p))}
           proveedores={[...new Set(productos.map((p) => p.proveedor?.trim()).filter((x): x is string => !!x))].sort()}
@@ -1373,14 +1386,17 @@ function Caja() {
             enfocar();
           }}
         />
+        </Suspense>
       )}
       {modal?.tipo === 'movimiento' && (
+        <Suspense fallback={null}>
         <NuevoMovimiento
           onCerrar={() => {
             setModal(null);
             enfocar();
           }}
         />
+        </Suspense>
       )}
       {modal?.tipo === 'nuevo' && (
         <ProductoNuevoRapido

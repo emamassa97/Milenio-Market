@@ -47,7 +47,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff,woff2,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,webmanifest}'],
         // Las capturas sólo las usa la ventana "Instalar": no hace falta guardarlas para usar sin internet.
         globIgnores: ['**/captura-*.png'],
         navigateFallback: 'index.html',
@@ -60,7 +60,13 @@ export default defineConfig({
       },
     }),
   ],
-  build: { assetsInlineLimit: 100_000 },
+  build: {
+    // Las fuentes van como archivos aparte (el service worker las guarda): adentro del CSS lo hacían pesar el doble
+    // y frenaban hasta el logo de carga. Lo demás chico sigue adentro.
+    assetsInlineLimit: (archivo: string) => (/\.(woff2?|ttf)$/.test(archivo) ? false : undefined),
+    // React y Dexie casi no cambian entre versiones: en su propio archivo, el navegador los reusa.
+    rollupOptions: { output: { manualChunks: { react: ['react', 'react-dom'], dexie: ['dexie'] } } },
+  },
   test: {
     environment: 'node',
     // Las pruebas de la nube arrancan un Postgres (PGlite) la primera vez: tarda unos segundos.

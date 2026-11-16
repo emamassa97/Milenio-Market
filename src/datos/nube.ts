@@ -209,6 +209,8 @@ export async function aplicarRemotas(db: BaseKiosco, filas: FilaRemota[], migrac
         const cerradaAca = local.cierre !== null && local.cierre !== undefined;
         const cerradaAlla = f.datos.cierre !== null && f.datos.cierre !== undefined;
         if (cerradaAca !== cerradaAlla) remotaGana = cerradaAlla;
+        // Cerrada en los dos lados: manda el cierre que llegó primero a la nube (el servidor no deja pisarlo).
+        else if (cerradaAca && cerradaAlla) remotaGana = true;
       }
       if (f.borrado || !f.datos) {
         if (local && remotaGana) {

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { db } from '../datos/db';
 import { comprobarDueño } from '../datos/ingreso';
 import { errorATexto, Icono, Modal } from './componentes';
@@ -38,6 +38,18 @@ export function ProveedorPermisos({ children }: { children: ReactNode }) {
     setPedido(null);
     resolver.current(u);
   };
+
+  // Si se cambia de pantalla con el pedido abierto, se cancela: si no, lo que se tipeaba en la otra pantalla
+  // (los billetes del cierre) iba a parar al usuario del dueño.
+  useEffect(() => {
+    if (!pedido) return;
+    const cancelar = () => {
+      setPedido(null);
+      resolver.current(null);
+    };
+    window.addEventListener('hashchange', cancelar);
+    return () => window.removeEventListener('hashchange', cancelar);
+  }, [pedido]);
 
   return (
     <Contexto.Provider value={pedir}>

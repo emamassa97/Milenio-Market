@@ -76,7 +76,7 @@ export function resumirTurno(
 }
 
 /** El cierre en texto, para mandarlo por WhatsApp o copiarlo. */
-export function textoCierre(turno: Turno, r: ResumenTurno, contado: Pesos | null): string {
+export function textoCierre(turno: Turno, r: ResumenTurno, contado: Pesos | null, ciego = false): string {
   const f = (ms: number) => new Date(ms).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
   const h = (ms: number) => new Date(ms).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
   const fiadoCobrado = Object.values(r.cobrosFiado).reduce((a, b) => a + b, 0);
@@ -85,6 +85,8 @@ export function textoCierre(turno: Turno, r: ResumenTurno, contado: Pesos | null
     `Vendido: ${formatPesos(r.vendidoNeto)} (${r.cantidadVentas} ${r.cantidadVentas === 1 ? 'venta' : 'ventas'}${r.devuelto > 0 ? `, ${formatPesos(r.devuelto)} devueltos` : ''})`,
     ...MEDIOS.filter((m) => r.porMedio[m.id] > 0).map((m) => `• ${m.nombre}: ${formatPesos(r.porMedio[m.id])}${r.devuelto > 0 ? ' (cobrado, antes de devoluciones)' : ''}`),
   ];
+  // Cierre a ciegas (empleado): sólo lo que contó; la cuenta y la diferencia las ve el dueño.
+  if (ciego) return [lineas[0], contado === null ? 'Sin contar' : `Contado: ${formatPesos(contado)}`].join('\n');
   if (fiadoCobrado > 0) lineas.push(`Fiado cobrado: ${formatPesos(fiadoCobrado)}`);
   if (turno.fondoInicial > 0) lineas.push(`Cambio inicial: ${formatPesos(turno.fondoInicial)}`);
   if (r.gastos > 0) lineas.push(`Gastos: ${formatPesos(r.gastos)}`);
