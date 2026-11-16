@@ -319,3 +319,20 @@ describe('devoluciones sucesivas', () => {
     expect(montoDevolucion({ ...base, devoluciones }, [{ indice: 0, cantidad: 1 }])).toBe(0);
   });
 });
+
+describe('planilla guardada por Excel en Windows (jurado 11)', () => {
+  it('lee Windows-1252 sin romper acentos ni encabezados', async () => {
+    const { textoDePlanilla, importarCsv } = await import('./csv');
+    const texto = 'Nombre;Código;Precio;Categoría\nAlfajor Guaymallén;7790001;500;Golosinas\n';
+    const ansi = new Uint8Array([...texto].map((c) => c.charCodeAt(0)));
+    const leido = textoDePlanilla(ansi.buffer);
+    expect(leido).toContain('Guaymallén');
+    const r = importarCsv(leido);
+    expect(r.filas[0]?.codigo).toBe('7790001');
+    expect(r.filas[0]?.nombre).toBe('Alfajor Guaymallén');
+  });
+  it('UTF-8 sigue igual', async () => {
+    const { textoDePlanilla } = await import('./csv');
+    expect(textoDePlanilla(new TextEncoder().encode('Código;ñ').buffer as ArrayBuffer)).toBe('Código;ñ');
+  });
+});

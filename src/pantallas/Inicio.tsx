@@ -6,7 +6,7 @@ import { saldoCliente } from '../dominio/fiado';
 import { paraReponer, porVencer, resumirVentas } from '../dominio/reportes';
 import type { Evento, MovimientoCaja, Producto, Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
-import { leerAjuste, turnoAbierto } from '../datos/operaciones';
+import { leerAjuste, movimientosDeCaja, turnoAbierto } from '../datos/operaciones';
 import { cuando, hora, Icono, sinCortes } from '../ui/componentes';
 import { useConsulta, useEstadoNube } from '../ui/hooks';
 import { AVISO_SIN_ACTIVAR } from '../datos/nube';
@@ -70,6 +70,16 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
     { cantidad: 0, monto: 0, porUsuario: [] as [string, number][], lista: [] as Evento[] },
   );
   const [verCanceladas, setVerCanceladas] = useState(false);
+  // El último cierre que no dio justo (de los últimos 3 días): el dueño se entera acá, sin entrar al Cierre.
+  const ultimoCierre = useConsulta(
+    async () => {
+      const t = (await db.turnos.orderBy('apertura').reverse().limit(10).toArray()).find((x) => x.cierre !== null && x.contado !== null);
+      if (!t || t.esperado === null || t.contado === t.esperado || Date.now() - t.cierre! > 3 * DIA) return null;
+      return { dif: t.contado! - t.esperado, quien: t.usuarioCierre ?? t.cajero, cuando: t.cierre! };
+    },
+    [],
+    null,
+  );
   // La nube que no sube es una advertencia de perder datos: va en "Para atender", no sólo en el chip del menú.
   const nube = useEstadoNube();
   // Sin copia en la nube, que no pasen más de 7 días sin bajar una copia (si ya hubo algún turno).
@@ -104,11 +114,7 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
       // La caja del local (es una sola, la vea desde la PC o desde el celular).
       const t = await turnoAbierto(db);
       if (!t) return null;
-      const [vs, movs, pagos] = await Promise.all([
-        db.ventas.where('turnoId').equals(t.id!).toArray(),
-        db.movimientosCaja.where('turnoId').equals(t.id!).toArray(),
-        db.movimientosFiado.where('turnoId').equals(t.id!).toArray(),
-      ]);
+      const { ventas: vs, movimientos: movs, pagos } = await movimientosDeCaja(db, t);
       return { turno: t, resumen: resumirTurno(t.fondoInicial, vs, movs, pagos) };
     },
     [],
@@ -334,6 +340,23 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
                 </span>
               </button>
             </li>
+            {ultimoCierre && (
+              <li>
+                <button type="button" onClick={() => ir('cierre')}>
+                  <span className={`alerta-icono ${ultimoCierre.dif < 0 ? 'alerta-peligro' : 'alerta-aviso'}`}>
+                    <Icono nombre="alerta" tam={18} />
+                  </span>
+                  <span>
+                    <strong>
+                      El último cierre dio {ultimoCierre.dif < 0 ? `faltante de ${formatPesos(-ultimoCierre.dif)}` : `sobrante de ${formatPesos(ultimoCierre.dif)}`}
+                    </strong>
+                    <small>
+                      Cerró {ultimoCierre.quien} el {new Date(ultimoCierre.cuando).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} · Ver en Cierre
+                    </small>
+                  </span>
+                </button>
+              </li>
+            )}
             {canceladas.cantidad > 0 && (
               <li>
                 <button type="button" onClick={() => setVerCanceladas((v) => !v)} aria-expanded={verCanceladas}>

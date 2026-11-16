@@ -17,10 +17,13 @@ import type {
   Pesos,
   Producto,
   TipoMovimientoCaja,
+  MovimientoFiado,
   Turno,
   Venta,
+  VistasCierre,
+  VistoPorEquipo,
 } from '../dominio/tipos';
-import { equipoDe, type BaseKiosco } from './db';
+import { equipoDe, RANGO, type BaseKiosco } from './db';
 
 /** Error con un mensaje pensado para mostrarle a quien atiende. */
 export class ErrorKiosco extends Error {}
@@ -46,7 +49,12 @@ function quien<K extends string>(campo: K, usuario: string | undefined): Partial
 export async function turnoAbierto(db: BaseKiosco): Promise<Turno | undefined> {
   // Sin await antes de leer la base: dentro de un liveQuery, esperar otra promesa le hace perder el rastro.
   const abiertos = await db.turnos.filter((t) => t.cierre === null).toArray();
-  return abiertos.sort((a, b) => a.apertura - b.apertura || (a.id ?? 0) - (b.id ?? 0))[0];
+  if (abiertos.length <= 1) return abiertos[0];
+  // Con varias abiertas manda la más vieja QUE YA SE USÓ: una vacía abierta sin internet no le gana a la que tiene las ventas.
+  const usadas = await Promise.all(abiertos.map((t) => db.ventas.where('turnoId').equals(t.id!).count()));
+  return abiertos
+    .map((t, i) => ({ t, usada: usadas[i]! > 0 }))
+    .sort((a, b) => Number(b.usada) - Number(a.usada) || a.t.apertura - b.t.apertura || (a.t.id ?? 0) - (b.t.id ?? 0))[0]!.t;
 }
 
 /**
@@ -58,7 +66,9 @@ export async function cerrarCajasRepetidas(db: BaseKiosco): Promise<number> {
   return db.transaction('rw', [db.turnos, db.ventas, db.movimientosCaja, db.movimientosFiado], async () => {
     const principal = await turnoAbierto(db);
     if (!principal) return 0;
-    const otras = await db.turnos.filter((t) => t.cierre === null && t.id !== principal.id).toArray();
+    // Sólo las de ESTE equipo: las ventas de una caja ajena pueden no haber llegado todavía.
+    const n = equipoDe(db);
+    const otras = await db.turnos.filter((t) => t.cierre === null && t.id !== principal.id && (t.equipo === undefined || t.equipo === n)).toArray();
     let cerradas = 0;
     for (const t of otras) {
       const id = t.id!;
@@ -72,13 +82,16 @@ export async function cerrarCajasRepetidas(db: BaseKiosco): Promise<number> {
         conteo: null,
         contado: null,
         esperado: t.fondoInicial,
-        nota: 'Caja repetida sin ventas: se cerró sola (el local tiene una sola caja).',
+        nota: `${NOTA_CAJA_REPETIDA}: se cerró sola (el local tiene una sola caja).`,
       });
       cerradas++;
     }
     return cerradas;
   });
 }
+
+/** Comienzo de la nota de una caja que se abrió de más y se cerró sola, vacía. */
+export const NOTA_CAJA_REPETIDA = 'Caja repetida sin ventas';
 
 /** `usuario`: quién inició sesión y abre la caja (opcional). */
 export async function abrirTurno(db: BaseKiosco, cajero: string, fondoInicial: Pesos, usuario?: string): Promise<number> {
@@ -102,14 +115,85 @@ export async function abrirTurno(db: BaseKiosco, cajero: string, fondoInicial: P
   });
 }
 
-export async function resumenDeTurno(db: BaseKiosco, turno: Turno) {
+// ---------- Lo que llegó tarde ----------
+// Con una sola caja para varios equipos, una venta hecha sin internet (o en los segundos antes de
+// sincronizar) puede llegar después de que otro equipo cerró. El cierre anota hasta qué id de cada
+// equipo vio (`vistas`); lo de esa caja que llegue después se cuenta en la caja siguiente, y ésa lo
+// anota en `absorbidos` al cerrar. Así ninguna venta queda afuera de un cierre ni se cuenta dos veces.
+
+/** Cuántos días para atrás se buscan cajas cerradas con algo que llegó tarde. */
+const DIAS_TARDE = 30;
+const equipoDelId = (id: number) => String(Math.floor(id / RANGO));
+
+function vistoHasta<T extends { id?: number }>(filas: T[]): VistoPorEquipo {
+  const visto: VistoPorEquipo = {};
+  for (const f of filas) {
+    const e = equipoDelId(f.id!);
+    visto[e] = Math.max(visto[e] ?? 0, f.id!);
+  }
+  return visto;
+}
+
+const llegoTarde = (id: number, visto: VistoPorEquipo | undefined) => visto !== undefined && id > (visto[equipoDelId(id)] ?? 0);
+
+export interface MovimientosDeCaja {
+  ventas: Venta[];
+  movimientos: MovimientoCaja[];
+  pagos: MovimientoFiado[];
+  /** Cuántos de los de arriba llegaron tarde de una caja anterior. */
+  tarde: number;
+  /** Las claves de lo que llegó tarde ('v:id', 'c:id', 'f:id'). */
+  clavesTarde: string[];
+}
+
+/**
+ * Todo lo que cuenta para una caja: lo suyo (si está cerrada, sólo lo que vio el cierre) más lo que
+ * llegó tarde de cajas anteriores (si está abierta, lo que todavía nadie contó; si está cerrada, lo que anotó).
+ * Sólo lecturas de Dexie: se puede usar dentro de un liveQuery.
+ */
+export async function movimientosDeCaja(db: BaseKiosco, turno: Turno): Promise<MovimientosDeCaja> {
   const id = turno.id!;
-  const [ventas, movimientos, pagos] = await Promise.all([
+  const vistas = turno.cierre !== null ? turno.vistas : undefined;
+  const [vs, ms, ps] = await Promise.all([
     db.ventas.where('turnoId').equals(id).toArray(),
     db.movimientosCaja.where('turnoId').equals(id).toArray(),
     db.movimientosFiado.where('turnoId').equals(id).toArray(),
   ]);
-  return { ventas, movimientos, resumen: resumirTurno(turno.fondoInicial, ventas, movimientos, pagos) };
+  const ventas = vs.filter((x) => !llegoTarde(x.id!, vistas?.v));
+  const movimientos = ms.filter((x) => !llegoTarde(x.id!, vistas?.c));
+  const pagos = ps.filter((x) => !llegoTarde(x.id!, vistas?.f));
+  const clavesTarde: string[] = [];
+  if (turno.cierre !== null) {
+    const abs = turno.absorbidos ?? [];
+    if (abs.length > 0) {
+      const ids = (letra: string) => abs.filter((k) => k.startsWith(letra + ':')).map((k) => Number(k.slice(2)));
+      const [tv, tc, tf] = await Promise.all([db.ventas.bulkGet(ids('v')), db.movimientosCaja.bulkGet(ids('c')), db.movimientosFiado.bulkGet(ids('f'))]);
+      for (const x of tv) if (x) (ventas.push(x), clavesTarde.push(`v:${x.id}`));
+      for (const x of tc) if (x) (movimientos.push(x), clavesTarde.push(`c:${x.id}`));
+      for (const x of tf) if (x) (pagos.push(x), clavesTarde.push(`f:${x.id}`));
+    }
+  } else {
+    const desde = Date.now() - DIAS_TARDE * 86_400_000;
+    const cerradas = (await db.turnos.where('apertura').above(desde).toArray()).filter((t) => t.cierre !== null);
+    const yaContados = new Set(cerradas.flatMap((t) => t.absorbidos ?? []));
+    for (const t of cerradas) {
+      if (!t.vistas || t.id === id) continue;
+      const [tv, tc, tf] = await Promise.all([
+        db.ventas.where('turnoId').equals(t.id!).toArray(),
+        db.movimientosCaja.where('turnoId').equals(t.id!).toArray(),
+        db.movimientosFiado.where('turnoId').equals(t.id!).toArray(),
+      ]);
+      for (const x of tv) if (llegoTarde(x.id!, t.vistas.v) && !yaContados.has(`v:${x.id}`)) (ventas.push(x), clavesTarde.push(`v:${x.id}`));
+      for (const x of tc) if (llegoTarde(x.id!, t.vistas.c) && !yaContados.has(`c:${x.id}`)) (movimientos.push(x), clavesTarde.push(`c:${x.id}`));
+      for (const x of tf) if (llegoTarde(x.id!, t.vistas.f) && !yaContados.has(`f:${x.id}`)) (pagos.push(x), clavesTarde.push(`f:${x.id}`));
+    }
+  }
+  return { ventas, movimientos, pagos, tarde: clavesTarde.length, clavesTarde };
+}
+
+export async function resumenDeTurno(db: BaseKiosco, turno: Turno) {
+  const m = await movimientosDeCaja(db, turno);
+  return { ventas: m.ventas, movimientos: m.movimientos, tarde: m.tarde, resumen: resumirTurno(turno.fondoInicial, m.ventas, m.movimientos, m.pagos) };
 }
 
 /** `usuario`: quién cierra la caja (opcional). */
@@ -125,8 +209,13 @@ export async function cerrarTurno(
   const cerrado = await db.transaction('rw', [db.turnos, db.ventas, db.movimientosCaja, db.movimientosFiado], async () => {
     const turno = await turnoAbierto(db);
     if (!turno) throw new ErrorKiosco('No hay ninguna caja abierta.');
-    const { resumen } = await resumenDeTurno(db, turno);
+    const m = await movimientosDeCaja(db, turno);
+    const resumen = resumirTurno(turno.fondoInicial, m.ventas, m.movimientos, m.pagos);
+    const propias = <T extends { turnoId?: number | null }>(xs: T[]) => xs.filter((x) => x.turnoId === turno.id);
+    const vistas: VistasCierre = { v: vistoHasta(propias(m.ventas)), c: vistoHasta(propias(m.movimientos)), f: vistoHasta(propias(m.pagos)) };
     const cambios = {
+      vistas,
+      ...(m.clavesTarde.length > 0 ? { absorbidos: m.clavesTarde } : {}),
       cierre: ahora(),
       conteo: contoAlgo ? limpio : null,
       contado: contoAlgo ? totalConteo(limpio) : null,

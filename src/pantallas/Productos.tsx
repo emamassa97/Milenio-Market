@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { BotonAyuda } from '../ui/Ayuda';
-import { exportarCsv, importarCsv, type ResultadoImportacion } from '../dominio/csv';
+import { exportarCsv, importarCsv, textoDePlanilla, type ResultadoImportacion } from '../dominio/csv';
 import { alcanzaPara, costoDeComponentes, describirComponentes, esCombo } from '../dominio/combos';
 import { formatPesos } from '../dominio/dinero';
 import { cantidadDeTexto, codigoEscaneado, normalizarTexto as normalizar, mapaPorCodigo } from '../dominio/entrada';
@@ -988,7 +988,7 @@ function Planilla({ productos, onCerrar }: { productos: Producto[]; onCerrar: ()
                 onChange={async (e) => {
                   const archivo = e.target.files?.[0];
                   if (!archivo) return;
-                  setResultado(importarCsv(await archivo.text()));
+                  setResultado(importarCsv(textoDePlanilla(await archivo.arrayBuffer())));
                 }}
               />
             </label>

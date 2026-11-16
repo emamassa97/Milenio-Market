@@ -141,6 +141,21 @@ export interface Turno {
   equipo?: number;
   /** Cuándo un equipo se quedó con esta caja abierta (gana el más reciente). */
   reclamo?: number;
+  /**
+   * Hasta dónde vio el cierre: el último id de cada equipo (ventas, movimientos de caja y de fiado).
+   * Lo de esta caja que llegue después (otro equipo sin internet) "llegó tarde" y se cuenta en la caja siguiente.
+   */
+  vistas?: VistasCierre;
+  /** Lo que llegó tarde de cajas anteriores y se contó en ésta ('v:id', 'c:id', 'f:id'). */
+  absorbidos?: string[];
+}
+
+/** Por equipo, el último id visto. */
+export type VistoPorEquipo = Record<string, number>;
+export interface VistasCierre {
+  v: VistoPorEquipo;
+  c: VistoPorEquipo;
+  f: VistoPorEquipo;
 }
 
 /** 'devolucion' es plata que vuelve al cliente por una venta ya cobrada; la anota el sistema, no se carga a mano. */

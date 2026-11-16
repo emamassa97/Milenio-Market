@@ -152,7 +152,7 @@ export function AvisoEnLinea({ className = '' }: { className?: string }) {
   if (!a) return null;
   return (
     <span className={`aviso-en-linea aviso-en-linea-${a.tipo} ${className}`} role={a.tipo === 'error' ? 'alert' : 'status'}>
-      <span className="aviso-en-linea-texto">{a.texto}</span>
+      <span className="aviso-en-linea-texto" title={a.texto}>{a.texto}</span>
       {a.accion && (
         <button
           type="button"
@@ -186,7 +186,12 @@ export function Modal({
   // Al cerrar, el foco vuelve a donde estaba (el buscador de la caja, por ejemplo).
   const [origen] = useState(() => document.activeElement as HTMLElement | null);
   useEffect(() => {
+    const dialogo = ref.current;
     return () => {
+      // Si quien cerró ya mandó el foco a otro lado (la caja lo devuelve al buscador), no se lo saca:
+      // si no, un Enter siguiente apretaba el botón que abrió la ventana (y volvía a pedir la clave del dueño).
+      const actual = document.activeElement;
+      if (actual && actual !== document.body && !dialogo?.contains(actual) && !actual.closest('dialog')) return;
       if (origen && document.contains(origen) && !origen.closest('dialog')) origen.focus();
     };
   }, [origen]);

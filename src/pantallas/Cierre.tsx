@@ -8,7 +8,8 @@ import { normalizarTexto } from '../dominio/entrada';
 import { nombreMedio, type Cliente, type MovimientoCaja, type Turno, type Venta } from '../dominio/tipos';
 import { imprimirTicket, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
 import { db } from '../datos/db';
-import { anularVenta, cerrarTurno, pasarTurno, registrarMovimientoCaja, resumenDeTurno, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
+import { sincronizarAhora } from '../datos/nube';
+import { anularVenta, cerrarTurno, movimientosDeCaja, NOTA_CAJA_REPETIDA, pasarTurno, registrarMovimientoCaja, resumenDeTurno, turnoAbierto, type MovimientoManual } from '../datos/operaciones';
 import { leerUsuarios, type Usuario } from '../datos/usuarios';
 import { CampoCantidad, CampoPesos, copiarTexto, cuando, Desplegable, errorATexto, fechaCorta, hora, ICONO_MEDIO, Icono, Modal, useAvisar, Vacio } from '../ui/componentes';
 import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, resumenEspera, useConsulta, useUnaVez } from '../ui/hooks';
@@ -19,6 +20,8 @@ import { DevolverVenta } from './Devolver';
 interface Resultado {
   /** null: se cerró sin contar. */
   diferencia: number | null;
+  /** Cerró un empleado: no ve lo que debía haber ni la diferencia (cierre a ciegas). */
+  ciego?: boolean;
   contado: number | null;
   esperado: number;
   vendido: number;
@@ -31,7 +34,14 @@ interface Datos {
   turno: Turno;
   ventas: Venta[];
   movimientos: MovimientoCaja[];
+  /** Cuántos de los movimientos llegaron tarde de la caja anterior. */
+  tarde: number;
   resumen: ResumenTurno;
+}
+
+/** Una vuelta de sincronización antes de cerrar, sin esperar más de 5 segundos. */
+async function traerLoUltimo(): Promise<void> {
+  await Promise.race([sincronizarAhora(db).catch(() => null), new Promise((r) => setTimeout(r, 5000))]);
 }
 
 export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
@@ -39,18 +49,19 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
     async (): Promise<Datos | undefined | null> => {
       const turno = await turnoAbierto(db);
       if (!turno) return undefined;
-      const [ventas, movimientos, pagos] = await Promise.all([
-        db.ventas.where('turnoId').equals(turno.id!).toArray(),
-        db.movimientosCaja.where('turnoId').equals(turno.id!).toArray(),
-        db.movimientosFiado.where('turnoId').equals(turno.id!).toArray(),
-      ]);
-      return { turno, ventas, movimientos, resumen: resumirTurno(turno.fondoInicial, ventas, movimientos, pagos) };
+      // Incluye lo que llegó tarde de la caja anterior (otro equipo que estaba sin internet).
+      const { ventas, movimientos, pagos, tarde } = await movimientosDeCaja(db, turno);
+      return { turno, ventas, movimientos, tarde, resumen: resumirTurno(turno.fondoInicial, ventas, movimientos, pagos) };
     },
     [],
     null,
   );
   const historial = useConsulta(
-    async () => (await db.turnos.orderBy('apertura').reverse().limit(15).toArray()).filter((t) => t.cierre !== null),
+    async () =>
+      (await db.turnos.orderBy('apertura').reverse().limit(25).toArray())
+        // Las cajas repetidas que se cerraron solas (vacías) no son un cierre de verdad: no se listan.
+        .filter((t) => t.cierre !== null && !(t.contado === null && t.nota.startsWith(NOTA_CAJA_REPETIDA)))
+        .slice(0, 15),
     [],
     [] as Turno[],
   );
@@ -94,6 +105,7 @@ export function PantallaCierre({ irACaja }: { irACaja: () => void }) {
                   <button type="button" className="historial-fila" aria-expanded={abierto === t.id} onClick={() => setAbierto(abierto === t.id ? null : t.id!)}>
                     <span>
                       {fechaCorta(t.apertura)} a {hora(t.cierre!)} · {t.cajero}
+                      {t.usuarioCierre && t.usuarioCierre !== t.usuario && <> · cerró {t.usuarioCierre}</>}
                       {t.nota && <small className="texto-suave"> · {t.nota}</small>}
                     </span>
                     {dueño ? (
@@ -204,7 +216,7 @@ function useVentasSinCobrar(): string | null {
 
 function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado: (r: Resultado | null) => void; irACaja: () => void }) {
   const avisar = useAvisar();
-  const { turno, ventas, movimientos, resumen } = datos;
+  const { turno, ventas, movimientos, tarde, resumen } = datos;
   const [conteo, setConteo] = useState<Record<string, number>>({});
   const [nota, setNota] = useState('');
   const [movimiento, setMovimiento] = useState(false);
@@ -246,15 +258,21 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
     }
     unaVez(async () => {
     try {
+      // Antes de cerrar se traen las ventas que otro equipo (el celular) hizo en los últimos segundos,
+      // para que el cierre las cuente. Sin internet se cierra igual: lo que llegue después va a la caja siguiente.
+      await traerLoUltimo();
+      const cerrado = await cerrarTurno(db, conteo, nota, sesion?.usuario);
+      const { resumen: final } = await resumenDeTurno(db, cerrado);
+      const esperado = cerrado.esperado ?? final.efectivoEsperado;
       onCerrado({
-        diferencia: contoAlgo ? diferencia : null,
+        diferencia: contoAlgo ? contado - esperado : null,
         contado: contoAlgo ? contado : null,
-        esperado: resumen.efectivoEsperado,
-        vendido: resumen.vendidoNeto,
-        ventas: resumen.cantidadVentas,
-        texto: textoCierre({ ...turno, cierre: Date.now() }, resumen, contoAlgo ? contado : null),
+        esperado,
+        vendido: final.vendidoNeto,
+        ventas: final.cantidadVentas,
+        texto: textoCierre(cerrado, final, contoAlgo ? contado : null, !dueño),
+        ciego: !dueño,
       });
-      await cerrarTurno(db, conteo, nota, sesion?.usuario);
     } catch (e) {
       // El resultado se había mostrado por adelantado para que no parpadee "caja cerrada"; si falló, se saca.
       onCerrado(null);
@@ -273,6 +291,11 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
           <p className="texto-suave">
             Abierta {cuando(turno.apertura)} por {turno.cajero} · {resumen.cantidadVentas} ventas
           </p>
+          {tarde > 0 && (
+            <p className="texto-aviso">
+              Incluye {tarde === 1 ? '1 venta o movimiento' : `${tarde} ventas o movimientos`} de la caja anterior que llegaron después de cerrarla (otro equipo sin internet).
+            </p>
+          )}
         </div>
       </div>
       {sinCobrar && (
@@ -343,7 +366,6 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
                 </div>
               )}
             </dl>
-            {!dueño && <p className="texto-suave">La diferencia se ve al confirmar el cierre.</p>}
             {movimientos.length > 0 && (
               <ul className="movimientos">
                 {movimientos.map((m) => (
@@ -352,15 +374,18 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
                       {hora(m.fecha)} ·{' '}
                       {m.tipo === 'devolucion' ? m.motivo : `${m.tipo === 'retiro' ? 'Retiro' : m.tipo === 'gasto' ? 'Gasto' : 'Ingreso'}${m.motivo ? `: ${m.motivo}` : ''}`}
                     </span>
-                    <span className="importe">
-                      {m.tipo === 'ingreso' ? '+' : '−'} {formatPesos(m.monto)}
-                    </span>
+                    {dueño && (
+                      <span className="importe">
+                        {m.tipo === 'ingreso' ? '+' : '−'} {formatPesos(m.monto)}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
           </section>
 
+          {dueño && (
           <section className="tarjeta">
             <h2 className="titulo-chico">Todo lo vendido en el turno</h2>
             <dl className="cuentas">
@@ -373,7 +398,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
               {resumen.devuelto > 0 && (
                 <>
                   <div>
-                    <dt>Cobrado en total</dt>
+                    <dt>Vendido antes de devolver</dt>
                     <dd className="importe">{formatPesos(resumen.totalVendido)}</dd>
                   </div>
                   <div>
@@ -388,12 +413,13 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
               </div>
               {fiadoCobrado > 0 && (
                 <div>
-                  <dt>Fiado cobrado (de otros días)</dt>
+                  <dt>Fiado cobrado (deudas anotadas)</dt>
                   <dd className="importe texto-positivo">{formatPesos(fiadoCobrado)}</dd>
                 </div>
               )}
             </dl>
           </section>
+          )}
 
           <ControlMercadoPago turno={turno} ventas={ventas} resumen={resumen} />
           <VentasDelTurno ventas={ventas} />
@@ -587,6 +613,22 @@ function PasarCaja({
 
 function ResultadoCierre({ r, irACaja }: { r: Resultado; irACaja: () => void }) {
   const avisar = useAvisar();
+  if (r.ciego) {
+    return (
+      <section className="tarjeta resultado-cierre resultado-sin-contar">
+        <span className="resultado-icono">
+          <Icono nombre="check" tam={30} />
+        </span>
+        <h1>Caja cerrada</h1>
+        <p className="texto-suave">{r.contado === null ? 'Se cerró sin contar.' : `Contaste ${formatPesos(r.contado)}.`} El dueño ve si coincide con lo vendido.</p>
+        <div className="botonera botonera-centrada">
+          <button type="button" className="boton boton-primario" onClick={irACaja}>
+            Abrir un turno nuevo
+          </button>
+        </div>
+      </section>
+    );
+  }
   const tono = r.diferencia === null ? 'sin-contar' : r.diferencia === 0 ? 'justo' : r.diferencia < 0 ? 'falta' : 'sobra';
   return (
     <section className={`tarjeta resultado-cierre resultado-${tono}`}>
