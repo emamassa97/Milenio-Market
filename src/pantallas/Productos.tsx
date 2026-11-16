@@ -29,6 +29,7 @@ import { imprimirHTML, leerAjustesTicket, TICKET_INICIAL } from '../ui/ticket';
 import { pitido, useBajando, useConsulta, useUnaVez } from '../ui/hooks';
 import { useEsDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
+import { pedirCompraNueva } from '../ui/compraNueva';
 
 type Filtro = 'todos' | 'reponer' | 'vencen' | 'promos' | 'rapidos' | 'sinCodigo' | 'sinCosto' | 'combos';
 
@@ -168,13 +169,13 @@ export function PantallaProductos() {
         </button>
         <div className="botonera solo-pc">
           {acciones.map((a) => (
-            <button key={a.id} type="button" className="boton" onClick={() => setModal({ tipo: a.id })} disabled={a.deshabilitado}>
+            <button key={a.id} type="button" className="boton" onClick={() => (a.id === 'compra' ? pedirCompraNueva() : setModal({ tipo: a.id }))} disabled={a.deshabilitado}>
               <Icono nombre={a.icono} tam={18} /> {a.texto}
             </button>
           ))}
         </div>
         <div className="botonera solo-movil">
-          <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'compra' })} disabled={productos.length === 0}>
+          <button type="button" className="boton boton-chico" onClick={pedirCompraNueva} disabled={productos.length === 0}>
             <Icono nombre="camion" tam={18} /> Llegó mercadería
           </button>
           <button type="button" className="boton boton-chico" aria-expanded={menuAcciones} onClick={() => setMenuAcciones(true)}>
@@ -197,7 +198,8 @@ export function PantallaProductos() {
                 disabled={a.deshabilitado}
                 onClick={() => {
                   setMenuAcciones(false);
-                  setModal({ tipo: a.id });
+                  if (a.id === 'compra') pedirCompraNueva();
+                  else setModal({ tipo: a.id });
                 }}
               >
                 <Icono nombre={a.icono} tam={22} /> {a.texto}

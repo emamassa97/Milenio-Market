@@ -1,4 +1,5 @@
 import { useSesion } from '../ui/sesion';
+import { pedirCompraNueva } from '../ui/compraNueva';
 import { BotonAyuda, abrirAyuda } from '../ui/Ayuda';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -729,7 +730,7 @@ function Caja() {
           <Icono nombre="billetera" tam={16} /> Anotar un retiro o gasto
         </button>
         {/* El empleado recibe el reparto sin salir de la caja: sólo suma stock; el dueño ve el ingreso completo. */}
-        <button type="button" className="boton boton-texto boton-retiro" onClick={() => setModal({ tipo: 'mercaderia' })} disabled={productos.length === 0}>
+        <button type="button" className="boton boton-texto boton-retiro" onClick={() => (dueño ? pedirCompraNueva() : setModal({ tipo: 'mercaderia' }))} disabled={productos.length === 0}>
           <Icono nombre="camion" tam={16} /> Llegó mercadería
         </button>
       </div>
@@ -997,7 +998,7 @@ function Caja() {
                 <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'movimiento' })}>
                   <Icono nombre="billetera" tam={16} /> Retiro o gasto
                 </button>
-                <button type="button" className="boton boton-chico" onClick={() => setModal({ tipo: 'mercaderia' })} disabled={productos.length === 0}>
+                <button type="button" className="boton boton-chico" onClick={() => (dueño ? pedirCompraNueva() : setModal({ tipo: 'mercaderia' }))} disabled={productos.length === 0}>
                   <Icono nombre="camion" tam={16} /> Llegó mercadería
                 </button>
               </div>

@@ -214,3 +214,79 @@ export interface Evento {
   /** En una devolución, la venta (para buscar lo devuelto por fecha sin recorrer todas las ventas). */
   ventaId?: number;
 }
+
+// ---------- Compras a proveedores ----------
+
+/** Un renglón de la factura o remito del proveedor, como quedó guardado. */
+export interface RenglonCompraGuardado {
+  productoId: number;
+  /** Copia del nombre al cargarla: el historial se lee igual aunque después se renombre o se borre el producto. */
+  nombre: string;
+  cantidad: number;
+  /** Costo por unidad (o por kilo) de esta compra. */
+  costo: Pesos;
+  /** Cómo estaban antes de esta compra: para mostrar qué cambió y para deshacerla. */
+  costoAnterior: Pesos;
+  precioAnterior: Pesos;
+  /** Precio de venta después de la compra (igual al anterior si no se cambió). */
+  precio: Pesos;
+  /** Lo que decía la factura, si se leyó de una foto: así la próxima vez se reconoce solo. */
+  descripcion?: string;
+  /** El producto se dio de alta con esta compra. */
+  nuevo?: true;
+}
+
+/** Una factura o remito de un proveedor: sumó stock y puede haber cambiado costos y precios. */
+export interface Compra {
+  id?: number;
+  /** Fecha del comprobante (al mediodía de ese día). */
+  fecha: number;
+  /** Cuándo se cargó en el sistema. */
+  creada: number;
+  proveedor: string;
+  /** 'Factura', 'Remito'… y su número, como figuran en el papel. Opcionales. */
+  comprobante?: string;
+  numero?: string;
+  renglones: RenglonCompraGuardado[];
+  /** Lo que hay que pagarle al proveedor por esta compra. */
+  total: Pesos;
+  nota?: string;
+  /** Se cargó leyendo una foto de la factura. */
+  conFoto?: boolean;
+  usuario?: string;
+  anulada?: boolean;
+  anuladaFecha?: number;
+  anuladaPor?: string;
+}
+
+export type MedioPagoProveedor = 'caja' | 'efectivo' | 'transferencia' | 'mercadopago' | 'cheque';
+
+export const MEDIOS_PROVEEDOR: { id: MedioPagoProveedor; nombre: string; detalle: string }[] = [
+  { id: 'caja', nombre: 'Efectivo de la caja', detalle: 'Sale de la caja abierta: se anota solo en el cierre.' },
+  { id: 'transferencia', nombre: 'Transferencia', detalle: 'Desde el banco o la billetera.' },
+  { id: 'mercadopago', nombre: 'Mercado Pago', detalle: 'Desde la cuenta de Mercado Pago.' },
+  { id: 'efectivo', nombre: 'Efectivo de afuera', detalle: 'Plata que no estaba en la caja.' },
+  { id: 'cheque', nombre: 'Cheque', detalle: 'Propio o de terceros.' },
+];
+
+export function nombreMedioProveedor(medio: MedioPagoProveedor): string {
+  return MEDIOS_PROVEEDOR.find((m) => m.id === medio)?.nombre ?? medio;
+}
+
+/** Plata que se le dio a un proveedor: al recibir la mercadería o después, a cuenta. */
+export interface PagoProveedor {
+  id?: number;
+  fecha: number;
+  proveedor: string;
+  monto: Pesos;
+  medio: MedioPagoProveedor;
+  /** La compra que se pagó (null: a cuenta, para lo que se le deba). */
+  compraId: number | null;
+  /** Pagado con plata de la caja: la caja y el gasto que se anotó ahí. */
+  turnoId?: number;
+  movimientoCajaId?: number;
+  nota: string;
+  usuario?: string;
+  anulado: boolean;
+  anuladoPor?: string;
+}

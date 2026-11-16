@@ -37,6 +37,7 @@ const NOMBRE_PANTALLA: Record<PantallaAyuda, string> = {
   productos: 'Productos',
   cierre: 'el Cierre de caja',
   clientes: 'Clientes y fiado',
+  compras: 'Compras',
   reportes: 'Reportes',
   ajustes: 'Ajustes',
 };

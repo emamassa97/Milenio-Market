@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { Cliente, Evento, MovimientoCaja, MovimientoFiado, Producto, Turno, Venta } from '../dominio/tipos';
+import type { Cliente, Compra, Evento, MovimientoCaja, MovimientoFiado, PagoProveedor, Producto, Turno, Venta } from '../dominio/tipos';
 
 export interface Ajuste {
   clave: string;
@@ -15,7 +15,7 @@ export interface Borrado {
 }
 
 /** Tablas que se copian a la nube. Cada fila lleva `_v`: cuándo cambió por última vez. */
-export const TABLAS_NUBE = ['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes', 'eventos'] as const;
+export const TABLAS_NUBE = ['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes', 'eventos', 'compras', 'pagosProveedor'] as const;
 export type TablaNube = (typeof TABLAS_NUBE)[number];
 
 let ultimaMarca = 0;
@@ -154,6 +154,8 @@ export class BaseKiosco extends Dexie {
   ajustes!: Table<Ajuste, string>;
   borrados!: Table<Borrado, number>;
   eventos!: Table<Evento, number>;
+  compras!: Table<Compra, number>;
+  pagosProveedor!: Table<PagoProveedor, number>;
 
   constructor(nombre = 'milenio-market') {
     super(nombre);
@@ -182,7 +184,7 @@ export class BaseKiosco extends Dexie {
       .upgrade(async (tx) => {
         let n = 0;
         for (const t of TABLAS_NUBE) {
-          if (t === 'eventos') continue; // recién existe en la versión 3
+          if (t === 'eventos' || t === 'compras' || t === 'pagosProveedor') continue; // recién existen en la versión 3 y 5
           await tx
             .table(t)
             .toCollection()
@@ -196,6 +198,8 @@ export class BaseKiosco extends Dexie {
     // Versión 4: los otros códigos de un producto (`codigosAlt`) con índice, así buscar un código que no es
     // el principal no recorre todos los productos (una planilla de 300 tardaba medio minuto).
     this.version(4).stores({ productos: '++id, codigo, *codigosAlt, nombre, categoria, _v' });
+    // Versión 5: compras a proveedores (facturas y remitos) y lo que se le pagó a cada uno.
+    this.version(5).stores({ compras: '++id, fecha, proveedor, _v', pagosProveedor: '++id, fecha, proveedor, compraId, turnoId, _v' });
     for (const t of TABLAS_NUBE) {
       const tabla = this.table(t);
       tabla.hook('creating', (clave, fila: Record<string, unknown>, tx) => {

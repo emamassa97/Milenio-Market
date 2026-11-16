@@ -66,6 +66,11 @@ import {
   Repeat,
   Lightbulb,
   MonitorDown,
+  Camera,
+  FileText,
+  ArrowRight,
+  ArrowLeft,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import { CANTIDAD_MAXIMA, RENGLON_MAXIMO } from '../dominio/carrito';
@@ -572,6 +577,11 @@ const ICONOS = {
   baja: TrendingDown,
   billetera: Wallet,
   monto: CircleDollarSign,
+  foto: Camera,
+  factura: FileText,
+  flecha: ArrowRight,
+  volver: ArrowLeft,
+  chispa: Sparkles,
 } satisfies Record<string, LucideIcon>;
 
 export type NombreIcono = keyof typeof ICONOS;

@@ -23,7 +23,7 @@ export interface Dependencias {
  * src/datos/db.ts (acá no se puede importar Dexie); un test controla que
  * coincidan.
  */
-export const TABLAS_SERVIDOR = ['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes', 'eventos'] as const;
+export const TABLAS_SERVIDOR = ['productos', 'ventas', 'turnos', 'movimientosCaja', 'clientes', 'movimientosFiado', 'ajustes', 'eventos', 'compras', 'pagosProveedor'] as const;
 const TABLAS = new Set<string>(TABLAS_SERVIDOR);
 const MAX_REGISTROS = 1000;
 const PAGINA = 1000;
@@ -224,7 +224,7 @@ export function claveDeEmpleado(clave: string, usuario: string): string {
   return `e.${usuario}.${createHmac('sha256', clave).update(`empleado:${usuario}`).digest('base64url')}`;
 }
 
-type Rol = 'dueño' | 'empleado';
+export type Rol = 'dueño' | 'empleado';
 
 /** Quién manda el pedido: el dueño (clave de la nube) o un empleado (su clave propia, si sigue existiendo). */
 async function rolDelPedido(recibida: string | null, esperada: string, consulta: Consulta): Promise<Rol | null> {
@@ -252,6 +252,20 @@ async function darDeAlta(consulta: Consulta, claveFija: string | undefined): Pro
   );
   if (filas.length === 0) return json({ error: 'La nube ya tiene clave.' }, 409);
   return json({ clave: nueva });
+}
+
+/**
+ * Quién manda un pedido de otra función (leer una factura): 'dueño', 'empleado' o null. Sin base o sin clave
+ * de nube, null. Usa la misma clave de nube que la sincronización.
+ */
+export async function rolDeOtroPedido(pedido: Request, deps: Dependencias): Promise<Rol | null> {
+  if (!deps.consulta) return null;
+  try {
+    const esperada = deps.clave || (await claveGuardada(deps.consulta));
+    return esperada ? await rolDelPedido(pedido.headers.get('x-clave'), esperada, deps.consulta) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function manejar(pedido: Request, deps: Dependencias): Promise<Response> {
@@ -467,7 +481,7 @@ async function reglasDeEmpleado(registros: Registro[], yo: string, consulta: Con
         salida.push(r);
         break;
       default:
-        // clientes, movimientosCaja, eventos: lo ya anotado no lo cambia un empleado.
+        // clientes, movimientosCaja, eventos, compras y pagos a proveedores: lo ya anotado no lo cambia un empleado.
         break;
     }
   }
