@@ -572,7 +572,7 @@ function ResumenPorWhatsApp() {
               </a>
               ). Mandale por WhatsApp: <code>I allow callmebot to send me messages</code>
             </li>
-            <li>Te contesta con tu clave (son números). Pegala acá abajo y tocá «Probar».</li>
+            <li>Te contesta con tu clave (son números). Pegala acá abajo y tocá «Probar». Si te dice que el bot está lleno, en unos días publican un número nuevo en esa página.</li>
           </ol>
           <label className="campo">
             <span className="campo-etiqueta">Clave de CallMeBot</span>
