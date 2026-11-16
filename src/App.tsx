@@ -14,6 +14,7 @@ const PantallaClientes = cargarAparte(() => import('./pantallas/Clientes'), 'Pan
 const PantallaProductos = cargarAparte(() => import('./pantallas/Productos'), 'PantallaProductos');
 const PantallaReportes = cargarAparte(() => import('./pantallas/Reportes'), 'PantallaReportes');
 const PantallaInicio = cargarAparte(() => import('./pantallas/Inicio'), 'PantallaInicio');
+const PantallaCompras = cargarAparte(() => import('./pantallas/Compras'), 'PantallaCompras');
 const Visor = cargarAparte(() => import('./pantallas/Visor'), 'Visor');
 import { Icono, ProveedorAvisos, type NombreIcono } from './ui/componentes';
 import { ProveedorPermisos, useEsDueño } from './ui/permisos';
@@ -31,6 +32,7 @@ const PANTALLAS = [
   { id: 'productos', nombre: 'Productos', corto: 'Productos', icono: 'productos', dueño: true },
   { id: 'cierre', nombre: 'Cierre de caja', corto: 'Cierre', icono: 'cierre', dueño: false },
   { id: 'clientes', nombre: 'Clientes y fiado', corto: 'Fiado', icono: 'clientes', dueño: true },
+  { id: 'compras', nombre: 'Compras', corto: 'Compras', icono: 'camion', dueño: true },
   { id: 'reportes', nombre: 'Reportes', corto: 'Reportes', icono: 'reportes', dueño: true },
   { id: 'ajustes', nombre: 'Ajustes', corto: 'Ajustes', icono: 'ajustes', dueño: false },
 ] as const satisfies readonly { id: string; nombre: string; corto: string; icono: NombreIcono; dueño: boolean }[];
@@ -260,6 +262,7 @@ function Sistema() {
           {pantalla === 'cierre' && <PantallaCierre irACaja={() => ir('caja')} />}
           {pantalla === 'reportes' && <PantallaReportes />}
           {pantalla === 'clientes' && <PantallaClientes />}
+          {pantalla === 'compras' && <PantallaCompras />}
           {pantalla === 'ajustes' && <PantallaAjustes />}
           </Suspense>
         </main>

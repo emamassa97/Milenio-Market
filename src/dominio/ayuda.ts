@@ -1,7 +1,7 @@
 import { normalizarTexto } from './entrada';
 
 /** Pantallas del sistema, con el mismo id que el menú. */
-export type PantallaAyuda = 'caja' | 'inicio' | 'productos' | 'cierre' | 'clientes' | 'reportes' | 'ajustes';
+export type PantallaAyuda = 'caja' | 'inicio' | 'productos' | 'cierre' | 'clientes' | 'compras' | 'reportes' | 'ajustes';
 
 /**
  * Un tema de la ayuda. En los textos, lo que va entre corchetes es una tecla: "[F12]" se ve como tecla.
@@ -207,14 +207,46 @@ export const TEMAS_AYUDA: TemaAyuda[] = [
     id: 'mercaderia',
     titulo: 'Anotar que llegó mercadería',
     pantallas: ['caja', 'productos'],
-    resumen: 'Suma stock y, si cambió el costo, ajusta el precio.',
+    resumen: 'Suma stock. El dueño lo carga como compra, con costos y precios.',
     pasos: [
       'Tocá "Llegó mercadería".',
-      'Pasá cada producto por el lector (o buscalo) y poné cuántos llegaron y a qué costo.',
-      'Si el costo subió, el sistema te propone el precio nuevo manteniendo tu ganancia.',
-      'Si lo pagaste con plata de la caja, tildalo: se anota como gasto del turno.',
+      'El empleado pasa cada producto por el lector (o lo busca) y pone cuántos llegaron: se suma al stock.',
+      'El dueño va directo a Compras, donde carga la factura entera: stock, costos, precios y lo que se le debe al proveedor.',
     ],
     palabras: 'mercaderia proveedor llego compra stock reponer',
+  },
+  {
+    id: 'compras',
+    titulo: 'Cargar la factura de un proveedor',
+    pantallas: ['compras', 'productos'],
+    soloDueño: true,
+    resumen: 'Suma el stock, actualiza costos y te propone los precios nuevos, todo de una.',
+    pasos: [
+      'En Compras tocá "Sacar foto a la factura" (o "Cargar a mano").',
+      'El sistema lee proveedor, fecha, número y cada renglón, y reconoce tus productos. Lo que no reconoce lo elegís vos o lo creás como producto nuevo.',
+      'Revisá cantidades y costos. "2x12" en la cantidad son 24 unidades.',
+      'Tocá "Revisar precios": ves qué costos subieron y el precio que mantiene tu ganancia, redondeado como elijas. Destildá lo que no quieras cambiar.',
+      'Elegí si la pagaste toda, una parte o si queda a deber, y guardá.',
+    ],
+    consejos: [
+      'Lo que elegís una vez se aprende: la próxima factura de ese proveedor se reconoce sola.',
+      'Si la pagás con plata de la caja, se anota en el cierre como mercadería (no como gasto del local).',
+      'Una compra cargada por error se anula: el stock vuelve y, si nadie los tocó, también los costos y precios de antes.',
+    ],
+    palabras: 'compra factura remito proveedor foto costo precio stock deuda debo mayorista distribuidora',
+  },
+  {
+    id: 'pagarProveedor',
+    titulo: 'Ver y pagar lo que le debés a un proveedor',
+    pantallas: ['compras'],
+    soloDueño: true,
+    resumen: 'Cada proveedor tiene su cuenta: compras, pagos y saldo.',
+    pasos: [
+      'En Compras elegí el proveedor: ves cuánto le debés y cada factura con su estado.',
+      'Tocá "Registrar pago", poné el monto y cómo le pagaste.',
+      'Un pago a cuenta se descuenta de las facturas más viejas primero.',
+    ],
+    palabras: 'pagar proveedor deuda cuenta corriente saldo debo transferencia',
   },
   {
     id: 'devolver',

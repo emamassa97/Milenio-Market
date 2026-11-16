@@ -27,7 +27,16 @@ export const AJUSTES_LOCALES: ReadonlySet<string> = new Set([
   'nube.cursor',
   'nube.v2',
   'nube.id',
+  'nube.ponerAlDia',
+  'nube.ponerAlDia.cursor',
 ]);
+
+/**
+ * Tablas que se agregaron después: un equipo con la versión anterior las salteaba al bajar pero igual
+ * avanzaba su cursor. Al actualizarse, las baja una vez desde el principio (sin tocar el cursor de siempre).
+ * Si se agrega otra tabla, se suma acá y se cambia la marca.
+ */
+const PONER_AL_DIA = { marca: 'compras-v1', tablas: ['compras', 'pagosProveedor'] as readonly string[] };
 
 const LOTE = 400;
 /**
@@ -401,6 +410,12 @@ async function unaVuelta(db: BaseKiosco, url: string): Promise<{ subidas: number
     }
     const subidas = await subirCambios(db, enviarAlServidor(clave, url));
     bajadas += await bajarCambios(db, clave, url);
+    if ((await leerAjuste<string>(db, 'nube.ponerAlDia', '')) !== PONER_AL_DIA.marca) {
+      bajadas += await bajarCambios(db, clave, url, false, { llave: 'nube.ponerAlDia.cursor', tablas: PONER_AL_DIA.tablas });
+      await guardarAjuste(db, 'nube.ponerAlDia', PONER_AL_DIA.marca);
+      // Si un día cambia la marca, la próxima puesta al día arranca de nuevo desde el principio.
+      await guardarAjuste(db, 'nube.ponerAlDia.cursor', CURSOR_INICIAL);
+    }
     // Una sola caja por local: las que quedaron abiertas de más y vacías se cierran y se avisa a los demás.
     if ((await cerrarCajasRepetidas(db)) > 0) await subirCambios(db, enviarAlServidor(clave, url));
     await guardarAjuste(db, 'nube.ultima', Date.now());
@@ -449,12 +464,16 @@ const IDENTIDAD: Partial<Record<TablaNube, string>> = {
   movimientosCaja: 'fecha',
   movimientosFiado: 'fecha',
   eventos: 'fecha',
+  compras: 'creada',
+  pagosProveedor: 'fecha',
 };
 /** Quién apunta a cada una, para mudar las referencias. */
 const REFERENCIAS: Partial<Record<TablaNube, [TablaNube, string][]>> = {
   clientes: [['ventas', 'clienteId'], ['movimientosFiado', 'clienteId']],
-  turnos: [['ventas', 'turnoId'], ['movimientosCaja', 'turnoId'], ['movimientosFiado', 'turnoId'], ['eventos', 'turnoId']],
+  turnos: [['ventas', 'turnoId'], ['movimientosCaja', 'turnoId'], ['movimientosFiado', 'turnoId'], ['eventos', 'turnoId'], ['pagosProveedor', 'turnoId']],
   ventas: [['movimientosCaja', 'ventaId'], ['movimientosFiado', 'ventaId'], ['eventos', 'ventaId']],
+  compras: [['pagosProveedor', 'compraId']],
+  movimientosCaja: [['pagosProveedor', 'movimientoCajaId']],
 };
 
 /**
@@ -501,23 +520,31 @@ async function apartarChocadas(db: BaseKiosco, filas: FilaRemota[]): Promise<voi
 }
 
 /** Baja de la nube todo lo que cambió desde la última vez y lo aplica. Devuelve cuántas filas cambiaron acá. */
-export async function bajarCambios(db: BaseKiosco, clave: string, url = '/api/sincronizar', migracion = false): Promise<number> {
+export async function bajarCambios(
+  db: BaseKiosco,
+  clave: string,
+  url = '/api/sincronizar',
+  migracion = false,
+  solo?: { llave: string; tablas: readonly string[] },
+): Promise<number> {
   // El cursor es "tx:seq". Un número es el de antes (sólo seq): la nube lo convierte la primera vez.
-  const guardado = await leerAjuste<string | number>(db, 'nube.cursor', CURSOR_INICIAL);
+  const llave = solo?.llave ?? 'nube.cursor';
+  const guardado = await leerAjuste<string | number>(db, llave, CURSOR_INICIAL);
   let cursor = typeof guardado === 'number' ? (guardado > 0 ? `seq:${guardado}` : CURSOR_INICIAL) : guardado;
   let aplicadas = 0;
   for (;;) {
     const r = await pedir(`${url}?v=2&desde=${encodeURIComponent(cursor)}`, { headers: { 'x-clave': clave } });
     if (!r.ok) throw new Error(await mensajeServidor(r));
     const pagina = (await r.json()) as { filas?: FilaRemota[]; hasta?: string; mas?: boolean };
-    const filas = Array.isArray(pagina.filas) ? pagina.filas : [];
+    const todas = Array.isArray(pagina.filas) ? pagina.filas : [];
+    const filas = solo ? todas.filter((f) => solo.tablas.includes(f.tabla)) : todas;
     if (migracion && filas.length > 0) await apartarChocadas(db, filas);
     if (filas.length > 0) aplicadas += await aplicarRemotas(db, filas, migracion);
     if (typeof pagina.hasta === 'string' && pagina.hasta !== cursor) {
       cursor = pagina.hasta;
-      await guardarAjuste(db, 'nube.cursor', cursor);
+      await guardarAjuste(db, llave, cursor);
     }
-    if (!pagina.mas || filas.length === 0) break;
+    if (!pagina.mas || todas.length === 0) break;
   }
   return aplicadas;
 }
@@ -540,5 +567,6 @@ export async function recuperarDeLaNube(db: BaseKiosco, clave: string, url = '/a
   await guardarAjuste(db, 'nube.cursor', CURSOR_INICIAL);
   const total = await bajarCambios(db, clave, url);
   await guardarAjuste(db, 'nube.v2', true);
+  await guardarAjuste(db, 'nube.ponerAlDia', PONER_AL_DIA.marca);
   return total;
 }
