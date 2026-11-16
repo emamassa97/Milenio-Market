@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { crearNube } from './nubeFalsa';
 import { BaseKiosco, RANGO } from './db';
-import { abrirTurno, borrarProducto, guardarProducto, leerAjuste, registrarVenta, traerCajaAEsteEquipo, turnoAbierto } from './operaciones';
+import { abrirTurno, borrarProducto, cerrarTurno, guardarProducto, leerAjuste, registrarVenta, turnoAbierto } from './operaciones';
 import { pedirAlta, sincronizarAhora } from './nube';
 import { ingresarDondeSea } from './ingreso';
 import { cambiarClave, cambiarClaveConLaNube, crearUsuario, empezarDeCero, leerUsuarios } from './usuarios';
@@ -41,9 +41,10 @@ async function escenario() {
 describe('sincronización entre equipos', () => {
   it('las ventas de los dos llegan a los dos, sin pisarse, y el stock suma lo de ambos', async () => {
     const { pc, cel, coca } = await escenario();
-    // El celular no vende en la caja de la PC: tiene que abrir la suya.
-    expect(await turnoAbierto(cel)).toBeUndefined();
-    await abrirTurno(cel, 'Ema', 0);
+    // La caja es una sola: el celular vende en la misma que abrió la PC y no puede abrir otra.
+    const caja = (await turnoAbierto(pc))!;
+    expect((await turnoAbierto(cel))!.id).toBe(caja.id);
+    await expect(abrirTurno(cel, 'Ema', 0)).rejects.toThrow();
     const vPc = await vender(pc, coca, 1);
     const vCel = await vender(cel, coca, 2, 1000);
     expect(vPc.id).not.toBe(vCel.id);
@@ -56,13 +57,13 @@ describe('sincronización entre equipos', () => {
     // 10 − 1 − 1 − 2 = 6 en los dos.
     expect((await pc.productos.get(coca))!.stock).toBe(6);
     expect((await cel.productos.get(coca))!.stock).toBe(6);
-    // Cada uno sigue con su caja.
-    expect((await turnoAbierto(pc))!.id).not.toBe((await turnoAbierto(cel))!.id);
+    // Las tres ventas son de la misma caja, vista igual en los dos.
+    expect((await cel.ventas.toArray()).every((v) => v.turnoId === caja.id)).toBe(true);
+    expect((await turnoAbierto(cel))!.id).toBe(caja.id);
   });
 
   it('lo vendido sin subir no se pierde cuando baja el stock de la nube', async () => {
     const { pc, cel, coca } = await escenario();
-    await abrirTurno(cel, 'Ema', 0);
     await vender(cel, coca, 3);
     await sincronizarAhora(cel); // nube: 9 − 3 = 6
     await vender(pc, coca, 1); // PC: 9 − 1 = 8, sin subir
@@ -126,7 +127,7 @@ describe('sincronización entre equipos', () => {
     const caja2 = await nueva();
     await ingresarDondeSea(caja2, 'juan', '7391');
     expect(await caja2.productos.get(coca)).toBeTruthy();
-    await abrirTurno(caja2, 'Juan', 0);
+    // El empleado vende en la caja que ya está abierta (es una sola para todo el local).
     await vender(caja2, coca, 1);
     await sincronizarAhora(caja2);
     await sincronizarAhora(pc);
@@ -153,7 +154,7 @@ describe('sincronización entre equipos', () => {
     await ingresarDondeSea(cel, 'ema', '4826');
     expect(await cel.ventas.count()).toBe(2);
     expect((await cel.productos.get(coca))!.stock).toBe(8);
-    expect(await turnoAbierto(cel)).toBeUndefined();
+    expect((await turnoAbierto(cel))!.id).toBe((await turnoAbierto(pc))!.id);
     expect((await leerUsuarios(cel)).map((u) => u.usuario)).toEqual(['ema']);
   });
 
@@ -220,20 +221,31 @@ describe('sincronización entre equipos', () => {
     expect((await cel.productos.get(coca))!.stock).toBe(5);
   });
 
-  it('una caja traída al celular deja de estar abierta en la PC, y una cerrada no se reabre', async () => {
-    const { pc, cel } = await escenario();
-    await sincronizarAhora(cel);
+  it('una caja abierta de más y vacía se cierra sola en todos los equipos; la que tiene ventas sigue', async () => {
+    const { pc, cel, coca } = await escenario();
     const caja = (await turnoAbierto(pc))!;
-    await traerCajaAEsteEquipo(cel, caja.id!);
+    // El celular, sin internet, abrió otra (como pasaba antes, una por equipo): queda repetida.
+    const fecha = Date.now() + 60_000;
+    const repetida = await cel.turnos.add({ equipo: 2, apertura: fecha, cierre: null, cajero: 'Ema', fondoInicial: 12000, conteo: null, contado: null, esperado: null, nota: '' });
+    await vender(cel, coca, 1);
+    await sincronizarAhora(cel);
+    await sincronizarAhora(pc);
+    // Los dos venden en la de siempre (la más vieja) y la repetida quedó cerrada, sin tocar la plata de la otra.
+    expect((await turnoAbierto(cel))!.id).toBe(caja.id);
+    expect((await turnoAbierto(pc))!.id).toBe(caja.id);
+    expect((await pc.turnos.get(repetida))!.cierre).not.toBeNull();
+    expect((await cel.turnos.get(repetida))!.cierre).not.toBeNull();
+    expect(await pc.turnos.filter((t) => t.cierre === null).count()).toBe(1);
+    // Y la cierra cualquiera: el celular cierra la caja que abrió la PC.
+    await cerrarTurno(cel, {}, '');
     await sincronizarAhora(cel);
     await sincronizarAhora(pc);
     expect(await turnoAbierto(pc)).toBeUndefined();
-    expect((await turnoAbierto(cel))!.id).toBe(caja.id);
-    // La PC tenía una copia vieja (abierta y suya): aunque la vuelva a mandar, no le gana al celular.
-    await pc.turnos.update(caja.id!, { equipo: 1 });
+    // Una cerrada no se reabre aunque la PC mande una copia vieja.
+    await pc.turnos.update(caja.id!, { cierre: null });
     await sincronizarAhora(pc);
     await sincronizarAhora(cel);
-    expect((await turnoAbierto(cel))!.id).toBe(caja.id);
+    expect(await turnoAbierto(cel)).toBeUndefined();
   });
 
   it('dos equipos de antes con ventas del mismo número se juntan sin pisarse', async () => {

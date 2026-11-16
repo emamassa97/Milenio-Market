@@ -1,5 +1,5 @@
 import { fijarRango, marcarRemota, nuevaMarca, RANGO, TABLAS_NUBE, type Ajuste, type BaseKiosco, type TablaNube } from './db';
-import { ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
+import { cerrarCajasRepetidas, ErrorKiosco, guardarAjuste, leerAjuste } from './operaciones';
 import { combinarUsuarios, type Usuario } from './usuarios';
 
 // La nube junta a todos los equipos (la PC del mostrador, el celular del
@@ -8,7 +8,7 @@ import { combinarUsuarios, type Usuario } from './usuarios';
 // - Cada equipo tiene un número (la nube se lo da) y sus filas nuevas usan
 //   ids de su rango: nunca pisa las de otro.
 // - El stock no se pisa: se suma lo que cada equipo vendió o cargó.
-// - Cada equipo tiene su propia caja; ve las de los otros en el panel.
+// - Hay una sola caja para todo el local: cualquier equipo vende en ella y la cierra.
 
 /**
  * Ajustes propios de este equipo: no se suben a la nube ni van en la copia
@@ -399,6 +399,8 @@ async function unaVuelta(db: BaseKiosco, url: string): Promise<{ subidas: number
     }
     const subidas = await subirCambios(db, enviarAlServidor(clave, url));
     bajadas += await bajarCambios(db, clave, url);
+    // Una sola caja por local: las que quedaron abiertas de más y vacías se cierran y se avisa a los demás.
+    if ((await cerrarCajasRepetidas(db)) > 0) await subirCambios(db, enviarAlServidor(clave, url));
     await guardarAjuste(db, 'nube.ultima', Date.now());
     await guardarAjuste(db, 'nube.error', null);
     await guardarAjuste(db, 'nube.estado', null);
