@@ -10,6 +10,8 @@ import { useConsulta, useUnaVez } from '../ui/hooks';
 import { useSesion } from '../ui/sesion';
 import { htmlTicket, imprimirTicket, leerAjustesTicket, TICKET_INICIAL, type AjustesTicket } from '../ui/ticket';
 import { borrarUsuario, cambiarClave, crearUsuario, leerUsuarios } from '../datos/usuarios';
+import { CONFIG_RESUMEN_INICIAL, guardarConfigResumen, leerConfigResumen, mandaSolo, probarEnvio, type ConfigResumen } from '../datos/resumenDiario';
+import { telefonoWhatsApp } from '../dominio/entrada';
 import { pendientes, recuperarDeLaNube, sincronizarAhora, activarNube } from '../datos/nube';
 
 export function PantallaAjustes() {
@@ -78,6 +80,7 @@ export function PantallaAjustes() {
         <InstalarApp />
       </section>
 
+      {!soloEmpleado && <ResumenPorWhatsApp />}
       {!soloEmpleado && <AjustesDelTicket />}
       </div>
 
@@ -515,6 +518,89 @@ function AjustesDelTicket() {
           }}
         />
       </div>
+    </section>
+  );
+}
+
+/** A qué WhatsApp va el resumen del día y si se manda solo (CallMeBot, gratis para mandarse mensajes a uno mismo). */
+function ResumenPorWhatsApp() {
+  const avisar = useAvisar();
+  const [c, setC] = useState<ConfigResumen>(CONFIG_RESUMEN_INICIAL);
+  const [probando, unaVez] = useUnaVez();
+  useEffect(() => {
+    leerConfigResumen(db).then(setC);
+  }, []);
+  const guardar = async (nuevo: ConfigResumen) => {
+    setC(nuevo);
+    await guardarConfigResumen(db, nuevo);
+  };
+  const numeroValido = telefonoWhatsApp(c.numero) !== null;
+  const claveValida = /^\d{4,12}$/.test(c.apikey.trim());
+  const solo = mandaSolo(c);
+  return (
+    <section className="tarjeta formulario ajustes-resumen">
+      <h2 className="titulo-chico">
+        Resumen del día por WhatsApp <BotonAyuda tema="resumen" que="el resumen del día" />
+      </h2>
+      <p className="texto-suave">
+        Al cerrar la caja se arma un resumen: lo vendido, la ganancia, cómo pagaron, cómo dio el cierre, lo más vendido, qué reponer, el fiado y lo que se les debe a los proveedores.
+      </p>
+      <label className="campo">
+        <span className="campo-etiqueta">Tu WhatsApp (el del dueño)</span>
+        <input
+          inputMode="tel"
+          autoComplete="tel"
+          placeholder="Ej.: 11 2345-6789"
+          value={c.numero}
+          onChange={(e) => setC({ ...c, numero: e.target.value })}
+          onBlur={() => guardar(c)}
+          aria-invalid={c.numero.trim() !== '' && !numeroValido}
+        />
+        {c.numero.trim() !== '' && !numeroValido && <small className="texto-alerta">Escribilo con la característica, sin el 0 ni el 15 (o con ellos, se acomoda solo).</small>}
+      </label>
+      <label className="casilla">
+        <input type="checkbox" checked={c.automatico} onChange={(e) => guardar({ ...c, automatico: e.target.checked })} />
+        <span>Que me llegue solo, sin tocar nada (al cerrar la caja y, si nadie la cerró, a la medianoche)</span>
+      </label>
+      {c.automatico && (
+        <div className="resumen-pasos">
+          <ol>
+            <li>
+              Desde tu celular, agendá a CallMeBot: <strong className="importe">+34 644 20 47 56</strong> (si cambió, está en{' '}
+              <a href="https://www.callmebot.com/blog/free-api-whatsapp-messages/" target="_blank" rel="noreferrer">
+                callmebot.com
+              </a>
+              ). Mandale por WhatsApp: <code>I allow callmebot to send me messages</code>
+            </li>
+            <li>Te contesta con tu clave (son números). Pegala acá abajo y tocá «Probar».</li>
+          </ol>
+          <label className="campo">
+            <span className="campo-etiqueta">Clave de CallMeBot</span>
+            <div className="campo-con-boton">
+              <input inputMode="numeric" placeholder="Ej.: 123456" value={c.apikey} onChange={(e) => setC({ ...c, apikey: e.target.value.replace(/\D/g, '') })} onBlur={() => guardar(c)} />
+              <button
+                type="button"
+                className="boton"
+                disabled={!numeroValido || !claveValida || probando}
+                onClick={() =>
+                  unaVez(async () => {
+                    await guardar(c);
+                    const r = await probarEnvio(db, c);
+                    avisar(r.enviado ? { texto: 'Listo: te mandé un mensaje de prueba. Fijate en tu WhatsApp.', tipo: 'ok' } : { texto: r.motivo, tipo: 'error' });
+                  })
+                }
+              >
+                {probando ? 'Mandando…' : 'Probar'}
+              </button>
+            </div>
+          </label>
+          <p className={`ajuste-nota ${solo ? 'texto-positivo' : 'texto-suave'}`}>
+            {solo
+              ? 'Activado: el resumen te va a llegar solo. Si algún día no llega, al cerrar la caja igual queda el botón para mandarlo.'
+              : 'Mientras no esté la clave, al cerrar la caja queda el botón «Mandar al WhatsApp del dueño» (un toque).'}
+          </p>
+        </div>
+      )}
     </section>
   );
 }

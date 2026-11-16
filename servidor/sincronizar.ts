@@ -478,7 +478,8 @@ async function reglasDeEmpleado(registros: Registro[], yo: string, consulta: Con
         }
         break;
       case 'ajustes':
-        salida.push(r);
+        // A dónde va el resumen del día (el WhatsApp del dueño) lo cambia sólo el dueño.
+        if (r.id !== 'resumen.whatsapp') salida.push(r);
         break;
       default:
         // clientes, movimientosCaja, eventos, compras y pagos a proveedores: lo ya anotado no lo cambia un empleado.
