@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { esGastoDelLocal, resumirTurno } from '../dominio/caja';
 import { totalNeto } from '../dominio/devoluciones';
 import { formatPesos } from '../dominio/dinero';
@@ -7,11 +7,14 @@ import { paraReponer, porVencer, resumirVentas } from '../dominio/reportes';
 import type { Evento, MovimientoCaja, Producto, Venta } from '../dominio/tipos';
 import { db } from '../datos/db';
 import { leerAjuste, movimientosDeCaja, turnoAbierto } from '../datos/operaciones';
-import { cuando, hora, Icono, sinCortes } from '../ui/componentes';
+import { cuando, hora, Icono, Modal, sinCortes } from '../ui/componentes';
 import { useConsulta, useEstadoNube } from '../ui/hooks';
 import { AVISO_SIN_ACTIVAR } from '../datos/nube';
 import { useSesion } from '../ui/sesion';
 import { AvisoInstalar } from '../ui/instalar';
+import { cargarResumen, CONFIG_RESUMEN_INICIAL, leerConfigResumen, mandaSolo } from '../datos/resumenDiario';
+import { estadoCierre, type ResumenDiario } from '../dominio/resumenDiario';
+import { AccionesResumen, ResumenVisual } from '../ui/ResumenDiario';
 
 // Panel del dueño: en una mirada, cómo viene el día y qué hay que atender.
 
@@ -214,6 +217,8 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
           <small className="texto-suave">{fiado.deudores === 0 ? 'Nadie debe' : fiado.deudores === 1 ? '1 cliente debe' : `${fiado.deudores} clientes deben`}</small>
         </div>
       </div>
+
+      <BannerResumen />
 
       <div className="inicio-grilla">
         <section className="tarjeta">
@@ -438,4 +443,49 @@ export function PantallaInicio({ ir }: { ir: (id: 'caja' | 'productos' | 'cierre
       </div>
     </div>
   );
+}
+
+/** El resumen del día (la caja abierta, o la última que se cerró): verlo y mandarlo por WhatsApp. */
+function BannerResumen() {
+  const [abierto, setAbierto] = useState(false);
+  // Se arma recién al abrirlo (junta toda la base); el cartel sólo necesita saber de qué caja es.
+  const config = useConsulta(() => leerConfigResumen(db), [], CONFIG_RESUMEN_INICIAL);
+  const resumen = useConsulta(async (): Promise<ResumenDiario | null> => (await cargarResumen(db)) ?? null, [], null);
+  if (!resumen) return null;
+  const estado = estadoCierre(resumen);
+  const solo = mandaSolo(config);
+  return (
+    <section className="tarjeta resumen-banner">
+      <span className="resumen-banner-icono">
+        <Icono nombre="whatsapp" tam={22} />
+      </span>
+      <div className="resumen-banner-texto">
+        <h2 className="titulo-chico">Resumen del día</h2>
+        <p className="texto-suave">
+          {resumen.abierta ? 'Caja abierta: lo que va del día' : `Último cierre (${hora(resumen.hasta)}): ${estado.texto.toLowerCase()}`} · {formatPesos(resumen.vendido)} vendidos
+          {' · '}
+          {solo ? 'te llega solo por WhatsApp al cerrar la caja' : 'al cerrar la caja queda listo para mandar'}
+        </p>
+      </div>
+      <button type="button" className="boton boton-primario" onClick={() => setAbierto(true)}>
+        Ver y mandar
+      </button>
+      {abierto && (
+        <Modal titulo="Resumen del día" ancho="ancho" onCerrar={() => setAbierto(false)}>
+          <ArribaDeTodo />
+          <ResumenVisual r={resumen} />
+          <AccionesResumen r={resumen} config={config} />
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+/** La ventana enfoca el primer botón (abajo de todo) y se corre: el resumen se lee desde arriba. */
+function ArribaDeTodo() {
+  useEffect(() => {
+    const id = requestAnimationFrame(() => document.querySelectorAll('dialog[open], dialog[open] .modal-cuerpo').forEach((e) => (e.scrollTop = 0)));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  return null;
 }

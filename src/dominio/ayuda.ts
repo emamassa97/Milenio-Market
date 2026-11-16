@@ -298,6 +298,23 @@ export const TEMAS_AYUDA: TemaAyuda[] = [
     palabras: 'cierre cerrar caja contar billetes arqueo diferencia falta sobra turno',
   },
   {
+    id: 'resumen',
+    titulo: 'El resumen del día por WhatsApp',
+    pantallas: ['cierre', 'inicio', 'ajustes'],
+    soloDueño: true,
+    resumen: 'Al cerrar la caja te queda armado un resumen para mandarte por WhatsApp (o te llega solo).',
+    pasos: [
+      'En Ajustes, cargá tu WhatsApp en «Resumen del día por WhatsApp».',
+      'Al cerrar la caja aparece el resumen: lo vendido, la ganancia, cómo pagaron, cómo dio el cierre, lo más vendido, qué reponer, el fiado y los proveedores.',
+      'Tocá «Mandar al WhatsApp del dueño»: se abre WhatsApp con todo escrito. También lo ves y lo mandás cuando quieras desde el Panel.',
+    ],
+    consejos: [
+      'Para que llegue solo, tildá «Que me llegue solo» y seguí los dos pasos de CallMeBot (es gratis). Si nadie cerró la caja, te llega igual a la medianoche.',
+      'Si cierra un empleado, él no ve la ganancia ni la diferencia: el resumen completo te llega a vos.',
+    ],
+    palabras: 'resumen diario whatsapp reporte cierre automatico mensaje dueño dia',
+  },
+  {
     id: 'producto',
     titulo: 'Cargar un producto nuevo',
     pantallas: ['productos'],

@@ -3,6 +3,7 @@ import { AVISO_SIN_SERVIDOR } from './datos/nube';
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import logo from './assets/logo-oscuro.svg';
 import { db } from './datos/db';
+import { subirParcialesCadaTanto } from './datos/resumenDiario';
 import { estaVacia } from './datos/copia';
 import { cargarEjemplo } from './datos/ejemplo';
 import { PantallaCaja } from './pantallas/Caja';
@@ -119,6 +120,9 @@ function Sistema() {
     return () => window.removeEventListener('focus', revisar);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sesion?.usuario, sesion?.admin, sesion?.nombre]);
+
+  // Resumen del día: si se manda solo, el servidor necesita saber cómo va la caja por si nadie la cierra.
+  useEffect(() => (import.meta.env.VITE_DEMO ? undefined : subirParcialesCadaTanto(db)), []);
 
   // Versión de prueba publicada: arranca con productos de ejemplo.
   useEffect(() => {

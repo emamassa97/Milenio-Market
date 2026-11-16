@@ -16,6 +16,9 @@ import { leerGuardado, LLAVE_CARRITO, LLAVE_ESPERA, resumenEspera, useConsulta, 
 import { useEsDueño, usePedirDueño } from '../ui/permisos';
 import { useSesion } from '../ui/sesion';
 import { DevolverVenta } from './Devolver';
+import type { ResumenDiario } from '../dominio/resumenDiario';
+import { cargarResumen, CONFIG_RESUMEN_INICIAL, leerConfigResumen, mandaSolo, subirResumen, type ConfigResumen } from '../datos/resumenDiario';
+import { AccionesResumen, ResumenVisual, type EstadoEnvio } from '../ui/ResumenDiario';
 
 interface Resultado {
   /** null: se cerró sin contar. */
@@ -28,6 +31,8 @@ interface Resultado {
   ventas: number;
   /** Para compartir el resumen. */
   texto: string;
+  /** La caja recién cerrada, para el resumen del día. */
+  turno: Turno;
 }
 
 interface Datos {
@@ -272,6 +277,7 @@ function CierreAbierto({ datos, onCerrado, irACaja }: { datos: Datos; onCerrado:
         ventas: final.cantidadVentas,
         texto: textoCierre(cerrado, final, contoAlgo ? contado : null, !dueño),
         ciego: !dueño,
+        turno: cerrado,
       });
     } catch (e) {
       // El resultado se había mostrado por adelantado para que no parpadee "caja cerrada"; si falló, se saca.
@@ -612,6 +618,56 @@ function PasarCaja({
 }
 
 function ResultadoCierre({ r, irACaja }: { r: Resultado; irACaja: () => void }) {
+  const resumen = useResumenDeCierre(r.turno);
+  return (
+    <>
+      <ResultadoCierreCabecera r={r} irACaja={irACaja} />
+      {resumen.r && (
+        <section className={`tarjeta resumen-tarjeta${r.ciego ? ' resumen-tarjeta-ciego' : ''}`}>
+          {r.ciego ? (
+            <div className="resumen-ciego">
+              <h2 className="titulo-chico">Resumen para el dueño</h2>
+              <p className="texto-suave">
+                {resumen.envio?.tipo === 'enviado' ? 'Ya le llegó solo por WhatsApp.' : 'Mandáselo por WhatsApp: va lo vendido, cómo pagaron, lo que contaste y lo que hay que reponer.'}
+              </p>
+            </div>
+          ) : (
+            <ResumenVisual r={resumen.r} />
+          )}
+          <AccionesResumen r={resumen.r} config={resumen.config} envio={resumen.envio} ciego={r.ciego} />
+        </section>
+      )}
+    </>
+  );
+}
+
+/** Arma el resumen de la caja recién cerrada y, si está configurado, lo manda solo (una vez). */
+function useResumenDeCierre(turno: Turno) {
+  const [r, setR] = useState<ResumenDiario | null>(null);
+  const [config, setConfig] = useState<ConfigResumen>(CONFIG_RESUMEN_INICIAL);
+  const [envio, setEnvio] = useState<EstadoEnvio>(null);
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      const [resumen, c] = await Promise.all([cargarResumen(db, turno), leerConfigResumen(db)]);
+      if (!vivo || !resumen) return;
+      setR(resumen);
+      setConfig(c);
+      if (!mandaSolo(c)) return;
+      setEnvio({ tipo: 'mandando' });
+      // El cierre tiene que estar en la nube antes (así la tarea de la noche sabe que se cerró).
+      await traerLoUltimo();
+      const res = await subirResumen(db, resumen, 'cierre');
+      if (vivo) setEnvio(res.enviado ? { tipo: 'enviado' } : { tipo: 'error', motivo: res.motivo });
+    })().catch(() => undefined);
+    return () => {
+      vivo = false;
+    };
+  }, [turno]);
+  return { r, config, envio };
+}
+
+function ResultadoCierreCabecera({ r, irACaja }: { r: Resultado; irACaja: () => void }) {
   const avisar = useAvisar();
   if (r.ciego) {
     return (
@@ -660,15 +716,12 @@ function ResultadoCierre({ r, irACaja }: { r: Resultado; irACaja: () => void }) 
         <button type="button" className="boton boton-primario" onClick={irACaja}>
           Abrir un turno nuevo
         </button>
-        <a className="boton" href={`https://wa.me/?text=${encodeURIComponent(r.texto)}`} target="_blank" rel="noreferrer">
-          <Icono nombre="whatsapp" tam={18} /> Mandar por WhatsApp
-        </a>
         <button
           type="button"
-          className="boton"
-          onClick={async () => avisar((await copiarTexto(r.texto)) ? { texto: 'Resumen copiado.', tipo: 'ok' } : { texto: 'No se pudo copiar.', tipo: 'error' })}
+          className="boton boton-solo"
+          onClick={async () => avisar((await copiarTexto(r.texto)) ? { texto: 'Cierre copiado.', tipo: 'ok' } : { texto: 'No se pudo copiar.', tipo: 'error' })}
         >
-          <Icono nombre="copiar" tam={18} /> Copiar
+          <Icono nombre="copiar" tam={18} /> Copiar el cierre
         </button>
       </div>
     </section>
