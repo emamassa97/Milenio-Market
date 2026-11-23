@@ -2,8 +2,17 @@
 
 La caja funciona siempre con los datos guardados en el equipo (sin internet también).
 Cuando hay internet, cada equipo (la PC del mostrador, el celular, otra compu) se
-sincroniza con la nube cada 30 segundos: sube lo suyo y baja lo de los demás. Todos
-ven los mismos productos, ventas, clientes y la misma caja.
+sincroniza con la nube: sube lo suyo y baja lo de los demás. Todos ven los mismos
+productos, ventas, clientes y la misma caja.
+
+Cada cuánto (para que la base de Neon se pueda apagar y no se pase de las 100 horas del
+plan gratis; se apaga sola a los 5 minutos sin pedidos):
+- Con cambios para subir: una vuelta cada 10 minutos como mucho.
+- Sin nada para subir: baja lo de los otros equipos cada media hora.
+- Al abrir la app, al volver internet y al volver a la pantalla: en el momento (mínimo 2
+  minutos entre vueltas). Al cerrar la caja y con «Sincronizar ahora», siempre en el momento.
+- El resumen parcial para WhatsApp sube cada media hora con la caja abierta.
+Antes (hasta el 23/11/2026) era cada 30 segundos y la base no se apagaba nunca.
 
 ## Una sola vez, en Vercel
 

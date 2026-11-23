@@ -1,7 +1,7 @@
 import { liveQuery } from 'dexie';
 import { totalCarrito, type Carrito } from '../dominio/carrito';
 import { db } from '../datos/db';
-import { estadoNube, pedirAlta, sincronizarAhora, type EstadoNube } from '../datos/nube';
+import { AL_VOLVER_CADA, estadoNube, pedirAlta, pendientes, sincronizarAhora, tocaSincronizar, type EstadoNube } from '../datos/nube';
 import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react';
 
 /** Lee de la base y se actualiza sola cuando los datos cambian. */
@@ -97,28 +97,43 @@ export function useUnaVez(): [boolean, (accion: () => Promise<void>) => Promise<
 }
 
 /**
- * Sincroniza con la nube cada medio minuto, apenas vuelve internet y al volver
- * a la pantalla (el celular que se saca del bolsillo se pone al día). La
- * primera vez, si la nube todavía no tiene dueño, este equipo recibe la clave
- * solo. Los errores quedan anotados para mostrarlos.
+ * Sincroniza con la nube sin tenerla prendida todo el día: lo nuevo sube cada
+ * 10 minutos como mucho y, si no hay nada nuevo, se baja lo de los otros equipos
+ * cada media hora (ver `tocaSincronizar`). Al volver internet o a la pantalla
+ * (el celular que se saca del bolsillo se pone al día) va en el momento, con un
+ * mínimo de 2 minutos entre vueltas. La primera vez, si la nube todavía no tiene
+ * dueño, este equipo recibe la clave solo. Los errores quedan anotados para mostrarlos.
  */
 export function useCopiaEnLaNube(activa: boolean) {
   useEffect(() => {
     if (!activa) return;
+    let ultimoIntento: number | null = null;
     const sincronizar = () => {
       if (!navigator.onLine) return;
+      ultimoIntento = Date.now();
       pedirAlta(db)
         .then((conClave) => (conClave ? sincronizarAhora(db) : null))
         .catch(() => {});
     };
+    const revisar = () => {
+      if (!navigator.onLine) return;
+      pendientes(db)
+        .then((n) => {
+          if (tocaSincronizar(Date.now(), ultimoIntento, n > 0)) sincronizar();
+        })
+        .catch(() => {});
+    };
+    const alVolver = () => {
+      if (ultimoIntento === null || Date.now() - ultimoIntento >= AL_VOLVER_CADA) sincronizar();
+    };
     sincronizar();
-    const reloj = window.setInterval(sincronizar, 30_000);
-    window.addEventListener('online', sincronizar);
-    document.addEventListener('visibilitychange', sincronizar);
+    const reloj = window.setInterval(revisar, 30_000);
+    window.addEventListener('online', alVolver);
+    document.addEventListener('visibilitychange', alVolver);
     return () => {
       window.clearInterval(reloj);
-      window.removeEventListener('online', sincronizar);
-      document.removeEventListener('visibilitychange', sincronizar);
+      window.removeEventListener('online', alVolver);
+      document.removeEventListener('visibilitychange', alVolver);
     };
   }, [activa]);
 }

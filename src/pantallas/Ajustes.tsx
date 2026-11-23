@@ -229,7 +229,7 @@ function CopiaEnLaNube({ vacia }: { vacia: boolean }) {
               {estado.error
                 ? `No se pudo sincronizar: ${estado.error}`
                 : estado.pendientes > 0
-                  ? `Faltan subir ${estado.pendientes} cambios. Se suben solos cada medio minuto cuando hay internet.`
+                  ? `Faltan subir ${estado.pendientes} cambios. Se suben solos en unos minutos cuando hay internet (o tocá «Sincronizar ahora»).`
                   : 'Este equipo está al día: lo que se carga acá llega a los otros, y lo de los otros llega acá.'}
             </span>
             <span>

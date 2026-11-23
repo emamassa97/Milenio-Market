@@ -137,10 +137,11 @@ export async function probarEnvio(db: BaseKiosco, c: ConfigResumen, url = '/api/
   }
 }
 
-const CADA = 15 * 60_000;
+// Cada media hora (no menos): cada envío prende la base de la nube, que se apaga sola a los 5 minutos sin uso.
+const CADA = 30 * 60_000;
 
 /**
- * Mientras la caja está abierta, cada 15 minutos sube cómo va el día: si a la medianoche nadie la cerró,
+ * Mientras la caja está abierta, cada media hora sube cómo va el día: si a la medianoche nadie la cerró,
  * el servidor manda eso. Sólo si el envío automático está configurado. Devuelve la función para cortarlo.
  */
 export function subirParcialesCadaTanto(db: BaseKiosco, cada = CADA): () => void {
