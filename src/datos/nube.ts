@@ -570,3 +570,24 @@ export async function recuperarDeLaNube(db: BaseKiosco, clave: string, url = '/a
   await guardarAjuste(db, 'nube.ponerAlDia', PONER_AL_DIA.marca);
   return total;
 }
+
+// ---------- Cada cuánto se habla con la nube ----------
+// La base de la nube (Neon) se apaga sola a los 5 minutos sin pedidos y el plan
+// gratis da 100 horas prendida por mes. Si se le habla cada medio minuto no se
+// apaga nunca. Por eso: lo nuevo sube cada 10 minutos como mucho, y si no hay
+// nada para subir sólo se baja lo de los otros equipos cada media hora. Al cerrar
+// la caja, al tocar "Sincronizar" y al volver a la pantalla se sigue haciendo en
+// el momento. Lo cargado nunca se pierde: queda en el equipo hasta que sube.
+
+/** Con cambios para subir: como mucho una vuelta cada 10 minutos. */
+export const SUBIR_CADA = 10 * 60_000;
+/** Sin nada para subir: se baja lo de los otros equipos cada media hora. */
+export const BAJAR_CADA = 30 * 60_000;
+/** Al volver a la pantalla o a internet: en el momento, pero no más de una vez cada 2 minutos. */
+export const AL_VOLVER_CADA = 2 * 60_000;
+
+/** Si ya corresponde otra vuelta automática con la nube. */
+export function tocaSincronizar(ahora: number, ultimoIntento: number | null, hayPendientes: boolean): boolean {
+  if (ultimoIntento === null) return true;
+  return ahora - ultimoIntento >= (hayPendientes ? SUBIR_CADA : BAJAR_CADA);
+}

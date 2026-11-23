@@ -132,7 +132,7 @@ export async function hayUsuariosEnLaNube(url = URL_NUBE): Promise<boolean | nul
 export async function ingresarDondeSea(db: BaseKiosco, usuario: string, clave: string, url = URL_NUBE): Promise<Usuario> {
   const nombre = usuario.trim().toLowerCase();
   const claveLocal = await leerAjuste<string>(db, 'nube.clave', '');
-  // Equipo ya unido a la nube: los usuarios llegan solos cada medio minuto, así que se
+  // Equipo ya unido a la nube: los usuarios llegan solos (cada media hora o al volver a la pantalla), así que se
   // comprueba acá primero (entra al instante aunque la nube esté lenta). Si acá no
   // coincide (una clave cambiada recién en otro equipo), se pregunta a la nube.
   if (claveLocal && (await leerAjuste<string | boolean>(db, 'nube.v2', false)) === true) {
